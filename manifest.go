@@ -23,6 +23,8 @@ type Manifest struct {
 
 	RetentionRules []RetentionRuleSpec `yaml:"retentionRules" json:"retentionRules,omitempty" jsonschema:"description=Retention rules to ensure exist (matched by dataType/fragmentType/type/source; maximumAge updated when it differs)"`
 
+	CertificateAuthority *CertificateAuthoritySpec `yaml:"certificateAuthority" json:"certificateAuthority,omitempty" jsonschema:"description=Enable or disable the tenant's Cumulocity certificate authority (CA) certificate"`
+
 	TrustedCertificates        []TrustedCertificateSpec        `yaml:"trustedCertificates" json:"trustedCertificates,omitempty" jsonschema:"description=Trusted device certificates (PEM/DER) to upload into the tenant trust store (matched by fingerprint; name/status/autoRegistrationEnabled updated when they differ)"`
 	CertificateRevocationLists []CertificateRevocationListSpec `yaml:"certificateRevocationLists" json:"certificateRevocationLists,omitempty" jsonschema:"description=Certificate revocation entries to upload from CSV files (columns SERIALNO and optional DATE); additive: existing entries are never removed"`
 
@@ -269,6 +271,20 @@ var TrustedCertificateStatuses = []string{"ENABLED", "DISABLED"}
 // trust store. Certificates are matched by their fingerprint: missing ones
 // are uploaded, and the name, status and autoRegistrationEnabled of existing
 // ones are updated when they differ. Certificates are never deleted.
+// CertificateAuthoritySpec manages the tenant's Cumulocity certificate
+// authority (CA), which issues device certificates (e.g. for certificate
+// based device registration)
+type CertificateAuthoritySpec struct {
+	// Enabled creates the CA when it does not exist and sets its trusted
+	// certificate to ENABLED. false sets it to DISABLED; the CA is never
+	// deleted, since that would invalidate every certificate it issued
+	Enabled *bool `yaml:"enabled" json:"enabled" jsonschema:"description=true: create the Cumulocity CA if it does not exist and enable it. false: disable the CA certificate (it is never deleted)"`
+
+	// AutoRegistrationEnabled lets devices presenting certificates signed by
+	// the CA register automatically (only managed when set)
+	AutoRegistrationEnabled *bool `yaml:"autoRegistrationEnabled" json:"autoRegistrationEnabled,omitempty" jsonschema:"description=Allow devices presenting certificates signed by the CA to register automatically (left untouched when omitted)"`
+}
+
 type TrustedCertificateSpec struct {
 	// Name overrides the certificate name (only sensible for sources that
 	// resolve to a single certificate). Defaults to the certificate subject
@@ -617,6 +633,10 @@ func (m *Manifest) Validate() error {
 
 	if err := m.Targets.Validate(); err != nil {
 		errs = append(errs, fmt.Sprintf("targets: %v", err))
+	}
+
+	if m.CertificateAuthority != nil && m.CertificateAuthority.Enabled == nil {
+		errs = append(errs, "certificateAuthority.enabled is required")
 	}
 
 	for i, opt := range m.TenantOptions {

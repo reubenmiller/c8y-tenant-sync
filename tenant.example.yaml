@@ -58,6 +58,13 @@ retentionRules:
     maximumAge: 90
     editable: false # lock the rule in the UI
 
+# Enable the tenant's Cumulocity certificate authority (CA), creating it when
+# it does not exist. enabled: false disables the CA certificate (it is never
+# deleted, since that would invalidate every certificate it issued)
+certificateAuthority:
+  enabled: true
+  autoRegistrationEnabled: true # optional; left untouched when omitted
+
 # Upload trusted device certificates (PEM or DER) into the tenant trust
 # store. Certificates are matched by fingerprint: missing ones are uploaded,
 # and the name/status/autoRegistrationEnabled of existing ones are updated

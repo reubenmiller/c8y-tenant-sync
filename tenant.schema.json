@@ -35,6 +35,23 @@
         "name"
       ]
     },
+    "CertificateAuthoritySpec": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "true: create the Cumulocity CA if it does not exist and enable it. false: disable the CA certificate (it is never deleted)"
+        },
+        "autoRegistrationEnabled": {
+          "type": "boolean",
+          "description": "Allow devices presenting certificates signed by the CA to register automatically (left untouched when omitted)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "enabled"
+      ]
+    },
     "CertificateRevocationListSpec": {
       "properties": {
         "source": {
@@ -858,6 +875,10 @@
       },
       "type": "array",
       "description": "Retention rules to ensure exist (matched by dataType/fragmentType/type/source; maximumAge updated when it differs)"
+    },
+    "certificateAuthority": {
+      "$ref": "#/$defs/CertificateAuthoritySpec",
+      "description": "Enable or disable the tenant's Cumulocity certificate authority (CA) certificate"
     },
     "trustedCertificates": {
       "items": {

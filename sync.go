@@ -37,6 +37,7 @@ const (
 	SectionTenantOptions          = "tenantOptions"
 	SectionFeatures               = "features"
 	SectionRetentionRules         = "retentionRules"
+	SectionCertificateAuthority   = "certificateAuthority"
 	SectionTrustedCertificates    = "trustedCertificates"
 	SectionCertificateRevocations = "certificateRevocationLists"
 	SectionApplications           = "applications"
@@ -59,6 +60,7 @@ var SectionOrder = []string{
 	SectionTenantOptions,
 	SectionFeatures,
 	SectionRetentionRules,
+	SectionCertificateAuthority,
 	SectionTrustedCertificates,
 	SectionCertificateRevocations,
 	SectionApplications,
@@ -307,6 +309,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncFeatures(baseCtx, manifest.Features)
 		case SectionRetentionRules:
 			err = s.SyncRetentionRules(ctx, manifest.RetentionRules)
+		case SectionCertificateAuthority:
+			err = s.SyncCertificateAuthority(ctx, manifest.CertificateAuthority)
 		case SectionTrustedCertificates:
 			err = s.SyncTrustedCertificates(ctx, manifest.TrustedCertificates)
 		case SectionCertificateRevocations:

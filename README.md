@@ -40,7 +40,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
-- 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files
+- 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
@@ -144,7 +144,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `userGroups`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `userGroups`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -155,7 +155,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
 
-Sections are applied in a fixed order — tenant options, features, retention rules, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+Sections are applied in a fixed order — tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
 
 ## The Manifest
 
@@ -302,6 +302,21 @@ retentionRules:
 ```
 
 > **Note**: updating a rule that is marked non-editable in the tenant fails — such system rules must be unlocked or removed manually first.
+
+### Cumulocity certificate authority
+
+The `certificateAuthority` section enables or disables the tenant's Cumulocity certificate authority (CA), which issues device certificates (for example for certificate-based device registration):
+
+```yaml
+certificateAuthority:
+  enabled: true                 # required
+  autoRegistrationEnabled: true # optional; left untouched when omitted
+```
+
+- `enabled: true` creates the CA when the tenant does not have one yet, and sets its trusted certificate to `ENABLED`.
+- `enabled: false` sets the CA's trusted certificate to `DISABLED`. The CA is never deleted, since deleting it would invalidate every certificate it issued. If the tenant has no CA, nothing happens.
+
+Creating the CA requires the certificate authority feature to be available on the tenant.
 
 ### Trusted certificates and revocation lists
 

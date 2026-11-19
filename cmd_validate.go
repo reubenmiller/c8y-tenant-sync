@@ -49,6 +49,11 @@ func runValidate(manifestPath string, checkSources bool) error {
 	printSectionCount(SectionTenantOptions, len(manifest.TenantOptions))
 	printSectionCount(SectionFeatures, len(manifest.Features))
 	printSectionCount(SectionRetentionRules, len(manifest.RetentionRules))
+	caCount := 0
+	if manifest.CertificateAuthority != nil {
+		caCount = 1
+	}
+	printSectionCount(SectionCertificateAuthority, caCount)
 	printSectionCount(SectionTrustedCertificates, len(manifest.TrustedCertificates))
 	printSectionCount(SectionCertificateRevocations, len(manifest.CertificateRevocationLists))
 	printSectionCount(SectionApplications, len(manifest.Applications))

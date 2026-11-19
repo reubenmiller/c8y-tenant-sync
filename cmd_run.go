@@ -252,11 +252,14 @@ func saveSecrets(secrets *SecretStore) error {
 }
 
 // manifestSecretValues returns the secret values of a manifest which are
-// masked in the output (user passwords and GitHub tokens)
+// masked in the output (user and tenant admin passwords and GitHub tokens)
 func manifestSecretValues(manifest *Manifest) []string {
 	var values []string
 	for _, user := range manifest.Users {
 		values = append(values, user.Password)
+	}
+	for _, tenant := range manifest.Tenants {
+		values = append(values, tenant.AdminPass)
 	}
 	for _, source := range manifest.allSources() {
 		if source.GitHub != nil {

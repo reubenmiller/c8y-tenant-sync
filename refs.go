@@ -90,9 +90,10 @@ func (m *Manifest) allSources() []*Source {
 }
 
 // ResolveSecretRefs replaces the env and generate references (valueFrom,
-// passwordFrom, tokenFrom) with their values. It returns the resolved values,
-// so they can be masked in the output. The application and device references
-// of valueFrom are resolved when the tenant options are applied.
+// passwordFrom, adminPasswordFrom, tokenFrom) with their values. It returns
+// the resolved values, so they can be masked in the output. The application
+// and device references of valueFrom are resolved when the tenant options are
+// applied.
 func (m *Manifest) ResolveSecretRefs(secrets *SecretStore) ([]string, error) {
 	var values, errs []string
 	resolve := func(label string, ref SecretRef) (string, bool) {
@@ -122,6 +123,15 @@ func (m *Manifest) ResolveSecretRefs(secrets *SecretStore) ([]string, error) {
 		if value, ok := resolve(fmt.Sprintf("users[%d].passwordFrom", i), *m.Users[i].PasswordFrom); ok {
 			m.Users[i].Password = value
 			m.Users[i].PasswordFrom = nil
+		}
+	}
+	for i := range m.Tenants {
+		if m.Tenants[i].AdminPasswordFrom == nil {
+			continue
+		}
+		if value, ok := resolve(fmt.Sprintf("tenants[%d].adminPasswordFrom", i), *m.Tenants[i].AdminPasswordFrom); ok {
+			m.Tenants[i].AdminPass = value
+			m.Tenants[i].AdminPasswordFrom = nil
 		}
 	}
 	for _, source := range m.allSources() {

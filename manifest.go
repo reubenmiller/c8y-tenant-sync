@@ -19,7 +19,10 @@ import (
 // profiles) can reference items created by earlier ones (firmware, software,
 // configuration).
 type Manifest struct {
-	Targets       *TargetsSpec       `yaml:"targets" json:"targets,omitempty" jsonschema:"description=Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"`
+	Targets *TargetsSpec `yaml:"targets" json:"targets,omitempty" jsonschema:"description=Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"`
+
+	Tenants []ChildTenantSpec `yaml:"tenants" json:"tenants,omitempty" jsonschema:"description=Child tenants of the current (parent/management) tenant to create or update (matched by domain); runs once with the base credentials before the targets are resolved; tenants are never deleted or suspended"`
+
 	TenantOptions []TenantOptionSpec `yaml:"tenantOptions" json:"tenantOptions,omitempty" jsonschema:"description=Tenant options to set (created if missing and updated when the value differs)"`
 	Features      []FeatureSpec      `yaml:"features" json:"features,omitempty" jsonschema:"description=Feature toggles to enable or disable for the current tenant"`
 
@@ -42,6 +45,42 @@ type Manifest struct {
 	DeviceProfiles []DeviceProfileSpec `yaml:"deviceProfiles" json:"deviceProfiles,omitempty" jsonschema:"description=Device profiles referencing firmware/software/configuration in the tenant"`
 	Commands       []CommandGroupSpec  `yaml:"commands" json:"commands,omitempty" jsonschema:"description=Named groups of shell commands run as the last section; actions within a group run in sequence and groups run concurrently"`
 	Hooks          HooksSpec           `yaml:"hooks" json:"hooks,omitempty" jsonschema:"description=Commands executed before and after the sync and around individual sections (e.g. go-c8y-cli calls)"`
+}
+
+// ChildTenantSpec declares a child tenant of the current tenant. It is matched
+// by domain among the child tenants: a missing tenant is created (with the
+// admin credentials), an existing tenant only gets its company, contact and
+// custom properties updated. The domain and admin credentials of an existing
+// tenant are never changed, and tenants are never deleted or suspended.
+type ChildTenantSpec struct {
+	Domain  string `yaml:"domain" json:"domain" jsonschema:"description=Full domain name of the tenant; the unique key matched case-insensitively against the domains of the child tenants,example=customer-a.eu-latest.cumulocity.com"`
+	Company string `yaml:"company" json:"company,omitempty" jsonschema:"description=Company name (required to create the tenant; updated when it differs)"`
+
+	AdminName  string `yaml:"adminName" json:"adminName,omitempty" jsonschema:"description=Username of the tenant's first administrator (only used when creating the tenant)"`
+	AdminEmail string `yaml:"adminEmail" json:"adminEmail,omitempty" jsonschema:"description=Email address of the tenant's first administrator (only used when creating the tenant; required with sendPasswordResetEmail)"`
+
+	// AdminPass is only used when creating the tenant. Inject secrets with
+	// ${VAR} expansion or use AdminPasswordFrom.
+	AdminPass string `yaml:"adminPass" json:"adminPass,omitempty" jsonschema:"description=Initial password of the administrator used only when creating the tenant; supports ${VAR} expansion; mutually exclusive with adminPasswordFrom and sendPasswordResetEmail"`
+
+	// AdminPasswordFrom takes the initial admin password from an environment
+	// variable or a generated value
+	AdminPasswordFrom *SecretRef `yaml:"adminPasswordFrom" json:"adminPasswordFrom,omitempty" jsonschema:"description=Take the initial administrator password from an environment variable (env) or a generated value (generate); mutually exclusive with adminPass and sendPasswordResetEmail"`
+
+	// SendPasswordResetEmail lets the platform email a password reset link to
+	// the administrator instead of setting a password
+	SendPasswordResetEmail bool `yaml:"sendPasswordResetEmail" json:"sendPasswordResetEmail,omitempty" jsonschema:"description=Email a password reset link to adminEmail when creating the tenant (instead of adminPass or adminPasswordFrom)"`
+
+	ContactName  string `yaml:"contactName" json:"contactName,omitempty" jsonschema:"description=Name of the contact person (updated when it differs)"`
+	ContactPhone string `yaml:"contactPhone" json:"contactPhone,omitempty" jsonschema:"description=Phone number of the contact person (updated when it differs)"`
+
+	// CustomProperties are merged into the tenant's custom properties: keys
+	// not in the manifest are kept
+	CustomProperties map[string]any `yaml:"customProperties" json:"customProperties,omitempty" jsonschema:"description=Custom properties of the tenant (declared keys are set when they differ; other keys are kept)"`
+
+	// Applications are subscribed to the tenant (additive: subscriptions not
+	// listed are kept)
+	Applications []string `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Names of applications to subscribe to the tenant (additive; missing subscriptions are also added to existing tenants),example=devicemanagement"`
 }
 
 // Credential modes for applying the manifest to other tenants
@@ -968,6 +1007,8 @@ func (m *Manifest) Validate() error {
 		errs = append(errs, fmt.Sprintf("targets: %v", err))
 	}
 
+	errs = append(errs, validateChildTenants(m.Tenants)...)
+
 	if m.CertificateAuthority != nil && m.CertificateAuthority.Enabled == nil {
 		errs = append(errs, "certificateAuthority.enabled is required")
 	}
@@ -1204,6 +1245,50 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("invalid manifest:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// validateChildTenants checks the tenants section. Requirements which only
+// apply when a tenant is created (company, an admin password option) are
+// checked when the tenant turns out to be missing, so existing tenants can be
+// declared with fewer fields.
+func validateChildTenants(specs []ChildTenantSpec) []string {
+	var errs []string
+	domains := make(map[string]bool, len(specs))
+	for i, spec := range specs {
+		label := fmt.Sprintf("tenants[%d]", i)
+		domain := strings.ToLower(strings.TrimSpace(spec.Domain))
+		switch {
+		case domain == "":
+			errs = append(errs, label+": domain is required")
+		case strings.ContainsAny(domain, " /:"):
+			errs = append(errs, fmt.Sprintf("%s: domain %q must be a domain name (without scheme, port or path)", label, spec.Domain))
+		case domains[domain]:
+			errs = append(errs, fmt.Sprintf("%s: duplicate domain %q", label, spec.Domain))
+		}
+		domains[domain] = true
+
+		options := 0
+		for _, set := range []bool{spec.AdminPass != "", spec.AdminPasswordFrom != nil, spec.SendPasswordResetEmail} {
+			if set {
+				options++
+			}
+		}
+		if options > 1 {
+			errs = append(errs, label+": adminPass, adminPasswordFrom and sendPasswordResetEmail are mutually exclusive")
+		}
+		if spec.AdminPasswordFrom != nil {
+			errs = append(errs, spec.AdminPasswordFrom.validate(label+".adminPasswordFrom")...)
+		}
+		if spec.SendPasswordResetEmail && strings.TrimSpace(spec.AdminEmail) == "" {
+			errs = append(errs, label+": sendPasswordResetEmail requires adminEmail")
+		}
+		for j, app := range spec.Applications {
+			if strings.TrimSpace(app) == "" {
+				errs = append(errs, fmt.Sprintf("%s.applications[%d]: application name must not be empty", label, j))
+			}
+		}
+	}
+	return errs
 }
 
 // placeholderPattern matches {placeholder} references in template strings

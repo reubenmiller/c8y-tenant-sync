@@ -45,6 +45,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🔎 **Dry-run**: preview every change before applying
+- 🧾 **Run reports**: JSON and Markdown reports of what a run changed per tenant, for CI pipelines and audits, plus `--fail-on-change` for drift checks
 - 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
@@ -159,10 +160,82 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--secrets-file` | `<manifest>.secrets.yaml` | File which stores the values of `${generate:NAME}` references, see [Generated values](#generated-values) |
 | `--secrets-encryption` | `auto` | Encrypt the secrets file with sops: `auto` (when sops and a `.sops.yaml` are found), `sops` (required) or `none` |
 | `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser` or `sessions` (overrides the manifest) |
+| `--report` | | Write a report of the run to a file (`.json` or `.md`); repeatable. `github` appends the Markdown report to `$GITHUB_STEP_SUMMARY`. See [Run reports](#run-reports) |
+| `--report-format` | *(from the extension)* | Format of the `--report` files: `json` or `markdown` |
+| `--fail-on-change` | | Exit with an error when any item was created, updated or planned (drift check) |
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
 
 Sections are applied in a fixed order — tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+
+### Run reports
+
+`--report FILE` writes a record of the run: what changed per tenant, what failed, and the counts per action. The format comes from the file extension (`.json` or `.md`), or from `--report-format json|markdown`, which applies to all `--report` files. Repeat the flag to write both formats in one run:
+
+```sh
+c8y tenant-sync run -f tenant.yaml --report report.json --report report.md
+```
+
+- The report is written in dry-run mode and also when items fail or the run is aborted (e.g. by a failing pre hook). It is not written when the run stops before syncing, e.g. for an invalid manifest.
+- Secrets are masked (`***`) in every field, like in the console output.
+- Missing parent directories are created. A report which cannot be written is reported and makes a successful run fail; it never replaces the error of a failed run.
+- `--report github` appends the Markdown report to the GitHub Actions step summary (the file named by `GITHUB_STEP_SUMMARY`). Outside GitHub Actions, where the variable is not set, it is skipped with a notice.
+- `--fail-on-change` exits with `changes detected: N item(s) created, updated or planned` when the run changed (or, in dry-run, would change) anything. Combined with `--dry-run` it is a drift check: the job fails when the tenant no longer matches the manifest. Executed hook commands do not count as changes.
+
+The JSON report:
+
+```json
+{
+  "toolVersion": "1.4.0",
+  "manifest": "tenant.yaml",
+  "host": "https://example.cumulocity.com",
+  "startTime": "2026-11-19T21:43:28.296Z",
+  "durationSeconds": 3.2,
+  "dryRun": false,
+  "summary": {
+    "status": "failed",
+    "total": 3,
+    "changes": 1,
+    "counts": { "created": 1, "failed": 1, "unchanged": 1 }
+  },
+  "results": [
+    { "tenant": "t100", "section": "tenantOptions", "item": "configuration/my.setting", "action": "created" },
+    { "tenant": "t100", "section": "retentionRules", "item": "MEASUREMENT/*/*/*", "action": "unchanged" },
+    { "tenant": "t200", "section": "users", "item": "svc@example.com", "action": "failed", "detail": "create user", "error": "..." }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `toolVersion` | Version of tenant-sync |
+| `manifest` | Manifest path as given |
+| `host` | Cumulocity host of the session (omitted in dry-run without a session) |
+| `startTime`, `durationSeconds` | When the sync started (UTC) and how long it took |
+| `dryRun` | `true` for a dry run (all changes are `planned`) |
+| `error` | Why the run was aborted, e.g. a failing pre hook (omitted otherwise) |
+| `summary.status` | `success`, or `failed` when an item failed or the run was aborted |
+| `summary.total`, `summary.changes`, `summary.counts` | Number of items, of created/updated/planned items, and of items per action (`created`, `updated`, `unchanged`, `skipped`, `executed`, `planned`, `failed`) |
+| `results[].tenant` | Target tenant; only set when the run covers tenants other than the current one ([target tenants](#target-tenants)) |
+| `results[].section`, `item`, `action`, `detail`, `error` | The item as shown in the console output; `detail` and `error` are omitted when empty |
+
+The Markdown report has a heading with the status, the run details, a table of counts, and a table of the changed and failed items. Unchanged items are collapsed in a `<details>` block. With several tenants the items are grouped under a heading per tenant.
+
+In GitHub Actions, write the step summary and upload the JSON report as an artifact, also when the sync fails:
+
+```yaml
+      - run: go run github.com/reubenmiller/c8y-tenant-sync@latest run -f tenant.yaml --report tenant-sync-report.json --report github
+        env:
+          C8Y_BASEURL: ${{ secrets.C8Y_BASEURL }}
+          C8Y_TENANT: ${{ secrets.C8Y_TENANT }}
+          C8Y_USERNAME: ${{ secrets.C8Y_USERNAME }}
+          C8Y_PASSWORD: ${{ secrets.C8Y_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tenant-sync-report
+          path: tenant-sync-report.json
+```
 
 ### Secrets with SOPS
 
@@ -858,7 +931,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple tenants from the same source.
+Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple tenants from the same source. Add `--report` to keep a record of each run, see [Run reports](#run-reports).
 
 ## Architecture
 

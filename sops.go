@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -50,8 +51,16 @@ func decryptSops(path string) ([]byte, error) {
 		return nil, fmt.Errorf("%s is encrypted with sops, but the sops executable was not found (install it from https://github.com/getsops/sops or set %s): %w", path, EnvSopsBinary, err)
 	}
 
-	// --decrypt (instead of the "decrypt" subcommand) also works with sops < 3.9
-	cmd := exec.Command(executable, "--decrypt", "--input-type", "yaml", "--output-type", "yaml", path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	// --decrypt (instead of the "decrypt" subcommand) also works with sops < 3.9.
+	// Decrypting needs no .sops.yaml, but sops < 3.8 loads the one it finds from
+	// its working directory upwards and fails when none of its creation rules
+	// matches the file. So sops runs in the temp folder, away from any config
+	cmd := exec.Command(executable, "--decrypt", "--input-type", "yaml", "--output-type", "yaml", abs)
+	cmd.Dir = os.TempDir()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

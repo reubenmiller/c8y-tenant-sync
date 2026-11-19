@@ -367,3 +367,51 @@ func TestSecretStoreEncryptionFailureKeepsValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
+
+func TestSopsRuleMatches(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(dir, ".sops.yaml")
+	write := func(content string) {
+		require.NoError(t, os.WriteFile(config, []byte(content), 0o644))
+	}
+
+	write("creation_rules:\n  - path_regex: \\.enc\\.yaml$\n    age: age1x\n")
+	matches, err := sopsRuleMatches(config, filepath.Join(dir, "tenant.secrets.yaml"))
+	require.NoError(t, err)
+	assert.False(t, matches)
+	matches, err = sopsRuleMatches(config, filepath.Join(dir, "a.enc.yaml"))
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	write("creation_rules:\n  - path_regex: \\.enc\\.yaml$\n    age: age1x\n  - age: age1y\n")
+	matches, err = sopsRuleMatches(config, filepath.Join(dir, "tenant.secrets.yaml"))
+	require.NoError(t, err)
+	assert.True(t, matches, "a rule without path_regex applies to every file")
+
+	write("creation_rules:\n  - path_regex: \"[\"\n")
+	_, err = sopsRuleMatches(config, filepath.Join(dir, "tenant.secrets.yaml"))
+	assert.ErrorContains(t, err, "invalid path_regex")
+}
+
+func TestSecretStoreNoMatchingSopsRule(t *testing.T) {
+	// A fake sops which is never run (no rule matches)
+	fake := filepath.Join(t.TempDir(), "sops")
+	require.NoError(t, os.WriteFile(fake, []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	t.Setenv(EnvSopsBinary, fake)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".sops.yaml"), []byte("creation_rules:\n  - path_regex: \\.enc\\.yaml$\n    age: age1x\n"), 0o644))
+
+	auto, err := OpenSecretStore(filepath.Join(dir, "tenant.secrets.yaml"), SecretsEncryptionAuto)
+	require.NoError(t, err)
+	_, _ = auto.Value(generateRef{Name: "pw", Length: 16})
+	encrypted, err := auto.Save()
+	require.NoError(t, err, "auto saves unencrypted when no rule matches")
+	assert.False(t, encrypted)
+
+	required, err := OpenSecretStore(filepath.Join(dir, "other.secrets.yaml"), SecretsEncryptionSops)
+	require.NoError(t, err)
+	_, _ = required.Value(generateRef{Name: "pw", Length: 16})
+	_, err = required.Save()
+	assert.ErrorContains(t, err, "no creation rule in")
+}

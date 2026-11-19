@@ -135,6 +135,9 @@ users:
 
 	encrypt := exec.Command(sops, "--encrypt", "--age", recipient, "--encrypted-regex", "^(value|password)$",
 		"--input-type", "yaml", "--output-type", "yaml", plain)
+	// sops reads a .sops.yaml from its working directory upwards; don't pick
+	// up one of the repository
+	encrypt.Dir = dir
 	encrypted, err := encrypt.Output()
 	require.NoError(t, err)
 	assert.NotContains(t, string(encrypted), "s3cr3t", "the secret is encrypted")
@@ -154,4 +157,33 @@ users:
 	t.Setenv("SOPS_AGE_KEY_FILE", filepath.Join(dir, "missing.txt"))
 	_, err = LoadManifest(path)
 	assert.ErrorContains(t, err, "failed to decrypt")
+}
+
+// TestSopsDecryptIgnoresUnrelatedConfig checks that decryption does not fail
+// when a .sops.yaml without a matching creation rule is in the working
+// directory (sops < 3.8 loads it also to decrypt)
+func TestSopsDecryptIgnoresUnrelatedConfig(t *testing.T) {
+	keyFile, recipient := newAgeKey(t)
+	sops, _ := exec.LookPath("sops")
+	t.Setenv(EnvSopsBinary, "")
+	t.Setenv("SOPS_AGE_KEY_FILE", keyFile)
+
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "plain.yaml")
+	require.NoError(t, os.WriteFile(plain, []byte("tenantOptions:\n  - category: c\n    key: k\n    value: s3cr3t\n"), 0o644))
+	encrypt := exec.Command(sops, "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", plain)
+	encrypt.Dir = dir
+	encrypted, err := encrypt.Output()
+	require.NoError(t, err)
+
+	// The manifest lives next to a .sops.yaml whose rules don't match it, and
+	// tenant-sync runs from that folder
+	path := filepath.Join(dir, "tenant.sops.yaml")
+	require.NoError(t, os.WriteFile(path, encrypted, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".sops.yaml"), []byte("creation_rules:\n  - path_regex: \\.enc\\.yaml$\n    age: "+recipient+"\n"), 0o644))
+	t.Chdir(dir)
+
+	manifest, err := LoadManifest("tenant.sops.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, "s3cr3t", manifest.TenantOptions[0].Value)
 }

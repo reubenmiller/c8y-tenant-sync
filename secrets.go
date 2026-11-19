@@ -312,8 +312,16 @@ func (s *SecretStore) shouldEncrypt() (bool, error) {
 		if _, err := exec.LookPath(sopsBinary()); err != nil {
 			return false, fmt.Errorf("--secrets-encryption sops requires the sops executable: %w", err)
 		}
-		if findSopsConfig(filepath.Dir(s.Path)) == "" {
+		config := findSopsConfig(filepath.Dir(s.Path))
+		if config == "" {
 			return false, fmt.Errorf("--secrets-encryption sops requires a .sops.yaml with creation rules (in %s or a parent folder)", filepath.Dir(s.Path))
+		}
+		matches, err := sopsRuleMatches(config, s.Path)
+		if err != nil {
+			return false, err
+		}
+		if !matches {
+			return false, fmt.Errorf("--secrets-encryption sops: no creation rule in %s matches %s (add a rule such as path_regex: \\.secrets\\.yaml$)", config, s.Path)
 		}
 		return true, nil
 	default:
@@ -324,8 +332,54 @@ func (s *SecretStore) shouldEncrypt() (bool, error) {
 		if _, err := exec.LookPath(sopsBinary()); err != nil {
 			return false, nil
 		}
-		return findSopsConfig(filepath.Dir(s.Path)) != "", nil
+		config := findSopsConfig(filepath.Dir(s.Path))
+		if config == "" {
+			return false, nil
+		}
+		matches, err := sopsRuleMatches(config, s.Path)
+		if err != nil {
+			return false, err
+		}
+		if !matches {
+			fmt.Fprintf(os.Stderr, "⚠ no creation rule in %s matches %s, so it is saved unencrypted (add a rule such as path_regex: \\.secrets\\.yaml$)\n", config, s.Path)
+		}
+		return matches, nil
 	}
+}
+
+// sopsRuleMatches reports whether a creation rule of the sops config applies
+// to the file. Like sops, a rule without path_regex applies to every file,
+// and path_regex is matched against the (absolute) file path.
+func sopsRuleMatches(configPath, filePath string) (bool, error) {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	var config struct {
+		CreationRules []struct {
+			PathRegex string `yaml:"path_regex"`
+		} `yaml:"creation_rules"`
+	}
+	if err := yaml.Unmarshal(raw, &config); err != nil {
+		return false, fmt.Errorf("failed to parse %s: %w", configPath, err)
+	}
+	abs, err := filepath.Abs(filePath)
+	if err != nil {
+		return false, err
+	}
+	for _, rule := range config.CreationRules {
+		if rule.PathRegex == "" {
+			return true, nil
+		}
+		pattern, err := regexp.Compile(rule.PathRegex)
+		if err != nil {
+			return false, fmt.Errorf("invalid path_regex %q in %s: %w", rule.PathRegex, configPath, err)
+		}
+		if pattern.MatchString(abs) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // findSopsConfig returns the .sops.yaml which sops uses for files in dir (in

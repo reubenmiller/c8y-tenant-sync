@@ -65,6 +65,12 @@ func GenerateSchema() ([]byte, error) {
 	}
 
 	schema := reflector.Reflect(&Manifest{})
+	// Allow the metadata which sops adds to encrypted manifests, so editors
+	// accept them (tenant-sync decrypts them before parsing)
+	schema.Properties.Set("sops", &jsonschema.Schema{
+		Type:        "object",
+		Description: "Metadata added by sops to encrypted manifests (tenant-sync decrypts the manifest with the sops CLI before applying it)",
+	})
 	schema.ID = SchemaID
 	schema.Title = "tenant-sync manifest"
 	schema.Description = "Declarative description of the desired state of a Cumulocity IoT tenant, applied with the c8y tenant-sync extension"

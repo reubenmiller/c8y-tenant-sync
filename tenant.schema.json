@@ -960,6 +960,10 @@
     "hooks": {
       "$ref": "#/$defs/HooksSpec",
       "description": "Commands executed before and after the sync and around individual sections (e.g. go-c8y-cli calls)"
+    },
+    "sops": {
+      "type": "object",
+      "description": "Metadata added by sops to encrypted manifests (tenant-sync decrypts the manifest with the sops CLI before applying it)"
     }
   },
   "additionalProperties": false,

@@ -616,12 +616,13 @@ func escapeEnv(value string) string {
 	return strings.ReplaceAll(value, "$", "$$")
 }
 
-// LoadManifest reads a manifest file, expanding ${VAR} environment variable
+// LoadManifest reads a manifest file (decrypting it with sops when it is
+// encrypted), expanding ${VAR} environment variable
 // references before parsing so secrets (e.g. GitHub tokens) can be injected.
 func LoadManifest(path string) (*Manifest, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readManifestFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read manifest: %w", err)
+		return nil, err
 	}
 
 	expanded := expandEnv(string(raw))

@@ -46,6 +46,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🔎 **Dry-run**: preview every change before applying
 - 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
+- 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
 - 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA and subscribed microservices)
 
 ## Installation
@@ -158,6 +159,30 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--debug` | | Verbose logging + HTTP request/response details |
 
 Sections are applied in a fixed order — tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+
+### Secrets with SOPS
+
+Manifests can be encrypted with [SOPS](https://github.com/getsops/sops), so secrets such as user passwords, tenant option values or GitHub tokens can be kept in git. tenant-sync detects encrypted manifests (by the `sops` section which SOPS adds) and decrypts them with the `sops` executable before applying them, so every key type SOPS supports works with your existing SOPS setup (for example `SOPS_AGE_KEY_FILE` for age keys). Plain manifests don't need `sops`.
+
+Encrypt only the secret fields, so the rest of the manifest stays readable and reviewable. For example with a `.sops.yaml` next to the manifest:
+
+```yaml
+# .sops.yaml
+creation_rules:
+  - path_regex: tenant\.yaml$
+    encrypted_regex: ^(password|value|token)$
+    age: age1...your-public-key
+```
+
+```bash
+sops --encrypt --in-place tenant.yaml   # encrypt (or edit it with: sops tenant.yaml)
+c8y tenant-sync validate tenant.yaml    # decrypts with your key
+c8y tenant-sync run -f tenant.yaml
+```
+
+- `sops` must be installed (or set `TENANT_SYNC_SOPS` to its path) wherever an encrypted manifest is validated or applied, including CI.
+- `${VAR}` references are expanded after decryption, so both can be combined.
+- Editors with the manifest schema accept the `sops` section.
 
 ### Exporting a tenant
 

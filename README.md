@@ -41,6 +41,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
+- 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
@@ -49,7 +50,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA and subscribed microservices)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices and the device group tree)
 
 ## Installation
 
@@ -149,7 +150,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `userGroups`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -266,6 +267,7 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `retentionRules` | All retention rules |
 | `certificateAuthority` | Whether the Cumulocity CA is enabled, if the tenant has one |
 | `applications` | Applications the tenant is subscribed to but does not own, such as the built-in microservices (`--application-type MICROSERVICE,HOSTED` also exports web applications) |
+| `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
 
 | Flag | Description |
 |------|-------------|
@@ -582,6 +584,43 @@ applications:
     source:
       path: ./build/my-microservice.zip
 ```
+
+### Device groups
+
+The `deviceGroups` section creates a tree of device groups, so every tenant has the same structure (regions, sites, production lines, customers) and dashboards, inventory roles and bulk operations can target the groups consistently.
+
+```yaml
+deviceGroups:
+  - name: Europe
+    description: European sites
+    fragments:                 # optional: extra fragments merged into the managed object
+      customer_Region:
+        code: EU
+    groups:
+      - name: Plant Berlin
+        groups:
+          - name: Line 1
+          - name: Line 2
+  - name: Asia
+    groups:
+      - name: Line 1           # names only need to be unique within the parent
+```
+
+```
+  ✚ [deviceGroups] Europe (created)
+  ✚ [deviceGroups] Europe/Plant Berlin (created): linked to Europe
+  ✓ [deviceGroups] Europe/Plant Berlin/Line 1 (unchanged)
+  ↻ [deviceGroups] Europe/Plant Berlin/Line 2 (updated): linked to Europe/Plant Berlin
+```
+
+- A device group is a managed object with the `c8y_IsDeviceGroup` fragment. Root groups are created with the type `c8y_DeviceGroup`, nested groups with `c8y_DeviceSubgroup`, and new groups get the [`c8y_TenantSync`](#identifying-synced-items) fragment.
+- A group is identified by its **name within its parent**: a root group by name among the device groups without a parent, a nested group by name among the device groups linked to its parent as a child asset. Groups are looked up with an inventory query (`has(c8y_IsDeviceGroup)` and the name, with their parents). Items are labelled with their path, e.g. `Europe/Plant Berlin/Line 1`.
+- A missing group is created and linked to its parent as a child asset. A nested group which exists without any parent (type `c8y_DeviceSubgroup`, e.g. left behind by an interrupted run) is linked instead of creating a second one. A root group is never moved below another group.
+- `description` and `fragments` are only updated when they differ. A fragment counts as unchanged when the existing value contains all values of the manifest, so values added by other tools are kept. An omitted `description` is left alone.
+- If several groups match a name (e.g. two root groups called `Europe`), the item fails with the IDs of the matches and its child groups are skipped. Rename or remove the duplicates; tenant-sync does not guess.
+- Groups are never deleted or unlinked, and devices in the groups are not changed.
+- Names must not be empty and must be unique among siblings. The fragments `name`, `type`, `description`, `c8y_IsDeviceGroup`, `c8y_TenantSync` and the platform properties (`id`, `owner`, `childAssets`, ...) can not be set.
+- Device groups are synced before user groups and users.
 
 ### Users and user groups
 

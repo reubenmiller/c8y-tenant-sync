@@ -74,6 +74,11 @@ software:
 # applications:
 #   - name: advanced-software-mgmt
 
+# deviceGroups:
+#   - name: Europe
+#     groups:
+#       - name: Plant Berlin
+
 # userGroups:
 #   - name: operators
 #     roles: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]

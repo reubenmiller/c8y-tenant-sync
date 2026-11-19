@@ -117,6 +117,22 @@ applications:
       path: ./build/my-microservice.zip
       optional: true # skip instead of failing when the file does not exist
 
+# Create a tree of device groups (regions, sites, production lines, ...). A
+# group is identified by its name within its parent; missing groups are created
+# and linked to their parent as child assets. description and fragments are
+# only updated when they differ. Groups are never deleted or unlinked.
+deviceGroups:
+  - name: Europe
+    description: European sites
+    fragments: # optional extra fragments merged into the managed object
+      customer_Region:
+        code: EU
+    groups:
+      - name: Plant Berlin
+        groups:
+          - name: Line 1
+          - name: Line 2
+
 # Create user groups (called "global roles" in the UI) with roles assigned.
 # Role assignments are additive: roles already on a group but absent from the
 # manifest are kept, so built-in groups can be extended safely.

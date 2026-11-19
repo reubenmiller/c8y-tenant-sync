@@ -41,6 +41,7 @@ const (
 	SectionTrustedCertificates    = "trustedCertificates"
 	SectionCertificateRevocations = "certificateRevocationLists"
 	SectionApplications           = "applications"
+	SectionDeviceGroups           = "deviceGroups"
 	SectionUserGroups             = "userGroups"
 	SectionUsers                  = "users"
 	SectionSoftware               = "software"
@@ -55,7 +56,9 @@ const (
 // before users so users can be assigned to groups created in the same run;
 // repositories are synced before device profiles so profiles can reference
 // the synced items; custom commands run last so they can build on everything
-// the manifest declares.
+// the manifest declares. Device groups are synced before user groups and
+// users so roles and permissions can later be assigned on groups created in
+// the same run.
 var SectionOrder = []string{
 	SectionTenantOptions,
 	SectionFeatures,
@@ -64,6 +67,7 @@ var SectionOrder = []string{
 	SectionTrustedCertificates,
 	SectionCertificateRevocations,
 	SectionApplications,
+	SectionDeviceGroups,
 	SectionUserGroups,
 	SectionUsers,
 	SectionSoftware,
@@ -325,6 +329,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncCertificateRevocationLists(ctx, manifest.CertificateRevocationLists)
 		case SectionApplications:
 			err = s.SyncApplications(baseCtx, manifest.Applications)
+		case SectionDeviceGroups:
+			err = s.SyncDeviceGroups(ctx, manifest.DeviceGroups)
 		case SectionUserGroups:
 			err = s.SyncUserGroups(ctx, manifest.UserGroups)
 		case SectionUsers:

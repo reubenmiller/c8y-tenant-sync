@@ -49,6 +49,16 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 		},
 		"statistics": stats(),
 	})
+	f.JSON("GET /inventory/managedObjects", http.StatusOK, map[string]any{
+		"managedObjects": []map[string]any{
+			{"id": "1", "name": "Europe", "type": "c8y_DeviceGroup", "c8y_IsDeviceGroup": map[string]any{},
+				"description": "European sites", "c8y_TenantSync": map[string]any{"tool": "tenant-sync"},
+				"assetParents": map[string]any{"references": []any{}}},
+			{"id": "2", "name": "Plant Berlin", "type": "c8y_DeviceSubgroup", "c8y_IsDeviceGroup": map[string]any{},
+				"assetParents": map[string]any{"references": []any{map[string]any{"managedObject": map[string]any{"id": "1"}}}}},
+		},
+		"statistics": stats(),
+	})
 	return f
 }
 
@@ -85,6 +95,11 @@ func TestExportAllSections(t *testing.T) {
 		{Name: "devicesimulator", Type: "MICROSERVICE"},
 		{Name: "smartrule", Type: "MICROSERVICE"},
 	}, manifest.Applications)
+
+	// The device group tree without bookkeeping fragments
+	assert.Equal(t, []DeviceGroupSpec{
+		{Name: "Europe", Description: "European sites", Groups: []DeviceGroupSpec{{Name: "Plant Berlin"}}},
+	}, manifest.DeviceGroups)
 
 	// Subscribed (not owned) microservices of the current tenant
 	apps := f.Requests(http.MethodGet, "/application/applications")

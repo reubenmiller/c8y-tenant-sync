@@ -31,6 +31,7 @@ type Manifest struct {
 	CertificateRevocationLists []CertificateRevocationListSpec `yaml:"certificateRevocationLists" json:"certificateRevocationLists,omitempty" jsonschema:"description=Certificate revocation entries to upload from CSV files (columns SERIALNO and optional DATE); additive: existing entries are never removed"`
 
 	Applications  []ApplicationSpec   `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Applications to subscribe to the current tenant (optionally created/uploaded from a source)"`
+	DeviceGroups  []DeviceGroupSpec   `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
 	UserGroups    []UserGroupSpec     `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
 	Users         []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and assign to user groups (additive: existing memberships are never removed)"`
 	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
@@ -344,6 +345,19 @@ type ApplicationSpec struct {
 
 func (a ApplicationSpec) IsSubscribed() bool {
 	return a.Subscribed == nil || *a.Subscribed
+}
+
+// DeviceGroupSpec ensures a device group exists below its parent (or at the
+// root level) together with its child groups
+type DeviceGroupSpec struct {
+	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the device group; identifies the group among the groups of its parent (or among the root groups),minLength=1,example=Europe"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the device group (left alone when omitted)"`
+
+	// Fragments are merged into the managed object; a fragment is only
+	// updated when the existing value does not contain the desired values
+	Fragments map[string]any `yaml:"fragments" json:"fragments,omitempty" jsonschema:"description=Additional fragments merged into the group managed object (updated when the existing value does not contain the desired values)"`
+
+	Groups []DeviceGroupSpec `yaml:"groups" json:"groups,omitempty" jsonschema:"description=Child groups linked to this group as child assets"`
 }
 
 // UserGroupSpec ensures a user group (called "global role" in the Cumulocity
@@ -888,6 +902,34 @@ func validateExplicitConfiguration(label string, spec ConfigurationSpec) []strin
 	return errs
 }
 
+// validateDeviceGroups checks a level of the device group tree: names are
+// required and unique among siblings, and fragments must not set reserved
+// properties
+func validateDeviceGroups(label string, groups []DeviceGroupSpec) []string {
+	var errs []string
+	names := make(map[string]bool, len(groups))
+	for i, group := range groups {
+		itemLabel := fmt.Sprintf("%s[%d]", label, i)
+		name := strings.TrimSpace(group.Name)
+		switch {
+		case name == "":
+			errs = append(errs, itemLabel+": name is required")
+		case name != group.Name:
+			errs = append(errs, fmt.Sprintf("%s: name %q must not start or end with spaces", itemLabel, group.Name))
+		case names[name]:
+			errs = append(errs, fmt.Sprintf("%s: duplicate group name %q (names must be unique within the parent)", itemLabel, name))
+		}
+		names[name] = true
+		for _, key := range sortedKeys(group.Fragments) {
+			if slices.Contains(reservedDeviceGroupFragments, key) {
+				errs = append(errs, fmt.Sprintf("%s.fragments: %q can not be set as a fragment", itemLabel, key))
+			}
+		}
+		errs = append(errs, validateDeviceGroups(itemLabel+".groups", group.Groups)...)
+	}
+	return errs
+}
+
 // validateAbsoluteURL checks that an optional url is absolute
 func validateAbsoluteURL(value string) error {
 	if value == "" {
@@ -1045,6 +1087,7 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
+	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)
 	groupNames := make(map[string]bool, len(m.UserGroups))
 	for i, group := range m.UserGroups {
 		if group.Name == "" {

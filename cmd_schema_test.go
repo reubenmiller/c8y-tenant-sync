@@ -199,6 +199,30 @@ userGroups:
 `,
 		},
 		{
+			name: "device group without name",
+			content: `
+deviceGroups:
+  - description: missing name
+`,
+		},
+		{
+			name: "nested device group with empty name",
+			content: `
+deviceGroups:
+  - name: Europe
+    groups:
+      - name: ""
+`,
+		},
+		{
+			name: "device group with unknown field",
+			content: `
+deviceGroups:
+  - name: Europe
+    children: []
+`,
+		},
+		{
 			name: "user without userName or email",
 			content: `
 users:

@@ -31,7 +31,8 @@ jobs:
           set -o pipefail
           go test -v ./... 2>&1 | tee test.log
       - name: Check the sops round trip ran
-        run: grep -q -- "--- PASS: TestSopsAgeRoundTrip" test.log
+        run: |
+          grep -q -- "--- PASS: TestSopsAgeRoundTrip" test.log
       - name: Validate extension
         run: |
           go build -o bin/c8y-tenant-sync .

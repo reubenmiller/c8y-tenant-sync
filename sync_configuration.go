@@ -61,7 +61,7 @@ func (s *Syncer) SyncConfiguration(ctx context.Context, specs []ConfigurationSpe
 					FilePath:    file.Path,
 				}
 			}
-			s.upsertConfiguration(ctx, item, detail, createOpts)
+			s.upsertConfiguration(ctx, spec, item, detail, createOpts)
 		}
 	}
 	return nil
@@ -84,10 +84,10 @@ func (s *Syncer) configurationCreateOptions(spec ConfigurationSpec, name string)
 }
 
 // upsertConfiguration creates the configuration item if it does not exist
-// (or replaces it with --force) and records the outcome
-func (s *Syncer) upsertConfiguration(ctx context.Context, item, detail string, createOpts configuration.CreateOptions) {
+// (or replaces it with --force or the entry's force) and records the outcome
+func (s *Syncer) upsertConfiguration(ctx context.Context, spec ConfigurationSpec, item, detail string, createOpts configuration.CreateOptions) {
 	var result op.Result[jsonmodels.Configuration]
-	if s.Force {
+	if s.Force || spec.Force {
 		result = s.Client.Repository.Configuration.UpsertByName(ctx, createOpts)
 	} else {
 		result = s.Client.Repository.Configuration.GetOrCreate(ctx, createOpts)
@@ -134,7 +134,7 @@ func (s *Syncer) syncExplicitConfiguration(ctx context.Context, spec Configurati
 			FilePath:    path,
 		}
 	}
-	s.upsertConfiguration(ctx, item, detail, createOpts)
+	s.upsertConfiguration(ctx, spec, item, detail, createOpts)
 }
 
 // writeInlineFile writes inline content to a file with the given name in a

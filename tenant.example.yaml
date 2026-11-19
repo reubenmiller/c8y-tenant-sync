@@ -217,6 +217,7 @@ configuration:
     configurationType: mosquitto.conf
     deviceType: thin-edge.io
     filename: mosquitto.conf
+    force: true # re-upload on every run, so content changes are applied
     content: |
       listener 1883
       allow_anonymous false

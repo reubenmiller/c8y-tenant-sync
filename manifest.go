@@ -572,6 +572,10 @@ type ConfigurationSpec struct {
 	// Filename is the name of the uploaded file for inline content
 	Filename string `yaml:"filename" json:"filename,omitempty" jsonschema:"description=Filename of the uploaded inline content (defaults to the name),example=mosquitto.conf"`
 
+	// Force replaces the configuration item and re-uploads its file on every
+	// run (like --force, but only for this entry)
+	Force bool `yaml:"force" json:"force,omitempty" jsonschema:"description=Replace the configuration item and re-upload its file on every run (like --force but only for this entry) so changed content is applied"`
+
 	Source Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the configuration file comes from; without a source the entry declares a single configuration explicitly with name and url or inline content"`
 }
 

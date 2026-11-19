@@ -169,6 +169,10 @@
             "mosquitto.conf"
           ]
         },
+        "force": {
+          "type": "boolean",
+          "description": "Replace the configuration item and re-upload its file on every run (like --force but only for this entry) so changed content is applied"
+        },
         "source": {
           "$ref": "#/$defs/Source",
           "description": "Where the configuration file comes from; without a source the entry declares a single configuration explicitly with name and url or inline content"

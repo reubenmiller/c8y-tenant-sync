@@ -383,6 +383,7 @@ configuration:
     configurationType: mosquitto.conf
     deviceType: thin-edge.io
     filename: mosquitto.conf   # optional, defaults to the name
+    force: true                # re-upload on every run, so content changes are applied
     content: |
       listener 1883
       allow_anonymous false
@@ -395,7 +396,7 @@ configuration:
 
 - Inline `content` is uploaded as a file called `filename` (defaults to the `name`). `${VAR}` references in the content are expanded, and the content can be [encrypted with SOPS](#secrets-with-sops) (e.g. `encrypted_regex: ^(content)$`), so configuration with secrets can be kept in git.
 - `url` and `content` are mutually exclusive. With neither, the configuration item is created without a url.
-- Like configuration files from a source, an existing configuration item is not changed when the content changes, unless `--force` is used.
+- An existing configuration item is not changed when its content changes, since the uploaded file is not compared. Set `force: true` on the entry to replace the item and re-upload its file on every run, so changes are applied (like `--force`, but only for this entry). This also works for entries with a source. A forced entry is reported as `updated` on every run.
 
 ### Tenant option lookups
 

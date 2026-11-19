@@ -12,6 +12,8 @@ tenant-sync runs the `sops` executable, so every key type SOPS supports works (a
 - [Where sops finds the key](#where-sops-finds-the-key)
 - [Configure .sops.yaml](#configure-sopsyaml)
 - [Encrypt a manifest](#encrypt-a-manifest)
+- [Secret references and encrypted_regex](#secret-references-and-encrypted_regex)
+- [Edit an encrypted file](#edit-an-encrypted-file)
 - [Encrypt the secrets file of generated values](#encrypt-the-secrets-file-of-generated-values)
 - [Read a generated value](#read-a-generated-value)
 - [Share with a team and rotate keys](#share-with-a-team-and-rotate-keys)
@@ -120,6 +122,66 @@ c8y tenant-sync run -f tenant.yaml
 - `${generate:NAME}` references also work in encrypted manifests.
 - Encrypt string fields only: an encrypted number or boolean becomes an `ENC[...]` string, which the editor's schema validation reports (tenant-sync decrypts it before validating, so the run works). The schema accepts the `sops` section.
 
+## Secret references and encrypted_regex
+
+`encrypted_regex` selects fields by **name**, wherever they are. A rule with `^(value|password|token|content)$` encrypts every `value`, also tenant option values which are not secret, and a `${VAR}` written in such a field is encrypted too (it still works, since tenant-sync expands it after decrypting, but it can no longer be read in the file).
+
+Use [secret references](../README.md#secret-references) for values which come from the environment or are generated. They are separate fields (`valueFrom`, `passwordFrom`, `tokenFrom`), so the rule leaves them readable and only encrypts literal secrets:
+
+```yaml
+tenantOptions:
+  - category: configuration
+    key: device.bootstrap.enabled
+    value: "false"                   # encrypted (a value field), although not secret
+  - category: integration
+    key: api.secret
+    valueFrom:
+      env: INTEGRATION_SECRET        # readable: not a value field
+users:
+  - email: svc-dashboard@example.invalid
+    passwordFrom:
+      generate: svc-dashboard-password # readable; the value is in the encrypted secrets file
+```
+
+If non-secret tenant options should stay readable too, leave `value` out of `encrypted_regex` and give every secret tenant option a `valueFrom` reference instead of a literal value.
+
+Alternatively, keep the manifest unencrypted and put the secret values in a sops-encrypted dotenv file, which `sops exec-env` provides as environment variables for `env` references and `${VAR}`:
+
+```yaml
+# .sops.yaml
+creation_rules:
+  - path_regex: \.enc\.env$
+    age: age1...your-public-key
+```
+
+```bash
+sops secrets.enc.env                    # create/edit: INTEGRATION_SECRET=...
+sops exec-env secrets.enc.env 'c8y tenant-sync run -f tenant.yaml'
+```
+
+## Edit an encrypted file
+
+Always edit an encrypted file with sops, also its readable fields: sops stores a checksum (MAC) over **all** values of the file, so editing the file directly makes it unreadable (`MAC mismatch`).
+
+```bash
+# Edit in your editor (e.g. VS Code): decrypts, and encrypts again on save
+EDITOR="code --wait" sops tenant.yaml
+
+# Change a single value
+sops --set '["tenantOptions"][0]["value"] "true"' tenant.yaml
+```
+
+- Don't paste `ENC[...]` text into the decrypted file: sops encrypts it again, and the field then decrypts to the `ENC[...]` text instead of the value.
+- Don't edit the `sops` section (e.g. `encrypted_regex`) by hand. To change which fields are encrypted, decrypt the file, change the rule in `.sops.yaml` and encrypt it again.
+- sops 3.9 and newer can limit the checksum to the encrypted values (`mac_only_encrypted: true` in the creation rule), so readable fields can be edited directly.
+
+If a file was edited directly, decrypt it while ignoring the checksum and encrypt it again (run the decrypt in a folder without a `.sops.yaml`, since sops before 3.8 also reads it to decrypt):
+
+```bash
+sops --decrypt --ignore-mac tenant.yaml > /tmp/tenant.plain.yaml
+cp /tmp/tenant.plain.yaml tenant.yaml && sops --encrypt --in-place tenant.yaml && rm /tmp/tenant.plain.yaml
+```
+
 Inline configuration with secrets works the same way:
 
 ```yaml
@@ -227,6 +289,9 @@ If the run generates new values, the secrets file changes in the CI workspace. C
 | Message | Cause and fix |
 |---------|---------------|
 | `Failed to get the data key required to decrypt the SOPS file` | sops can't find a key which can decrypt the file. Set `SOPS_AGE_KEY_FILE` (see [Where sops finds the key](#where-sops-finds-the-key)), or ask someone with access to add your public key and run `sops updatekeys`. |
+| `MAC mismatch` | The file was edited directly instead of with sops, see [Edit an encrypted file](#edit-an-encrypted-file). |
+| A value decrypts to `ENC[...]` | It was encrypted twice (e.g. `ENC[...]` text was pasted into the decrypted file). Restore the value with `sops --set` or by editing with `sops`. |
+| `environment variable X is not set or empty` | An `env` reference (`valueFrom`, `passwordFrom`, `tokenFrom`) names a variable which is not set. Set it, or provide it with `sops exec-env`. |
 | `no matching creation rules found` (from `sops --encrypt`) | No rule of `.sops.yaml` matches the file. Add a rule (e.g. `path_regex: \.secrets\.yaml$`), and check that sops runs in (or below) the folder of `.sops.yaml`. |
 | `⚠ no creation rule in .sops.yaml matches tenant.secrets.yaml, so it is saved unencrypted` | `--secrets-encryption auto` found a `.sops.yaml` without a rule for the secrets file. Add one, then encrypt the file with `sops --encrypt --in-place tenant.secrets.yaml`. |
 | `... is encrypted with sops, but the sops executable was not found` | Install sops, or set `TENANT_SYNC_SOPS` to its path. |

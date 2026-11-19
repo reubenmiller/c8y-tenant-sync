@@ -93,10 +93,31 @@ func (TenantOptionSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
 
 // JSONSchemaExtend enforces that exactly one lookup reference is set
 func (TenantOptionValueFrom) JSONSchemaExtend(schema *jsonschema.Schema) {
-	schema.OneOf = []*jsonschema.Schema{
-		{Required: []string{"application"}, Not: &jsonschema.Schema{Required: []string{"device"}}},
-		{Required: []string{"device"}, Not: &jsonschema.Schema{Required: []string{"application"}}},
+	schema.OneOf = exactlyOneOf("application", "device", "env", "generate")
+}
+
+// JSONSchemaExtend requires exactly one of env and generate
+func (SecretRef) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.OneOf = exactlyOneOf("env", "generate")
+}
+
+// exactlyOneOf returns oneOf alternatives which require exactly one of the
+// properties
+func exactlyOneOf(properties ...string) []*jsonschema.Schema {
+	var alternatives []*jsonschema.Schema
+	for _, property := range properties {
+		var others []*jsonschema.Schema
+		for _, other := range properties {
+			if other != property {
+				others = append(others, &jsonschema.Schema{Required: []string{other}})
+			}
+		}
+		alternatives = append(alternatives, &jsonschema.Schema{
+			Required: []string{property},
+			Not:      &jsonschema.Schema{AnyOf: others},
+		})
 	}
+	return alternatives
 }
 
 // GenerateSchema builds the JSON schema for the manifest from the Go types

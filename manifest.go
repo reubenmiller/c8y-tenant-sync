@@ -213,6 +213,12 @@ type TenantOptionValueFrom struct {
 
 	// Device resolves to the managed object ID of a device looked up by name
 	Device string `yaml:"device" json:"device,omitempty" jsonschema:"description=Device name resolved to its managed object ID"`
+
+	// Env takes the value from an environment variable
+	Env string `yaml:"env" json:"env,omitempty" jsonschema:"description=Name of an environment variable which holds the value (it must be set and not empty),example=MY_SECRET"`
+
+	// Generate takes a generated value (NAME or NAME:LENGTH)
+	Generate string `yaml:"generate" json:"generate,omitempty" jsonschema:"description=Name of a generated value (NAME or NAME:LENGTH) stored in the secrets file; the same as ${generate:NAME},example=integration-secret"`
 }
 
 // FeatureSpec enables or disables a feature toggle on the current tenant
@@ -368,7 +374,11 @@ type UserSpec struct {
 
 	// Password is only used when creating the user; existing passwords are
 	// never overwritten. Inject secrets with ${VAR} expansion.
-	Password string `yaml:"password" json:"password,omitempty" jsonschema:"description=Initial password used only when creating the user (never updated afterwards); supports ${VAR} expansion"`
+	Password string `yaml:"password" json:"password,omitempty" jsonschema:"description=Initial password used only when creating the user (never updated afterwards); supports ${VAR} expansion; mutually exclusive with passwordFrom"`
+
+	// PasswordFrom takes the initial password from an environment variable or
+	// a generated value
+	PasswordFrom *SecretRef `yaml:"passwordFrom" json:"passwordFrom,omitempty" jsonschema:"description=Take the initial password from an environment variable (env) or a generated value (generate); mutually exclusive with password"`
 
 	// SendPasswordResetEmail asks the platform to email a password reset
 	// link on creation instead of (or in addition to) setting a password
@@ -444,6 +454,14 @@ func (s *Source) Validate() error {
 	if s.GitHub != nil && !strings.Contains(s.GitHub.Repo, "/") {
 		return fmt.Errorf("github.repo must be in the form owner/repo, got %q", s.GitHub.Repo)
 	}
+	if s.GitHub != nil && s.GitHub.TokenFrom != nil {
+		if s.GitHub.Token != "" {
+			return fmt.Errorf("github.token and github.tokenFrom are mutually exclusive")
+		}
+		if errs := s.GitHub.TokenFrom.validate("github.tokenFrom"); len(errs) > 0 {
+			return fmt.Errorf("%s", strings.Join(errs, "; "))
+		}
+	}
 	return nil
 }
 
@@ -473,7 +491,10 @@ type GitHubSource struct {
 
 	// Token for the GitHub API (falls back to GITHUB_TOKEN / GH_TOKEN env vars).
 	// Supports ${VAR} expansion, e.g. token: ${MY_GITHUB_TOKEN}
-	Token string `yaml:"token" json:"token,omitempty" jsonschema:"description=GitHub API token (falls back to GITHUB_TOKEN / GH_TOKEN env vars; supports ${VAR} expansion)"`
+	Token string `yaml:"token" json:"token,omitempty" jsonschema:"description=GitHub API token (falls back to GITHUB_TOKEN / GH_TOKEN env vars; supports ${VAR} expansion); mutually exclusive with tokenFrom"`
+
+	// TokenFrom takes the GitHub API token from an environment variable
+	TokenFrom *SecretRef `yaml:"tokenFrom" json:"tokenFrom,omitempty" jsonschema:"description=Take the GitHub API token from an environment variable (env) or a generated value (generate); mutually exclusive with token"`
 }
 
 // SoftwareSpec syncs software packages into the software repository.
@@ -963,14 +984,15 @@ func (m *Manifest) Validate() error {
 		}
 		if opt.ValueFrom != nil {
 			refs := 0
-			if opt.ValueFrom.Application != "" {
-				refs++
-			}
-			if opt.ValueFrom.Device != "" {
-				refs++
+			for _, set := range []bool{opt.ValueFrom.Application != "", opt.ValueFrom.Device != "", opt.ValueFrom.Env != "", opt.ValueFrom.Generate != ""} {
+				if set {
+					refs++
+				}
 			}
 			if refs != 1 {
-				errs = append(errs, fmt.Sprintf("tenantOptions[%d]: valueFrom requires exactly one of: application, device", i))
+				errs = append(errs, fmt.Sprintf("tenantOptions[%d]: valueFrom requires exactly one of: application, device, env, generate", i))
+			} else if opt.ValueFrom.Env != "" || opt.ValueFrom.Generate != "" {
+				errs = append(errs, SecretRef{Env: opt.ValueFrom.Env, Generate: opt.ValueFrom.Generate}.validate(fmt.Sprintf("tenantOptions[%d].valueFrom", i))...)
 			}
 		}
 	}
@@ -1039,6 +1061,12 @@ func (m *Manifest) Validate() error {
 	}
 	usernames := make(map[string]bool, len(m.Users))
 	for i, user := range m.Users {
+		if user.PasswordFrom != nil {
+			if user.Password != "" {
+				errs = append(errs, fmt.Sprintf("users[%d]: password and passwordFrom are mutually exclusive", i))
+			}
+			errs = append(errs, user.PasswordFrom.validate(fmt.Sprintf("users[%d].passwordFrom", i))...)
+		}
 		if user.Username == "" {
 			errs = append(errs, fmt.Sprintf("users[%d]: userName or email is required", i))
 		} else if usernames[user.Username] {

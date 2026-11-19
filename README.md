@@ -46,6 +46,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🔎 **Dry-run**: preview every change before applying
 - 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
+- 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
 - 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA and subscribed microservices)
@@ -173,7 +174,7 @@ Encrypt only the secret fields, so the rest of the manifest stays readable and r
 # .sops.yaml
 creation_rules:
   - path_regex: tenant\.yaml$
-    encrypted_regex: ^(password|value|token)$
+    encrypted_regex: ^(password|value|token|content)$
     age: age1...your-public-key
 ```
 
@@ -186,8 +187,44 @@ c8y tenant-sync run -f tenant.yaml
 - `sops` must be installed (or set `TENANT_SYNC_SOPS` to its path) wherever an encrypted manifest is validated or applied, including CI.
 - `${VAR}` references are expanded after decryption, so both can be combined.
 - Editors with the manifest schema accept the `sops` section.
+- Use [secret references](#secret-references) (`valueFrom`, `passwordFrom`, `tokenFrom`) for values from the environment or generated values: they are separate fields, so they stay readable while literal secrets are encrypted.
 
 See the **[SOPS guide](docs/sops.md)** for the full setup: installing sops and age, creating a key, `.sops.yaml` rules for manifests and secrets files, reading generated values, sharing with a team, CI, and troubleshooting.
+
+### Secret references
+
+Fields which hold secrets can reference their value instead of containing it:
+
+| Field | Instead of | References |
+|-------|------------|------------|
+| `tenantOptions[].valueFrom` | `value` | `env`, `generate` (and `application`, `device`) |
+| `users[].passwordFrom` | `password` | `env`, `generate` |
+| `github.tokenFrom` (any GitHub source) | `github.token` | `env`, `generate` |
+
+```yaml
+tenantOptions:
+  - category: integration
+    key: api.secret
+    valueFrom:
+      env: INTEGRATION_SECRET        # an environment variable
+
+users:
+  - email: svc-dashboard@example.invalid
+    passwordFrom:
+      generate: svc-dashboard-password # a generated value (NAME or NAME:LENGTH)
+
+software:
+  - source:
+      github:
+        repo: owner/private-packages
+        tokenFrom:
+          env: PRIVATE_REPO_TOKEN
+```
+
+- `env` must name an environment variable which is set and not empty when the manifest is applied (also in a dry run); otherwise the run fails before changing anything. `validate` only checks the references, so it works without the variables.
+- `generate` works like `${generate:NAME}`: the value is generated once and stored in the [secrets file](#generated-values).
+- The values are masked in the output, like all secrets.
+- Compared to `${VAR}` in the field itself, a reference is a separate field: the schema validates it, and [sops rules](docs/sops.md#secret-references-and-encrypted_regex) such as `encrypted_regex: ^(value|password|token)$` only encrypt literal secrets, while references stay readable. `${VAR}` keeps working in every field.
 
 ### Generated values
 
@@ -429,7 +466,14 @@ configuration:
 
 ### Tenant option lookups
 
-Tenant option values can be resolved by reference at apply time instead of hardcoding IDs, using `valueFrom` with exactly one reference (`application` resolves a name to the application ID, `device` to a device managed object ID):
+Tenant option values can be resolved by reference instead of hardcoding them, using `valueFrom` with exactly one reference:
+
+| `valueFrom` | Value |
+|-------------|-------|
+| `application` | The ID of the application with this name (looked up when applying) |
+| `device` | The managed object ID of the device with this name (looked up when applying) |
+| `env` | The value of an environment variable, see [Secret references](#secret-references) |
+| `generate` | A generated value, see [Generated values](#generated-values) |
 
 ```yaml
 tenantOptions:
@@ -437,6 +481,10 @@ tenantOptions:
     key: default.application
     valueFrom:
       application: devicemanagement
+  - category: integration
+    key: api.secret
+    valueFrom:
+      env: INTEGRATION_SECRET
 ```
 
 ### Retention rules

@@ -141,6 +141,12 @@ func runSync(opts *runOptions, args []string) (err error) {
 	if err != nil {
 		return err
 	}
+	// env and generate references (valueFrom, passwordFrom, tokenFrom)
+	refValues, err := manifest.ResolveSecretRefs(secrets)
+	if err != nil {
+		return err
+	}
+	redactor.Add(refValues...)
 	redactor.Add(secrets.Values()...)
 	redactor.Add(manifestSecretValues(manifest)...)
 
@@ -252,22 +258,10 @@ func manifestSecretValues(manifest *Manifest) []string {
 	for _, user := range manifest.Users {
 		values = append(values, user.Password)
 	}
-	addToken := func(source *Source) {
-		if source != nil && source.GitHub != nil {
+	for _, source := range manifest.allSources() {
+		if source.GitHub != nil {
 			values = append(values, source.GitHub.Token)
 		}
-	}
-	for i := range manifest.Software {
-		addToken(&manifest.Software[i].Source)
-	}
-	for i := range manifest.Firmware {
-		addToken(&manifest.Firmware[i].Source)
-	}
-	for i := range manifest.Configuration {
-		addToken(&manifest.Configuration[i].Source)
-	}
-	for i := range manifest.Applications {
-		addToken(manifest.Applications[i].Source)
 	}
 	return values
 }

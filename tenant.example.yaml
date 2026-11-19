@@ -39,6 +39,13 @@ tenantOptions:
     valueFrom:
       application: devicemanagement
 
+  # A secret from an environment variable (or generate: NAME for a generated
+  # value); it must be set when the manifest is applied
+  - category: integration
+    key: api.secret
+    valueFrom:
+      env: INTEGRATION_SECRET
+
 # Enable/disable feature toggles for the current tenant
 features:
   - key: feature-branding
@@ -138,9 +145,11 @@ users:
     groups: [operators]
 
   # A random initial password, stored in tenant.secrets.yaml (encrypted with
-  # sops when a .sops.yaml is found) and masked in the output
+  # sops when a .sops.yaml is found) and masked in the output. passwordFrom
+  # is a separate field, so sops rules on "password" leave it readable
   - email: svc-monitoring@example.invalid
-    password: ${generate:svc-monitoring-password}
+    passwordFrom:
+      generate: svc-monitoring-password # or: env: MONITORING_PASSWORD
     groups: [operators]
 
   - userName: old-account@example.com

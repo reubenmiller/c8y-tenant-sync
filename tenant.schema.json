@@ -331,7 +331,11 @@
         },
         "token": {
           "type": "string",
-          "description": "GitHub API token (falls back to GITHUB_TOKEN / GH_TOKEN env vars; supports ${VAR} expansion)"
+          "description": "GitHub API token (falls back to GITHUB_TOKEN / GH_TOKEN env vars; supports ${VAR} expansion); mutually exclusive with tokenFrom"
+        },
+        "tokenFrom": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Take the GitHub API token from an environment variable (env) or a generated value (generate); mutually exclusive with token"
         }
       },
       "additionalProperties": false,
@@ -539,6 +543,56 @@
         "dataType",
         "maximumAge"
       ]
+    },
+    "SecretRef": {
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "generate"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "env"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "env"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "generate"
+          ]
+        }
+      ],
+      "properties": {
+        "env": {
+          "type": "string",
+          "description": "Name of an environment variable which holds the value (it must be set and not empty)",
+          "examples": [
+            "MY_PASSWORD"
+          ]
+        },
+        "generate": {
+          "type": "string",
+          "description": "Name of a generated value (NAME or NAME:LENGTH) stored in the secrets file; the same as ${generate:NAME}",
+          "examples": [
+            "svc-password"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "SectionHooksSpec": {
       "properties": {
@@ -831,8 +885,22 @@
       "oneOf": [
         {
           "not": {
-            "required": [
-              "device"
+            "anyOf": [
+              {
+                "required": [
+                  "device"
+                ]
+              },
+              {
+                "required": [
+                  "env"
+                ]
+              },
+              {
+                "required": [
+                  "generate"
+                ]
+              }
             ]
           },
           "required": [
@@ -841,12 +909,74 @@
         },
         {
           "not": {
-            "required": [
-              "application"
+            "anyOf": [
+              {
+                "required": [
+                  "application"
+                ]
+              },
+              {
+                "required": [
+                  "env"
+                ]
+              },
+              {
+                "required": [
+                  "generate"
+                ]
+              }
             ]
           },
           "required": [
             "device"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "application"
+                ]
+              },
+              {
+                "required": [
+                  "device"
+                ]
+              },
+              {
+                "required": [
+                  "generate"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "env"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "application"
+                ]
+              },
+              {
+                "required": [
+                  "device"
+                ]
+              },
+              {
+                "required": [
+                  "env"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "generate"
           ]
         }
       ],
@@ -861,6 +991,20 @@
         "device": {
           "type": "string",
           "description": "Device name resolved to its managed object ID"
+        },
+        "env": {
+          "type": "string",
+          "description": "Name of an environment variable which holds the value (it must be set and not empty)",
+          "examples": [
+            "MY_SECRET"
+          ]
+        },
+        "generate": {
+          "type": "string",
+          "description": "Name of a generated value (NAME or NAME:LENGTH) stored in the secrets file; the same as ${generate:NAME}",
+          "examples": [
+            "integration-secret"
+          ]
         }
       },
       "additionalProperties": false,
@@ -985,7 +1129,11 @@
         },
         "password": {
           "type": "string",
-          "description": "Initial password used only when creating the user (never updated afterwards); supports ${VAR} expansion"
+          "description": "Initial password used only when creating the user (never updated afterwards); supports ${VAR} expansion; mutually exclusive with passwordFrom"
+        },
+        "passwordFrom": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Take the initial password from an environment variable (env) or a generated value (generate); mutually exclusive with password"
         },
         "sendPasswordResetEmail": {
           "type": "boolean",

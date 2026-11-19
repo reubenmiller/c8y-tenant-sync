@@ -61,6 +61,7 @@ func TestRunGeneratesPasswordAndMasksOutput(t *testing.T) {
 	value := secrets["svc-dashboard-password"].Value
 	require.Len(t, value, defaultGenerateLength)
 	assert.Equal(t, f.server.URL, secrets["svc-dashboard-password"].Host)
+	assert.Equal(t, "t123", secrets["svc-dashboard-password"].Tenant)
 	info, err := os.Stat(secretsPath)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
@@ -77,6 +78,25 @@ func TestRunGeneratesPasswordAndMasksOutput(t *testing.T) {
 	assert.Contains(t, stdout, "initial password from ${generate:svc-dashboard-password}")
 	assert.Contains(t, stdout, "🔐 Generated 1 value(s): svc-dashboard-password")
 	assert.Contains(t, stdout, "Saved to "+secretsPath+" (unencrypted, permissions 0600)")
+}
+
+func TestRunLooksUpTenantForSecrets(t *testing.T) {
+	f := fakeUsers(t)
+	f.JSON("GET /tenant/currentTenant", http.StatusOK, map[string]any{"name": "t123"})
+	setupRunAgainst(t, f)
+	t.Setenv("C8Y_TENANT", "") // the session has no tenant ID
+
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "tenant.yaml")
+	require.NoError(t, os.WriteFile(manifest, []byte(generatedUserManifest), 0o644))
+
+	var runErr error
+	stdout, _ := captureStdio(t, func() {
+		runErr = runRoot(t, "run", "-f", manifest)
+	})
+	require.NoError(t, runErr, stdout)
+	secrets := readSecretsFile(t, filepath.Join(dir, "tenant.secrets.yaml"))
+	assert.Equal(t, "t123", secrets["svc-dashboard-password"].Tenant, "the tenant is looked up from the platform")
 }
 
 func TestRunReusesGeneratedValues(t *testing.T) {

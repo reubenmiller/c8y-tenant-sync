@@ -84,6 +84,7 @@ func TestSecretStoreGenerateReuseAndSave(t *testing.T) {
 	store, err := OpenSecretStore(path, SecretsEncryptionNone)
 	require.NoError(t, err)
 	store.Host = "https://example.c8y.io"
+	store.Tenant = "t12345"
 
 	first, err := store.Value(generateRef{Name: "pw", Length: 16})
 	require.NoError(t, err)
@@ -120,6 +121,7 @@ func TestSecretStoreGenerateReuseAndSave(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "host: https://example.c8y.io")
+	assert.Contains(t, string(raw), "tenant: t12345")
 	assert.Contains(t, string(raw), "generatedAt:")
 
 	// Nothing generated: the file is not rewritten
@@ -128,6 +130,25 @@ func TestSecretStoreGenerateReuseAndSave(t *testing.T) {
 	require.NoError(t, err)
 	after, _ := os.Stat(path)
 	assert.Equal(t, before.ModTime(), after.ModTime())
+}
+
+func TestSecretStoreSetTenant(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tenant.secrets.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("secrets:\n  old:\n    value: Old-Value-123\n    generatedAt: \"2026-01-01T00:00:00Z\"\n    tenant: t1\n"), 0o600))
+	store, err := OpenSecretStore(path, SecretsEncryptionNone)
+	require.NoError(t, err)
+
+	// The tenant is not known yet when the value is generated
+	_, err = store.Value(generateRef{Name: "new", Length: 16})
+	require.NoError(t, err)
+	store.SetTenant("t2")
+	_, err = store.Save()
+	require.NoError(t, err)
+
+	reopened, err := OpenSecretStore(path, SecretsEncryptionNone)
+	require.NoError(t, err)
+	assert.Equal(t, "t2", reopened.entries["new"].Tenant, "values generated in this run get the tenant")
+	assert.Equal(t, "t1", reopened.entries["old"].Tenant, "stored values keep their tenant")
 }
 
 func TestSecretStoreDryRun(t *testing.T) {

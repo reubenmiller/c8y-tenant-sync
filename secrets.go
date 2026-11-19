@@ -122,6 +122,7 @@ type SecretEntry struct {
 	Value       string `yaml:"value"`
 	GeneratedAt string `yaml:"generatedAt"`
 	Host        string `yaml:"host,omitempty"`
+	Tenant      string `yaml:"tenant,omitempty"`
 }
 
 type secretsFile struct {
@@ -133,8 +134,9 @@ type secretsFile struct {
 type SecretStore struct {
 	Path       string
 	Encryption SecretsEncryption
-	// Host is recorded with new values
-	Host string
+	// Host and Tenant are recorded with new values
+	Host   string
+	Tenant string
 	// DryRun leaves the values unchanged: missing values are not generated
 	// and the file is not written
 	DryRun bool
@@ -204,9 +206,24 @@ func (s *SecretStore) Value(ref generateRef) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to generate %s: %w", ref.Name, err)
 	}
-	s.entries[ref.Name] = SecretEntry{Value: value, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Host: s.Host}
+	s.entries[ref.Name] = SecretEntry{Value: value, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Host: s.Host, Tenant: s.Tenant}
 	s.generated = append(s.generated, ref.Name)
 	return value, nil
+}
+
+// SetTenant records the tenant ID, also on the values generated in this
+// run which don't have one yet (when the tenant is only known after the
+// manifest was loaded)
+func (s *SecretStore) SetTenant(tenant string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Tenant = tenant
+	for _, name := range s.generated {
+		if entry := s.entries[name]; entry.Tenant == "" {
+			entry.Tenant = tenant
+			s.entries[name] = entry
+		}
+	}
 }
 
 // Values returns all stored values (to mask them in the output)

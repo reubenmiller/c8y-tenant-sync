@@ -11,6 +11,7 @@ import (
 
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/authentication"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/tenants/currenttenant"
 	"github.com/spf13/cobra"
 )
 
@@ -127,6 +128,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 	}
 	secrets.DryRun = dryRun
 	secrets.Host = authentication.HostFromEnvironment()
+	secrets.Tenant = authentication.FromEnvironment().Tenant
 
 	manifest, err := LoadManifestWith(manifestPath, LoadOptions{Secrets: secrets})
 	// Values generated while loading are saved even when the run fails later,
@@ -180,6 +182,12 @@ func runSync(opts *runOptions, args []string) (err error) {
 		client, err = runtime.NewClient(opts.debug)
 		if err != nil {
 			return err
+		}
+		if secrets.Tenant == "" && len(secrets.Generated()) > 0 {
+			// The session has no tenant ID: look it up for the secrets file
+			if tenant := client.Tenants.Current.Get(context.Background(), currenttenant.GetOptions{}); tenant.Err == nil {
+				secrets.SetTenant(tenant.Data.Name())
+			}
 		}
 	}
 

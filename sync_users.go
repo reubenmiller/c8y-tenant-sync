@@ -142,12 +142,17 @@ func (s *Syncer) ensureGroupRoles(ctx context.Context, groupID string, created b
 func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 	// Group IDs are resolved once and shared by all users of the target tenant
 	groupIDs := map[string]string{}
+	// Inventory roles and device groups are looked up once as well
+	inventory := &inventoryAssignmentCache{}
 
 	for _, spec := range specs {
 		if s.DryRun {
 			detail := "ensure user"
 			if len(spec.Groups) > 0 {
 				detail += " in groups: " + strings.Join(spec.Groups, ", ")
+			}
+			if len(spec.InventoryAssignments) > 0 {
+				detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryAssignments)
 			}
 			s.record(SectionUsers, spec.Username, ActionPlanned, detail, nil)
 			continue
@@ -205,6 +210,18 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 				action = ActionUpdated
 			}
 			details = append(details, "assigned to groups: "+strings.Join(assigned, ", "))
+		}
+
+		inventoryChanges, err := s.ensureInventoryAssignments(ctx, userID, action == ActionCreated, spec.InventoryAssignments, inventory)
+		if len(inventoryChanges) > 0 {
+			if action == ActionUnchanged {
+				action = ActionUpdated
+			}
+			details = append(details, inventoryChanges...)
+		}
+		if err != nil {
+			s.record(SectionUsers, spec.Username, ActionFailed, strings.Join(append(details, "assign inventory roles"), "; "), err)
+			continue
 		}
 		s.record(SectionUsers, spec.Username, action, strings.Join(details, "; "), nil)
 	}

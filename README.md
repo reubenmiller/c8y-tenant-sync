@@ -42,6 +42,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
+- 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🔎 **Dry-run**: preview every change before applying
@@ -49,7 +50,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA and subscribed microservices)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices and inventory roles)
 
 ## Installation
 
@@ -149,7 +150,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `userGroups`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -266,6 +267,7 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `retentionRules` | All retention rules |
 | `certificateAuthority` | Whether the Cumulocity CA is enabled, if the tenant has one |
 | `applications` | Applications the tenant is subscribed to but does not own, such as the built-in microservices (`--application-type MICROSERVICE,HOSTED` also exports web applications) |
+| `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
 
 | Flag | Description |
 |------|-------------|
@@ -623,6 +625,50 @@ For existing users only the fields set in the manifest are compared and updated 
 - **`password` is only used when creating the user** and never updated afterwards, so re-running the sync doesn't reset credentials. Use `${VAR}` expansion to keep secrets out of the manifest, or prefer `sendPasswordResetEmail: true` to avoid handling passwords entirely.
 - **`enabled` defaults to true** and is always managed: a user disabled in the UI is re-enabled on the next sync unless the manifest says `enabled: false`.
 
+### Inventory roles and device group access
+
+User groups grant permissions on the whole tenant. For least-privilege access, Cumulocity has *inventory roles*: a set of permissions (for example "read measurements" or "manage alarms") which a user gets only on the devices of specific device groups. The `inventoryRoles` section defines the roles, and `users[].inventoryAssignments` gives a user roles on a device group:
+
+```yaml
+inventoryRoles:
+  - name: Site operator
+    description: Alarms and operations for one site
+    permissions:
+      - {scope: ALARM, permission: ADMIN}
+      - {scope: OPERATION, permission: ADMIN}
+      - {scope: MEASUREMENT, permission: READ}
+      - {scope: MANAGED_OBJECT, permission: READ}
+
+  - name: Restart only
+    permissions:
+      - {scope: OPERATION, type: c8y_Restart, permission: ADMIN}
+
+users:
+  - email: berlin-ops@example.com
+    inventoryAssignments:
+      - group: Plant Berlin          # device group name ...
+        roles: [Site operator]
+      - group: Europe/Plant Paris    # ... or a path of group names
+        roles: [Restart only]
+```
+
+A permission has a `scope` (`ALARM`, `AUDIT`, `EVENT`, `MANAGED_OBJECT`, `MEASUREMENT`, `OPERATION` or `*`), an optional `type` which limits it to a type or fragment such as `c8y_Restart` (default `*`), and a `permission` level (`READ`, `ADMIN`, or `*` for both; `ALL` is accepted as an alias of `*`).
+
+Inventory roles:
+
+- are matched by **name** and created when missing;
+- get their **description** updated when it is set and differs;
+- get their **permissions replaced** when the set differs from the manifest (the order does not matter). The manifest owns the definition of a declared role. A role without `permissions` in the manifest keeps the permissions it has;
+- are never deleted, and roles not in the manifest are left alone.
+
+Inventory assignments are applied in the `users` section, after the user is created or updated, and are **additive**:
+
+- `group` is the name of a device group (`has(c8y_IsDeviceGroup)`). The name must match exactly one group, otherwise the user fails with "not found" or "ambiguous" (with the IDs of the matching groups). For groups with the same name, use a path of names separated by `/`, such as `Europe/Plant Berlin`, where each group is a direct child of the previous one. A value with a `/` is first looked up as a plain group name.
+- `roles` are inventory role names, declared in `inventoryRoles` or already in the tenant. They are checked when the manifest is applied, so a role which is in neither fails the user with "not found".
+- Missing roles are added to the user's existing assignment for the group, or a new assignment is created. Roles and assignments which are not in the manifest are never removed.
+
+`inventoryRoles` is applied after `userGroups` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
+
 ### SmartREST 2.0 template collections
 
 The `smartrestTemplates` section syncs SmartREST 2.0 template collections from JSON files as exported by the platform UI (Device Management → Device types → SmartREST templates → Export) — one collection per file. Point a source at a directory and every `*.json` file in it is synced:
@@ -881,6 +927,7 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
 │  sync_users.go     (user groups, │
 │                     users, role/ │
 │                     group assign)│
+│  sync_inventory_roles.go         │  inventory roles + assignments
 │  sync_software.go  + parser.go   │  package filename parsing
 │  sync_firmware.go  + firmware.go │  OS image filename parsing
 │  sync_configuration.go           │
@@ -893,6 +940,7 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
         │  go-c8y SDK│  Repository.{Software,Firmware,Configuration},
         └────────────┘  Tenants.Options, Features, Applications,
                         Users, UserGroups, UserRoles,
+                        InventoryRoles, DevicePermissions,
                         SmartRestTemplates, TrustedCertificates,
                         ManagedObjects
 ```

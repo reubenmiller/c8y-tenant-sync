@@ -42,6 +42,7 @@ const (
 	SectionCertificateRevocations = "certificateRevocationLists"
 	SectionApplications           = "applications"
 	SectionUserGroups             = "userGroups"
+	SectionInventoryRoles         = "inventoryRoles"
 	SectionUsers                  = "users"
 	SectionSoftware               = "software"
 	SectionFirmware               = "firmware"
@@ -53,6 +54,8 @@ const (
 
 // SectionOrder is the order sections are applied in. User groups are synced
 // before users so users can be assigned to groups created in the same run;
+// inventory roles are synced after user groups and before users so the
+// users' inventory assignments can reference roles created in the same run;
 // repositories are synced before device profiles so profiles can reference
 // the synced items; custom commands run last so they can build on everything
 // the manifest declares.
@@ -65,6 +68,7 @@ var SectionOrder = []string{
 	SectionCertificateRevocations,
 	SectionApplications,
 	SectionUserGroups,
+	SectionInventoryRoles,
 	SectionUsers,
 	SectionSoftware,
 	SectionFirmware,
@@ -327,6 +331,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncApplications(baseCtx, manifest.Applications)
 		case SectionUserGroups:
 			err = s.SyncUserGroups(ctx, manifest.UserGroups)
+		case SectionInventoryRoles:
+			err = s.SyncInventoryRoles(ctx, manifest.InventoryRoles)
 		case SectionUsers:
 			err = s.SyncUsers(ctx, manifest.Users)
 		case SectionSoftware:

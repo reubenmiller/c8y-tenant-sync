@@ -49,6 +49,18 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 		},
 		"statistics": stats(),
 	})
+	f.JSON("GET /user/inventoryroles", http.StatusOK, map[string]any{
+		"roles": []map[string]any{
+			{"id": 2, "name": "Site operator", "description": "Alarms and operations for one site", "permissions": []map[string]any{
+				{"id": 5, "scope": "OPERATION", "type": "*", "permission": "ADMIN"},
+				{"id": 4, "scope": "ALARM", "type": "*", "permission": "ADMIN"},
+			}},
+			{"id": 1, "name": "Restart only", "permissions": []map[string]any{
+				{"id": 3, "scope": "OPERATION", "type": "c8y_Restart", "permission": "ADMIN"},
+			}},
+		},
+		"statistics": stats(),
+	})
 	return f
 }
 
@@ -91,6 +103,17 @@ func TestExportAllSections(t *testing.T) {
 	require.Len(t, apps, 1)
 	assert.Contains(t, apps[0].Query, "providedFor=t123")
 	assert.Contains(t, apps[0].Query, "type=MICROSERVICE")
+
+	// Inventory roles sorted by name, permissions sorted, type "*" left out
+	assert.Equal(t, []InventoryRoleSpec{
+		{Name: "Restart only", Permissions: []InventoryRolePermissionSpec{
+			{Scope: "OPERATION", Type: "c8y_Restart", Permission: "ADMIN"},
+		}},
+		{Name: "Site operator", Description: "Alarms and operations for one site", Permissions: []InventoryRolePermissionSpec{
+			{Scope: "ALARM", Permission: "ADMIN"},
+			{Scope: "OPERATION", Permission: "ADMIN"},
+		}},
+	}, manifest.InventoryRoles)
 }
 
 func TestExportAllFeaturesAndApplicationTypes(t *testing.T) {

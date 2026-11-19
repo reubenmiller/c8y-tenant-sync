@@ -15,6 +15,15 @@ import (
 //	# yaml-language-server: $schema=<SchemaID>
 const SchemaID = "https://raw.githubusercontent.com/reubenmiller/c8y-tenant-sync/main/tenant.schema.json"
 
+// JSONSchemaExtend requires a userName or an email (the userName defaults to
+// the email)
+func (UserSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.AnyOf = []*jsonschema.Schema{
+		{Required: []string{"userName"}},
+		{Required: []string{"email"}},
+	}
+}
+
 // JSONSchemaExtend requires either a source or an explicit entry (name and
 // version), mirroring the manifest validation
 func (SoftwareSpec) JSONSchemaExtend(schema *jsonschema.Schema) {

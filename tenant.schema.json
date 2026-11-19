@@ -943,17 +943,29 @@
       ]
     },
     "UserSpec": {
+      "anyOf": [
+        {
+          "required": [
+            "userName"
+          ]
+        },
+        {
+          "required": [
+            "email"
+          ]
+        }
+      ],
       "properties": {
         "userName": {
           "type": "string",
-          "description": "Username (login) of the user",
+          "description": "Username (login) of the user (defaults to the email)",
           "examples": [
             "jdoe@example.com"
           ]
         },
         "email": {
           "type": "string",
-          "description": "Email address of the user"
+          "description": "Email address of the user (required to create a user; defaults to the userName when it is an email address)"
         },
         "firstName": {
           "type": "string",
@@ -991,10 +1003,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "userName"
-      ]
+      "type": "object"
     }
   },
   "properties": {

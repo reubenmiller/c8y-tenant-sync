@@ -160,7 +160,12 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 		var userID, userSelf string
 
 		if existing.Err != nil {
-			// Not found: create it
+			// Not found: create it. Cumulocity requires an email for new users
+			if spec.CreateEmail() == "" {
+				s.record(SectionUsers, spec.Username, ActionFailed, "create user",
+					fmt.Errorf("an email is required to create a user: set email, or use an email address as userName"))
+				continue
+			}
 			created := s.Client.Users.Create(ctx, userCreateBody(spec))
 			if created.Err != nil {
 				s.record(SectionUsers, spec.Username, ActionFailed, "create user", created.Err)
@@ -255,8 +260,8 @@ func userCreateBody(spec UserSpec) map[string]any {
 		"userName": spec.Username,
 		"enabled":  spec.IsEnabled(),
 	}
-	if spec.Email != "" {
-		body["email"] = spec.Email
+	if email := spec.CreateEmail(); email != "" {
+		body["email"] = email
 	}
 	if spec.FirstName != "" {
 		body["firstName"] = spec.FirstName

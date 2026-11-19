@@ -199,10 +199,10 @@ userGroups:
 `,
 		},
 		{
-			name: "user without userName",
+			name: "user without userName or email",
 			content: `
 users:
-  - email: jdoe@example.com
+  - firstName: Jane
 `,
 		},
 	}

@@ -519,14 +519,14 @@ userGroups:
       - ROLE_ALARM_READ
 
 users:
-  - userName: jdoe@example.com
-    email: jdoe@example.com
+  - email: jdoe@example.com      # the userName defaults to the email
     firstName: Jane
     lastName: Doe
     sendPasswordResetEmail: true # email a reset link instead of setting a password
     groups: [operators]          # groups synced above or already in the tenant
 
   - userName: svc-dashboard
+    email: ops@example.com       # required to create a user whose userName is not an email
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
     groups: [operators]
 
@@ -535,6 +535,11 @@ users:
 ```
 
 User groups are synced before users, so `users[].groups` can reference groups declared in the same manifest (or groups that already exist in the tenant). Roles referenced by `userGroups[].roles` must exist in the tenant — note that some roles only appear after subscribing the microservice that provides them, which the `applications` section (applied earlier) can take care of.
+
+A user needs a `userName` or an `email`, and each defaults to the other:
+
+- Without `userName`, the `email` is used as the userName.
+- Without `email`, a `userName` which is an email address (e.g. `jdoe@example.com`) is used as the email **when the user is created**. Cumulocity requires an email for new users, so creating a user whose userName is not an email address (e.g. `svc-dashboard`) without `email` fails with an error. Existing users are not changed, so their email is never replaced by their userName, and existing users without an email can still be updated (e.g. disabled).
 
 For existing users only the fields set in the manifest are compared and updated (empty fields are left alone), with two deliberate exceptions:
 

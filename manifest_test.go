@@ -488,12 +488,12 @@ userGroups:
 			errorMsg: "role must not be empty",
 		},
 		{
-			name: "user requires userName",
+			name: "user requires userName or email",
 			content: `
 users:
-  - email: jdoe@example.com
+  - firstName: Jane
 `,
-			errorMsg: "userName is required",
+			errorMsg: "users[0]: userName or email is required",
 		},
 		{
 			name: "usernames must be unique",

@@ -124,14 +124,16 @@ userGroups:
 # Create users and assign them to user groups. The password is only used when
 # creating a user (never updated afterwards); group memberships are additive.
 users:
-  - userName: jdoe@example.com
-    email: jdoe@example.com
+  # The userName defaults to the email (and the email to an email-like
+  # userName when the user is created)
+  - email: jdoe@example.com
     firstName: Jane
     lastName: Doe
     sendPasswordResetEmail: true # email a reset link instead of setting a password
     groups: [operators]
 
   - userName: svc-dashboard
+    email: ops@example.com # required to create a user whose userName is not an email
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
     groups: [operators]
 

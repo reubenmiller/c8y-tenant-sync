@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"net/url"
 	"os"
 	"regexp"
@@ -356,8 +357,8 @@ type UserGroupSpec struct {
 // memberships. The password is only used when creating the user (existing
 // passwords are never overwritten) and group memberships are additive.
 type UserSpec struct {
-	Username  string `yaml:"userName" json:"userName" jsonschema:"description=Username (login) of the user,example=jdoe@example.com"`
-	Email     string `yaml:"email" json:"email,omitempty" jsonschema:"description=Email address of the user"`
+	Username  string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
+	Email     string `yaml:"email" json:"email,omitempty" jsonschema:"description=Email address of the user (required to create a user; defaults to the userName when it is an email address)"`
 	FirstName string `yaml:"firstName" json:"firstName,omitempty" jsonschema:"description=First name of the user"`
 	LastName  string `yaml:"lastName" json:"lastName,omitempty" jsonschema:"description=Last name of the user"`
 	Phone     string `yaml:"phone" json:"phone,omitempty" jsonschema:"description=Phone number of the user"`
@@ -685,6 +686,39 @@ func escapeEnv(value string) string {
 	return strings.ReplaceAll(value, "$", "$$")
 }
 
+// applyDefaults fills in values which are derived from other fields
+func (m *Manifest) applyDefaults() {
+	for i := range m.Users {
+		// The email is a valid username, so a user can be declared by email
+		if m.Users[i].Username == "" {
+			m.Users[i].Username = strings.TrimSpace(m.Users[i].Email)
+		}
+	}
+}
+
+// isEmailAddress reports whether the value is a plain email address (without
+// a display name), e.g. jdoe@example.com
+func isEmailAddress(value string) bool {
+	if value == "" || strings.ContainsAny(value, " <>") {
+		return false
+	}
+	address, err := mail.ParseAddress(value)
+	return err == nil && address.Address == value
+}
+
+// CreateEmail is the email used when the user is created: the email, or the
+// userName when it is an email address. It is not used to update existing
+// users, so their email is never replaced by their username.
+func (u UserSpec) CreateEmail() string {
+	if u.Email != "" {
+		return u.Email
+	}
+	if isEmailAddress(u.Username) {
+		return u.Username
+	}
+	return ""
+}
+
 // validateExplicitSoftware checks an explicit software entry (name, version,
 // type and an optional url instead of a source)
 func validateExplicitSoftware(label string, spec SoftwareSpec) []string {
@@ -800,6 +834,7 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to parse manifest: %w", err)
 	}
 
+	manifest.applyDefaults()
 	if err := manifest.Validate(); err != nil {
 		return nil, err
 	}
@@ -908,13 +943,13 @@ func (m *Manifest) Validate() error {
 	usernames := make(map[string]bool, len(m.Users))
 	for i, user := range m.Users {
 		if user.Username == "" {
-			errs = append(errs, fmt.Sprintf("users[%d]: userName is required", i))
+			errs = append(errs, fmt.Sprintf("users[%d]: userName or email is required", i))
 		} else if usernames[user.Username] {
 			errs = append(errs, fmt.Sprintf("users[%d]: duplicate userName %q", i, user.Username))
 		}
 		usernames[user.Username] = true
-		if user.SendPasswordResetEmail && user.Email == "" {
-			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email", i))
+		if user.SendPasswordResetEmail && user.CreateEmail() == "" {
+			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
 		}
 		for j, group := range user.Groups {
 			if strings.TrimSpace(group) == "" {

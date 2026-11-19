@@ -330,6 +330,33 @@ firmware:
       patterns: ["*.wic.bz2"]
 ```
 
+### Explicit entries
+
+Instead of a `source`, an entry can declare a single item explicitly. Nothing is parsed from filenames: the given values are used as-is.
+
+#### Software
+
+A software entry with `name` declares one software version with its `version`, an optional `type` (softwareType) and an optional `url`:
+
+```yaml
+software:
+  # A package which devices install from their own package repositories:
+  # the version has an empty url
+  - name: tedge
+    version: latest
+    type: apt
+
+  # A package hosted elsewhere
+  - name: sensor-agent
+    version: 2.1.0
+    type: apt
+    url: https://example.com/packages/sensor-agent_2.1.0_arm64.deb
+```
+
+- `version` is required and used as-is, so `latest` is a version called `latest` (for example meaning "install the latest version from the package repository").
+- Without `url`, the version is created with an empty url and nothing is uploaded.
+- `name` and `source` are mutually exclusive, and `namePrefix` and `typeMap` only apply to entries with a source.
+
 ### Tenant option lookups
 
 Tenant option values can be resolved by reference at apply time instead of hardcoding IDs, using `valueFrom` with exactly one reference (`application` resolves a name to the application ID, `device` to a device managed object ID):

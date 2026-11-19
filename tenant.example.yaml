@@ -141,6 +141,13 @@ users:
 # Sync software packages. Name, version, architecture and software type are
 # parsed from the filenames (same logic as the software-uploader example).
 software:
+  # An explicit entry: a single version declared by name, without a source.
+  # Without url, the version has an empty url (e.g. for packages which devices
+  # install from their package repositories)
+  - name: tedge
+    version: latest
+    type: apt
+
   # From a local directory (searched recursively)
   - source:
       path: ./packages

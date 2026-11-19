@@ -123,12 +123,12 @@ userGroups:
 # Create users and assign them to user groups. The password is only used when
 # creating a user (never updated afterwards); group memberships are additive.
 users:
-  - userName: jdoe@example.com
-    email: jdoe@example.com
-    firstName: Jane
-    lastName: Doe
-    sendPasswordResetEmail: true # email a reset link instead of setting a password
-    groups: [operators]
+  # - userName: jdoe@example.com
+  #   email: jdoe@example.com
+  #   firstName: Jane
+  #   lastName: Doe
+  #   sendPasswordResetEmail: true # email a reset link instead of setting a password
+  #   groups: [operators]
 
   - userName: svc-dashboard
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
@@ -162,6 +162,11 @@ software:
         repo: cli/cli
         assets: ["gh_*_linux_arm64.deb"]
         linkOnly: true
+  
+  - name: tedge
+    version: latest
+    # versionSelector: latest
+    type: apt # optional software type (disambiguates the lookup)
 
 # Sync firmware (OS images). Versions are parsed from common build system
 # naming conventions (Yocto, Buildroot, Rugix Bakery, SWUpdate, RAUC, Mender)

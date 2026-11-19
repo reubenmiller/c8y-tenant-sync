@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -478,20 +479,37 @@ type GitHubSource struct {
 // Name, version, architecture and software type are parsed from filenames
 // (same logic as the software-uploader example).
 type SoftwareSpec struct {
+	// Name declares a single software version explicitly (with version,
+	// type and an optional url) instead of parsing packages from a source
+	Name string `yaml:"name" json:"name,omitempty" jsonschema:"description=Software name of an explicit entry: a single version declared with name and version (and optionally type and url) instead of packages from a source; mutually exclusive with source"`
+
+	// URL is the binary url of an explicit entry. Without it, the version
+	// is created with an empty url (e.g. for packages which devices install
+	// from their own package repositories)
+	URL string `yaml:"url" json:"url,omitempty" jsonschema:"description=Binary url of an explicit entry (optional; without it the version has an empty url e.g. for packages which devices install from their package repositories)"`
+
 	// NamePrefix is added to every parsed software name
 	NamePrefix string `yaml:"namePrefix" json:"namePrefix,omitempty" jsonschema:"description=Prefix added to every parsed software name"`
 
-	// Type forces the softwareType for all packages from this source
-	Type string `yaml:"type" json:"type,omitempty" jsonschema:"description=Force the softwareType for all packages from this source (overrides auto-detection)"`
+	// Type forces the softwareType for all packages from this source, or
+	// sets the softwareType of an explicit entry
+	Type string `yaml:"type" json:"type,omitempty" jsonschema:"description=Software type: forces the softwareType for all packages from the source (overrides auto-detection) or sets it for an explicit entry,example=apt"`
 
 	// TypeMap maps filename glob patterns to software types, first match wins.
 	// Example: ["*.bin=firmware", ".deb=custom-apt"]
 	TypeMap []string `yaml:"typeMap" json:"typeMap,omitempty" jsonschema:"description=Map filename glob patterns to software types (pattern=softwaretype; first match wins),example=*.bin=firmware"`
 
-	// Version overrides the parsed version (useful for single-file sources)
-	Version string `yaml:"version" json:"version,omitempty" jsonschema:"description=Override the parsed version (useful for single-file sources)"`
+	// Version overrides the parsed version (useful for single-file sources),
+	// or is the exact version of an explicit entry
+	Version string `yaml:"version" json:"version,omitempty" jsonschema:"description=Exact version of an explicit entry (used as-is e.g. latest) or an override of the parsed version (useful for single-file sources)"`
 
-	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the software packages come from"`
+	Source Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the software packages come from; mutually exclusive with name"`
+}
+
+// IsExplicit reports whether the entry declares a single version by name
+// instead of parsing packages from a source
+func (spec SoftwareSpec) IsExplicit() bool {
+	return spec.Name != ""
 }
 
 // FirmwareSpec syncs firmware (OS images) into the firmware repository.
@@ -628,6 +646,27 @@ func expandEnv(raw string) string {
 // manifest is loaded
 func escapeEnv(value string) string {
 	return strings.ReplaceAll(value, "$", "$$")
+}
+
+// validateExplicitSoftware checks an explicit software entry (name, version,
+// type and an optional url instead of a source)
+func validateExplicitSoftware(label string, spec SoftwareSpec) []string {
+	var errs []string
+	if spec.Source.IsSet() {
+		errs = append(errs, label+": name and source are mutually exclusive (name declares a single version without a source)")
+	}
+	if strings.TrimSpace(spec.Version) == "" {
+		errs = append(errs, label+": version is required for an explicit entry (name)")
+	}
+	if spec.NamePrefix != "" || len(spec.TypeMap) > 0 {
+		errs = append(errs, label+": namePrefix and typeMap only apply to entries with a source")
+	}
+	if spec.URL != "" {
+		if parsed, err := url.Parse(spec.URL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			errs = append(errs, fmt.Sprintf("%s: url %q is not an absolute url", label, spec.URL))
+		}
+	}
+	return errs
 }
 
 // validateVersionRef checks the version fields of a device profile
@@ -797,6 +836,13 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	for i, sw := range m.Software {
+		if sw.IsExplicit() {
+			errs = append(errs, validateExplicitSoftware(fmt.Sprintf("software[%d]", i), sw)...)
+			continue
+		}
+		if sw.URL != "" {
+			errs = append(errs, fmt.Sprintf("software[%d]: url requires name (for a source, use source.url)", i))
+		}
 		if err := sw.Source.Validate(); err != nil {
 			errs = append(errs, fmt.Sprintf("software[%d]: %v", i, err))
 		}

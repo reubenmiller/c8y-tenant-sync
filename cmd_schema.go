@@ -15,6 +15,15 @@ import (
 //	# yaml-language-server: $schema=<SchemaID>
 const SchemaID = "https://raw.githubusercontent.com/reubenmiller/c8y-tenant-sync/main/tenant.schema.json"
 
+// JSONSchemaExtend requires either a source or an explicit entry (name and
+// version), mirroring the manifest validation
+func (SoftwareSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.OneOf = []*jsonschema.Schema{
+		{Required: []string{"source"}, Not: &jsonschema.Schema{Required: []string{"name"}}},
+		{Required: []string{"name", "version"}, Not: &jsonschema.Schema{Required: []string{"source"}}},
+	}
+}
+
 // JSONSchemaExtend enforces that exactly one of path, url or github is set,
 // mirroring Source.Validate
 func (Source) JSONSchemaExtend(schema *jsonschema.Schema) {

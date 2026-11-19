@@ -486,14 +486,48 @@
       ]
     },
     "SoftwareSpec": {
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "name"
+            ]
+          },
+          "required": [
+            "source"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "source"
+            ]
+          },
+          "required": [
+            "name",
+            "version"
+          ]
+        }
+      ],
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Software name of an explicit entry: a single version declared with name and version (and optionally type and url) instead of packages from a source; mutually exclusive with source"
+        },
+        "url": {
+          "type": "string",
+          "description": "Binary url of an explicit entry (optional; without it the version has an empty url e.g. for packages which devices install from their package repositories)"
+        },
         "namePrefix": {
           "type": "string",
           "description": "Prefix added to every parsed software name"
         },
         "type": {
           "type": "string",
-          "description": "Force the softwareType for all packages from this source (overrides auto-detection)"
+          "description": "Software type: forces the softwareType for all packages from the source (overrides auto-detection) or sets it for an explicit entry",
+          "examples": [
+            "apt"
+          ]
         },
         "typeMap": {
           "items": {
@@ -504,18 +538,15 @@
         },
         "version": {
           "type": "string",
-          "description": "Override the parsed version (useful for single-file sources)"
+          "description": "Exact version of an explicit entry (used as-is e.g. latest) or an override of the parsed version (useful for single-file sources)"
         },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the software packages come from"
+          "description": "Where the software packages come from; mutually exclusive with name"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "source"
-      ]
+      "type": "object"
     },
     "Source": {
       "oneOf": [

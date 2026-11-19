@@ -19,6 +19,17 @@ import (
 // software-uploader example.
 func (s *Syncer) SyncSoftware(ctx context.Context, specs []SoftwareSpec) error {
 	for index, spec := range specs {
+		if spec.IsExplicit() {
+			// A single version declared by name: no source to resolve or parse
+			s.syncSoftwareGroup(ctx, []*SoftwareInfo{{
+				Name:         spec.Name,
+				Version:      spec.Version,
+				SoftwareType: spec.Type,
+				ExternalURL:  spec.URL,
+			}})
+			continue
+		}
+
 		files, ok := s.resolveSource(SectionSoftware, fmt.Sprintf("software[%d]", index), spec.Source)
 		if !ok {
 			continue
@@ -130,6 +141,8 @@ func (s *Syncer) syncSoftwareGroup(ctx context.Context, infos []*SoftwareInfo) {
 				detail := info.Filename
 				if info.ExternalURL != "" {
 					detail = "link → " + info.ExternalURL
+				} else if info.FilePath == "" && info.Filename == "" {
+					detail = "no binary (empty url)"
 				}
 
 				if s.DryRun {
@@ -153,6 +166,9 @@ func softwareItemLabel(name, arch, softwareType string) string {
 	qualifier := softwareType
 	if arch != "" {
 		qualifier = arch + "/" + softwareType
+	}
+	if qualifier == "" {
+		return name
 	}
 	return fmt.Sprintf("%s [%s]", name, qualifier)
 }
@@ -200,7 +216,9 @@ func (s *Syncer) uploadSoftwareVersion(ctx context.Context, info *SoftwareInfo, 
 	}
 	if info.ExternalURL != "" {
 		createOpts.URL = info.ExternalURL
-	} else {
+	} else if info.FilePath != "" {
+		// Without a file or url (explicit entries), the version is created
+		// with an empty url
 		createOpts.File = softwareversions.UploadFileOptions{
 			Name:        info.Filename,
 			ContentType: detectContentType(info.Filename),

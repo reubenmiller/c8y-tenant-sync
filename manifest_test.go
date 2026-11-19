@@ -544,3 +544,20 @@ applications:
 		})
 	}
 }
+
+func TestExpandEnv(t *testing.T) {
+	t.Setenv("TS_SET", "value")
+	os.Unsetenv("TS_UNSET")
+
+	assert.Equal(t, "a value b value", expandEnv("a ${TS_SET} b $TS_SET"))
+	assert.Equal(t, "${TS_UNSET}", expandEnv("${TS_UNSET}"), "unknown references are left in place")
+	assert.Equal(t, "price $5 and $TS_SET", expandEnv("price $$5 and $$TS_SET"), "$$ is a literal $")
+	assert.Equal(t, "$value", expandEnv("$$${TS_SET}"))
+}
+
+func TestEscapeEnvRoundTrip(t *testing.T) {
+	t.Setenv("TS_SET", "value")
+	for _, value := range []string{"plain", "/home/$TS_SET", "${TS_SET}", "$$", "a$"} {
+		assert.Equal(t, value, expandEnv(escapeEnv(value)), value)
+	}
+}

@@ -45,7 +45,8 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🔎 **Dry-run**: preview every change before applying
-- 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens)
+- 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA and subscribed microservices)
 
 ## Installation
 
@@ -137,6 +138,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `validate [path]` | Validate the manifest schema (strict — unknown fields are errors). `--check-sources` also resolves local paths and GitHub releases |
 | `run [path]` | Apply the manifest to the tenant (alias: `apply`) |
 | `schema` | Generate the JSON schema for the manifest (`-o file` to write to a file) |
+| `export` | Create a manifest from the current state of the tenant (`-o file` to write to a file), see [Exporting a tenant](#exporting-a-tenant) |
 
 ### Run flags
 
@@ -156,6 +158,33 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--debug` | | Verbose logging + HTTP request/response details |
 
 Sections are applied in a fixed order — tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+
+### Exporting a tenant
+
+`export` reads the tenant of the active session and writes a manifest which describes it, as a starting point for managing an existing tenant, or for copying its settings to other tenants:
+
+```bash
+c8y tenant-sync export -o tenant.yaml
+c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same tenant
+```
+
+| Section | What is exported |
+|---------|------------------|
+| `tenantOptions` | All tenant options, except credentials (`credentials.*` keys are never exported) |
+| `features` | Feature toggles set for the tenant (`--all-features` exports all toggles with their current state) |
+| `retentionRules` | All retention rules |
+| `certificateAuthority` | Whether the Cumulocity CA is enabled, if the tenant has one |
+| `applications` | Applications the tenant is subscribed to but does not own, such as the built-in microservices (`--application-type MICROSERVICE,HOSTED` also exports web applications) |
+
+| Flag | Description |
+|------|-------------|
+| `-o`, `--output` | Write the manifest to a file instead of stdout |
+| `--sections` | Comma-separated sections to export (default: all of the above) |
+| `--all-features` | Export all feature toggles, not only the ones set for the tenant |
+| `--application-type` | Types of subscribed applications to export (default: `MICROSERVICE`) |
+| `--force` | Overwrite the output file |
+
+`$` in exported values is written as `$$`, so values are not expanded as environment variables when the manifest is loaded. Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
 
 ## The Manifest
 

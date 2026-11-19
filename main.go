@@ -50,6 +50,7 @@ The "run" command uses the active go-c8y-cli session.`,
 			example{"run -f tenant.yaml --dry-run", "Preview the changes the manifest would make"},
 			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
 			example{"schema -o tenant.schema.json", "Write the JSON schema of the manifest to a file"},
+			example{"export -o tenant.yaml", "Create a manifest from the current state of the tenant"},
 		),
 		Version:       version,
 		SilenceUsage:  true,
@@ -66,6 +67,7 @@ The "run" command uses the active go-c8y-cli session.`,
 		newValidateCmd(),
 		newRunCmd(),
 		newSchemaCmd(),
+		newExportCmd(),
 	)
 	addExamplesFlag(root)
 	return root

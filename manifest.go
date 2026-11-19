@@ -592,6 +592,30 @@ type ProfileConfigurationRef struct {
 	URL  string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit file URL skipping the lookup of the configuration item in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
 }
 
+// escapedDollarPlaceholder temporarily replaces "$$" during expansion. It
+// contains a NUL byte, which can not appear in a YAML document
+const escapedDollarPlaceholder = "\x00tenant-sync-dollar\x00"
+
+// expandEnv expands ${VAR} and $VAR environment variable references. Unknown
+// references are left in place (as ${VAR}) so they are easy to spot in
+// errors. "$$" is an escaped literal "$".
+func expandEnv(raw string) string {
+	escaped := strings.ReplaceAll(raw, "$$", escapedDollarPlaceholder)
+	expanded := os.Expand(escaped, func(name string) string {
+		if value, ok := os.LookupEnv(name); ok {
+			return value
+		}
+		return "${" + name + "}"
+	})
+	return strings.ReplaceAll(expanded, escapedDollarPlaceholder, "$")
+}
+
+// escapeEnv escapes "$" as "$$", so the value is not expanded when the
+// manifest is loaded
+func escapeEnv(value string) string {
+	return strings.ReplaceAll(value, "$", "$$")
+}
+
 // LoadManifest reads a manifest file, expanding ${VAR} environment variable
 // references before parsing so secrets (e.g. GitHub tokens) can be injected.
 func LoadManifest(path string) (*Manifest, error) {
@@ -600,13 +624,7 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
 
-	expanded := os.Expand(string(raw), func(name string) string {
-		// Leave unknown references intact so they are easy to spot in errors
-		if value, ok := os.LookupEnv(name); ok {
-			return value
-		}
-		return "${" + name + "}"
-	})
+	expanded := expandEnv(string(raw))
 
 	manifest := &Manifest{}
 	decoder := yaml.NewDecoder(strings.NewReader(expanded))

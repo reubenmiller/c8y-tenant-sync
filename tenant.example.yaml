@@ -195,6 +195,13 @@ firmware:
         release: latest-5 # mirror the most recent five releases
         assets: ["*.img.xz"]
 
+  # An explicit entry: a single version declared with name and version
+  # (and an optional url) instead of a source
+  - name: vendor-os
+    version: 3.1.0
+    deviceType: vendor-gateway
+    url: https://example.com/firmware/vendor-os-3.1.0.swu
+
   # Custom firmware naming scheme: extract the version with a regex
   - deviceType: model7
     versionPattern: 'BUILD(\d+)'

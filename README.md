@@ -357,6 +357,21 @@ software:
 - Without `url`, the version is created with an empty url and nothing is uploaded.
 - `name` and `source` are mutually exclusive, and `namePrefix` and `typeMap` only apply to entries with a source.
 
+#### Firmware
+
+A firmware entry without a `source` declares one firmware version with its `name`, `version`, an optional `url` and an optional `deviceType` (the `{name}` and `{version}` placeholders use the declared values). For entries with a source, `name` and `version` keep overriding the parsed values.
+
+```yaml
+firmware:
+  - name: tedge-rugix-pi
+    version: 20261104.2250
+    deviceType: rugix-pi
+    url: https://github.com/thin-edge/tedge-rugix-image/releases/download/20261104.2250/tedge-debian-12-rpi_20261104.2250.img.xz
+```
+
+- Without `url`, the version is created with an empty url and nothing is uploaded.
+- `versionPattern` only applies to entries with a source.
+
 ### Tenant option lookups
 
 Tenant option values can be resolved by reference at apply time instead of hardcoding IDs, using `valueFrom` with exactly one reference (`application` resolves a name to the application ID, `device` to a device managed object ID):

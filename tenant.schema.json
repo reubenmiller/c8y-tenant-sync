@@ -173,6 +173,33 @@
       ]
     },
     "FirmwareSpec": {
+      "oneOf": [
+        {
+          "required": [
+            "source"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "source"
+                ]
+              },
+              {
+                "required": [
+                  "versionPattern"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "name",
+            "version"
+          ]
+        }
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -194,16 +221,17 @@
           "type": "string",
           "description": "Regular expression with a single capture group to extract the version from the filename for custom naming schemes"
         },
+        "url": {
+          "type": "string",
+          "description": "Binary url of an explicit entry (name and version without a source); optional - without it the version has an empty url"
+        },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the firmware images come from"
+          "description": "Where the firmware images come from; without a source the entry declares a single version explicitly with name and version (and optionally url)"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "source"
-      ]
+      "type": "object"
     },
     "GitHubSource": {
       "properties": {

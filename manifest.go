@@ -537,7 +537,16 @@ type FirmwareSpec struct {
 	// Example: 'myimage-(\d+\.\d+\.\d+)\.custom$'
 	VersionPattern string `yaml:"versionPattern" json:"versionPattern,omitempty" jsonschema:"description=Regular expression with a single capture group to extract the version from the filename for custom naming schemes"`
 
-	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the firmware images come from"`
+	// URL is the binary url of an explicit entry (an entry without a source)
+	URL string `yaml:"url" json:"url,omitempty" jsonschema:"description=Binary url of an explicit entry (name and version without a source); optional - without it the version has an empty url"`
+
+	Source Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the firmware images come from; without a source the entry declares a single version explicitly with name and version (and optionally url)"`
+}
+
+// IsExplicit reports whether the entry declares a single version with name
+// and version instead of parsing images from a source
+func (spec FirmwareSpec) IsExplicit() bool {
+	return !spec.Source.IsSet()
 }
 
 // ConfigurationSpec syncs configuration files into the configuration repository
@@ -661,12 +670,40 @@ func validateExplicitSoftware(label string, spec SoftwareSpec) []string {
 	if spec.NamePrefix != "" || len(spec.TypeMap) > 0 {
 		errs = append(errs, label+": namePrefix and typeMap only apply to entries with a source")
 	}
-	if spec.URL != "" {
-		if parsed, err := url.Parse(spec.URL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			errs = append(errs, fmt.Sprintf("%s: url %q is not an absolute url", label, spec.URL))
-		}
+	if err := validateAbsoluteURL(spec.URL); err != nil {
+		errs = append(errs, fmt.Sprintf("%s: %v", label, err))
 	}
 	return errs
+}
+
+// validateExplicitFirmware checks an explicit firmware entry (name,
+// version and an optional url instead of a source)
+func validateExplicitFirmware(label string, spec FirmwareSpec) []string {
+	var errs []string
+	if strings.TrimSpace(spec.Name) == "" || strings.TrimSpace(spec.Version) == "" {
+		errs = append(errs, label+": source, or name and version (an explicit entry), is required")
+	}
+	if spec.VersionPattern != "" {
+		errs = append(errs, label+": versionPattern only applies to entries with a source")
+	}
+	if err := validateAbsoluteURL(spec.URL); err != nil {
+		errs = append(errs, fmt.Sprintf("%s: %v", label, err))
+	}
+	if err := validatePlaceholders(spec.DeviceType); err != nil {
+		errs = append(errs, fmt.Sprintf("%s.deviceType: %v", label, err))
+	}
+	return errs
+}
+
+// validateAbsoluteURL checks that an optional url is absolute
+func validateAbsoluteURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if parsed, err := url.Parse(value); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("url %q is not an absolute url", value)
+	}
+	return nil
 }
 
 // validateVersionRef checks the version fields of a device profile
@@ -853,6 +890,13 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	for i, fw := range m.Firmware {
+		if fw.IsExplicit() {
+			errs = append(errs, validateExplicitFirmware(fmt.Sprintf("firmware[%d]", i), fw)...)
+			continue
+		}
+		if fw.URL != "" {
+			errs = append(errs, fmt.Sprintf("firmware[%d]: url requires an entry without a source (for a source, use source.url)", i))
+		}
 		if err := fw.Source.Validate(); err != nil {
 			errs = append(errs, fmt.Sprintf("firmware[%d]: %v", i, err))
 		}

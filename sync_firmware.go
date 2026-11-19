@@ -22,6 +22,15 @@ func (spec FirmwareSpec) resolvedSource() Source {
 // firmware versions, creating the firmware items as needed.
 func (s *Syncer) SyncFirmware(ctx context.Context, specs []FirmwareSpec) error {
 	for index, spec := range specs {
+		if spec.IsExplicit() {
+			// A single version declared by name and version: no source to
+			// resolve or parse
+			info := &FirmwareInfo{Name: spec.Name, Version: spec.Version, URL: spec.URL}
+			info.DeviceType = info.ExpandPlaceholders(spec.DeviceType)
+			s.syncFirmwareItem(ctx, spec, spec.Name, []*FirmwareInfo{info})
+			continue
+		}
+
 		files, ok := s.resolveSource(SectionFirmware, fmt.Sprintf("firmware[%d]", index), spec.resolvedSource())
 		if !ok {
 			continue
@@ -121,7 +130,9 @@ func (s *Syncer) syncFirmwareItem(ctx context.Context, spec FirmwareSpec, name s
 		}
 		if info.URL != "" {
 			createOpts.URL = info.URL
-		} else {
+		} else if info.FilePath != "" {
+			// Without a file or url (explicit entries), the version is created
+			// with an empty url
 			createOpts.File = firmwareversions.UploadFileOptions{
 				Name:        info.Filename,
 				ContentType: detectContentType(info.Filename),
@@ -148,6 +159,9 @@ func (s *Syncer) syncFirmwareItem(ctx context.Context, spec FirmwareSpec, name s
 func firmwareDetail(info *FirmwareInfo) string {
 	if info.URL != "" {
 		return "link → " + info.URL
+	}
+	if info.FilePath == "" && info.Filename == "" {
+		return "no binary (empty url)"
 	}
 	return info.Filename
 }

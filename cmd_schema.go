@@ -24,6 +24,17 @@ func (SoftwareSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
 	}
 }
 
+// JSONSchemaExtend requires either a source or an explicit entry (name and
+// version), mirroring the manifest validation
+func (FirmwareSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.OneOf = []*jsonschema.Schema{
+		{Required: []string{"source"}},
+		{Required: []string{"name", "version"}, Not: &jsonschema.Schema{
+			AnyOf: []*jsonschema.Schema{{Required: []string{"source"}}, {Required: []string{"versionPattern"}}},
+		}},
+	}
+}
+
 // JSONSchemaExtend enforces that exactly one of path, url or github is set,
 // mirroring Source.Validate
 func (Source) JSONSchemaExtend(schema *jsonschema.Schema) {

@@ -30,7 +30,7 @@
 tenantOptions:
   - category: configuration
     key: device.bootstrap.enabled
-    value: "true"
+    value: "false"
 
   # Values can also be resolved by lookup at apply time, e.g. an application
   # ID looked up by name
@@ -93,7 +93,7 @@ applications:
   # application not owned by the current tenant requires running from the
   # owner (parent) tenant, e.g. with a targets section.
   - name: cloud-remote-access
-    subscribed: false
+    subscribed: true
 
   # With a source, the application is created if missing and its binary (zip)
   # uploaded on creation (or on every run with --force)
@@ -126,6 +126,7 @@ users:
 
   - userName: svc-dashboard
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
+    email: ${DASHBOARD_USER_EMAIL}
     groups: [operators]
 
   - userName: old-account@example.com

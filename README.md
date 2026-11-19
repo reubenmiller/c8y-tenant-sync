@@ -133,7 +133,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 
 | Command | Description |
 |---------|-------------|
-| `init [path]` | Create a new manifest (default: `tenant.yaml`). `--full` writes the fully annotated example, `--force` overwrites |
+| `init [path]` | Create a new manifest (default: `tenant.yaml`) and the `packages` folder next to it, which the manifest syncs software from (skipped while empty). `--full` writes the fully annotated example instead, `--force` overwrites |
 | `validate [path]` | Validate the manifest schema (strict — unknown fields are errors). `--check-sources` also resolves local paths and GitHub releases |
 | `run [path]` | Apply the manifest to the tenant (alias: `apply`) |
 | `schema` | Generate the JSON schema for the manifest (`-o file` to write to a file) |

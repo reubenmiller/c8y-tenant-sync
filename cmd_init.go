@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -26,8 +27,9 @@ const minimalTemplate = `# yaml-language-server: $schema=` + SchemaID + `
 
 software:
   - source:
-      path: ./packages
+      path: ./` + packagesFolder + `
       patterns: ["*.deb", "*.rpm", "*.apk", "*.ipk"]
+      optional: true # skip instead of failing while the folder is empty
 
 # firmware:
 #   - deviceType: mydevicetype
@@ -89,6 +91,9 @@ software:
 #         version: 1.0.0
 `
 
+// packagesFolder is the software folder of the minimal manifest, which init creates
+const packagesFolder = "packages"
+
 func newInitCmd() *cobra.Command {
 	var full, force bool
 	cmd := &cobra.Command{
@@ -136,6 +141,24 @@ func runInit(args []string, full, force bool) error {
 	}
 
 	fmt.Printf("✓ Created %s\n", path)
+
+	// The minimal manifest syncs software packages from ./packages (relative
+	// to the manifest), so create it to give a manifest which runs as is
+	if !full {
+		packagesDir := filepath.Join(filepath.Dir(path), packagesFolder)
+		if info, err := os.Stat(packagesDir); err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("cannot create %s folder: a file with that name exists", packagesDir)
+			}
+			fmt.Printf("✓ Using existing %s folder\n", packagesDir)
+		} else {
+			if err := os.MkdirAll(packagesDir, 0o755); err != nil {
+				return fmt.Errorf("failed to create %s folder: %w", packagesDir, err)
+			}
+			fmt.Printf("✓ Created %s folder (add your software packages here)\n", packagesDir)
+		}
+	}
+
 	fmt.Println("\nNext steps:")
 	fmt.Printf("  1. Edit %s to describe your tenant\n", path)
 	fmt.Printf("  2. Validate it:          %s validate %s\n", commandPrefix, path)

@@ -211,6 +211,16 @@ firmware:
 
 # Sync configuration files into the configuration repository
 configuration:
+  # An explicit entry with inline content, uploaded as a file (${VAR} is
+  # expanded, and the content can be encrypted with sops)
+  - name: tedge-mosquitto
+    configurationType: mosquitto.conf
+    deviceType: thin-edge.io
+    filename: mosquitto.conf
+    content: |
+      listener 1883
+      allow_anonymous false
+
   - name: mosquitto
     configurationType: mosquitto.conf
     description: Default mosquitto configuration

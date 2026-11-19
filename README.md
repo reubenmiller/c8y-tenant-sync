@@ -332,7 +332,7 @@ firmware:
 
 ### Explicit entries
 
-Instead of a `source`, an entry can declare a single item explicitly. Nothing is parsed from filenames: the given values are used as-is.
+Instead of a `source`, a software, firmware or configuration entry can declare a single item explicitly. Nothing is parsed from filenames: the given values are used as-is.
 
 #### Software
 
@@ -371,6 +371,31 @@ firmware:
 
 - Without `url`, the version is created with an empty url and nothing is uploaded.
 - `versionPattern` only applies to entries with a source.
+
+#### Configuration
+
+A configuration entry without a `source` declares one configuration item with its `name` and `configurationType`, and either a `url` or inline `content`:
+
+```yaml
+configuration:
+  # Inline content, uploaded as a file
+  - name: mosquitto
+    configurationType: mosquitto.conf
+    deviceType: thin-edge.io
+    filename: mosquitto.conf   # optional, defaults to the name
+    content: |
+      listener 1883
+      allow_anonymous false
+
+  # A file hosted elsewhere
+  - name: collectd
+    configurationType: collectd.conf
+    url: https://example.com/config/collectd.conf
+```
+
+- Inline `content` is uploaded as a file called `filename` (defaults to the `name`). `${VAR}` references in the content are expanded, and the content can be [encrypted with SOPS](#secrets-with-sops) (e.g. `encrypted_regex: ^(content)$`), so configuration with secrets can be kept in git.
+- `url` and `content` are mutually exclusive. With neither, the configuration item is created without a url.
+- Like configuration files from a source, an existing configuration item is not changed when the content changes, unless `--force` is used.
 
 ### Tenant option lookups
 

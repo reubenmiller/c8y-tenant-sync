@@ -97,6 +97,9 @@ func runValidate(manifestPath string, checkSources bool) error {
 		check(SectionFirmware, i, spec.resolvedSource())
 	}
 	for i, spec := range manifest.Configuration {
+		if spec.IsExplicit() {
+			continue // no source to resolve
+		}
 		check(SectionConfiguration, i, spec.Source)
 	}
 	for i, spec := range manifest.SmartRestTemplates {

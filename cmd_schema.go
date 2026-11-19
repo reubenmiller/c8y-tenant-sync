@@ -35,6 +35,19 @@ func (FirmwareSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
 	}
 }
 
+// JSONSchemaExtend requires either a source or an explicit entry (name with
+// a url, inline content or neither), mirroring the manifest validation
+func (ConfigurationSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.OneOf = []*jsonschema.Schema{
+		{Required: []string{"source"}, Not: &jsonschema.Schema{
+			AnyOf: []*jsonschema.Schema{{Required: []string{"url"}}, {Required: []string{"content"}}, {Required: []string{"filename"}}},
+		}},
+		{Required: []string{"name"}, Not: &jsonschema.Schema{
+			AnyOf: []*jsonschema.Schema{{Required: []string{"source"}}, {Required: []string{"url", "content"}}},
+		}},
+	}
+}
+
 // JSONSchemaExtend enforces that exactly one of path, url or github is set,
 // mirroring Source.Validate
 func (Source) JSONSchemaExtend(schema *jsonschema.Schema) {

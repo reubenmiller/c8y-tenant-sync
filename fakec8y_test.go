@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,6 +21,8 @@ type recordedRequest struct {
 	Path   string
 	Query  string
 	Body   map[string]any
+	// RawBody is the unparsed request body (e.g. multipart uploads)
+	RawBody []byte
 }
 
 // fakeC8y is a minimal Cumulocity server for unit tests. Handlers are matched
@@ -42,11 +45,13 @@ func newFakeC8y(t *testing.T) *fakeC8y {
 
 func (f *fakeC8y) serve(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
+	// Handlers can read the body again
+	r.Body = io.NopCloser(bytes.NewReader(raw))
 	var body map[string]any
 	_ = json.Unmarshal(raw, &body)
 
 	f.mu.Lock()
-	f.requests = append(f.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body})
+	f.requests = append(f.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body, RawBody: raw})
 	handler, ok := f.handlers[r.Method+" "+r.URL.Path]
 	f.mu.Unlock()
 

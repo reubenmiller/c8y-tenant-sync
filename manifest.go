@@ -562,7 +562,31 @@ type ConfigurationSpec struct {
 	// DeviceType restricts the configuration to a device type
 	DeviceType string `yaml:"deviceType" json:"deviceType,omitempty" jsonschema:"description=Restrict the configuration to a device type"`
 
-	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the configuration file comes from"`
+	// URL is the file url of an explicit entry (an entry without a source)
+	URL string `yaml:"url" json:"url,omitempty" jsonschema:"description=File url of an explicit entry (name without a source); mutually exclusive with content"`
+
+	// Content is inline file content of an explicit entry, uploaded as the
+	// configuration file
+	Content string `yaml:"content" json:"content,omitempty" jsonschema:"description=Inline file content of an explicit entry (name without a source) which is uploaded as the configuration file; supports ${VAR} expansion and sops encryption; mutually exclusive with url"`
+
+	// Filename is the name of the uploaded file for inline content
+	Filename string `yaml:"filename" json:"filename,omitempty" jsonschema:"description=Filename of the uploaded inline content (defaults to the name),example=mosquitto.conf"`
+
+	Source Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the configuration file comes from; without a source the entry declares a single configuration explicitly with name and url or inline content"`
+}
+
+// IsExplicit reports whether the entry declares a single configuration
+// (with a url, inline content or neither) instead of files from a source
+func (spec ConfigurationSpec) IsExplicit() bool {
+	return !spec.Source.IsSet()
+}
+
+// UploadFilename is the filename used for inline content
+func (spec ConfigurationSpec) UploadFilename() string {
+	if spec.Filename != "" {
+		return spec.Filename
+	}
+	return spec.Name
 }
 
 // SmartRestTemplateSpec syncs SmartREST 2.0 template collections from JSON
@@ -691,6 +715,28 @@ func validateExplicitFirmware(label string, spec FirmwareSpec) []string {
 	}
 	if err := validatePlaceholders(spec.DeviceType); err != nil {
 		errs = append(errs, fmt.Sprintf("%s.deviceType: %v", label, err))
+	}
+	return errs
+}
+
+// validateExplicitConfiguration checks an explicit configuration entry
+// (name with a url, inline content or neither, instead of a source)
+func validateExplicitConfiguration(label string, spec ConfigurationSpec) []string {
+	var errs []string
+	if strings.TrimSpace(spec.Name) == "" {
+		errs = append(errs, label+": source, or name (an explicit entry), is required")
+	}
+	if spec.URL != "" && spec.Content != "" {
+		errs = append(errs, label+": url and content are mutually exclusive")
+	}
+	if spec.Filename != "" && spec.Content == "" {
+		errs = append(errs, label+": filename only applies to inline content")
+	}
+	if strings.ContainsAny(spec.Filename, `/\`) {
+		errs = append(errs, fmt.Sprintf("%s: filename %q must not contain a path", label, spec.Filename))
+	}
+	if err := validateAbsoluteURL(spec.URL); err != nil {
+		errs = append(errs, fmt.Sprintf("%s: %v", label, err))
 	}
 	return errs
 }
@@ -908,8 +954,16 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	for i, cfg := range m.Configuration {
-		if err := cfg.Source.Validate(); err != nil {
-			errs = append(errs, fmt.Sprintf("configuration[%d]: %v", i, err))
+		label := fmt.Sprintf("configuration[%d]", i)
+		if cfg.IsExplicit() {
+			errs = append(errs, validateExplicitConfiguration(label, cfg)...)
+		} else {
+			if cfg.URL != "" || cfg.Content != "" || cfg.Filename != "" {
+				errs = append(errs, label+": url, content and filename require an entry without a source (for a source, use source.url)")
+			}
+			if err := cfg.Source.Validate(); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", label, err))
+			}
 		}
 		if cfg.ConfigurationType == "" {
 			errs = append(errs, fmt.Sprintf("configuration[%d]: configurationType is required", i))

@@ -87,6 +87,52 @@
       ]
     },
     "ConfigurationSpec": {
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "url"
+                ]
+              },
+              {
+                "required": [
+                  "content"
+                ]
+              },
+              {
+                "required": [
+                  "filename"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "source"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "source"
+                ]
+              },
+              {
+                "required": [
+                  "url",
+                  "content"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "name"
+          ]
+        }
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -108,16 +154,30 @@
           "type": "string",
           "description": "Restrict the configuration to a device type"
         },
+        "url": {
+          "type": "string",
+          "description": "File url of an explicit entry (name without a source); mutually exclusive with content"
+        },
+        "content": {
+          "type": "string",
+          "description": "Inline file content of an explicit entry (name without a source) which is uploaded as the configuration file; supports ${VAR} expansion and sops encryption; mutually exclusive with url"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Filename of the uploaded inline content (defaults to the name)",
+          "examples": [
+            "mosquitto.conf"
+          ]
+        },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the configuration file comes from"
+          "description": "Where the configuration file comes from; without a source the entry declares a single configuration explicitly with name and url or inline content"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "configurationType",
-        "source"
+        "configurationType"
       ]
     },
     "DeviceProfileSpec": {

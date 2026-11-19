@@ -1,12 +1,11 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"net/mail"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -19,6 +18,8 @@ import (
 // profiles) can reference items created by earlier ones (firmware, software,
 // configuration).
 type Manifest struct {
+	Include []IncludeSpec `yaml:"include" json:"include,omitempty" jsonschema:"description=Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or user group name) and the targets and certificateAuthority sections of a later file replace earlier ones"`
+
 	Targets       *TargetsSpec       `yaml:"targets" json:"targets,omitempty" jsonschema:"description=Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"`
 	TenantOptions []TenantOptionSpec `yaml:"tenantOptions" json:"tenantOptions,omitempty" jsonschema:"description=Tenant options to set (created if missing and updated when the value differs)"`
 	Features      []FeatureSpec      `yaml:"features" json:"features,omitempty" jsonschema:"description=Feature toggles to enable or disable for the current tenant"`
@@ -42,6 +43,10 @@ type Manifest struct {
 	DeviceProfiles []DeviceProfileSpec `yaml:"deviceProfiles" json:"deviceProfiles,omitempty" jsonschema:"description=Device profiles referencing firmware/software/configuration in the tenant"`
 	Commands       []CommandGroupSpec  `yaml:"commands" json:"commands,omitempty" jsonschema:"description=Named groups of shell commands run as the last section; actions within a group run in sequence and groups run concurrently"`
 	Hooks          HooksSpec           `yaml:"hooks" json:"hooks,omitempty" jsonschema:"description=Commands executed before and after the sync and around individual sections (e.g. go-c8y-cli calls)"`
+
+	// IncludedFiles are the files merged via include, relative to the
+	// manifest directory where possible (set by LoadManifestWith)
+	IncludedFiles []string `yaml:"-" json:"-"`
 }
 
 // Credential modes for applying the manifest to other tenants
@@ -183,6 +188,11 @@ type CommandGroupSpec struct {
 	// Actions are shell commands executed in sequence via 'sh -c' from the
 	// manifest directory. A failing action skips the rest of its group.
 	Actions []string `yaml:"actions" json:"actions" jsonschema:"description=Shell commands executed in sequence via 'sh -c' from the manifest directory; a failing action skips the rest of the group"`
+
+	// Dir is the working directory of the actions: the directory of the
+	// included manifest file which declares the group (empty: the manifest
+	// directory)
+	Dir string `yaml:"-" json:"-"`
 }
 
 // HookSpec is a single command executed via the shell with the manifest
@@ -191,6 +201,11 @@ type CommandGroupSpec struct {
 type HookSpec struct {
 	Name string `yaml:"name" json:"name,omitempty" jsonschema:"description=Display name of the hook"`
 	Run  string `yaml:"run" json:"run" jsonschema:"description=Command executed with 'sh -c' from the manifest directory"`
+
+	// Dir is the working directory of the command: the directory of the
+	// included manifest file which declares the hook (empty: the manifest
+	// directory)
+	Dir string `yaml:"-" json:"-"`
 }
 
 // TenantOptionSpec sets a tenant option (category/key/value). The value is
@@ -398,7 +413,7 @@ func (u UserSpec) IsEnabled() bool {
 type Source struct {
 	// Path is a local file or directory. Directories are searched recursively
 	// using Patterns.
-	Path     string   `yaml:"path" json:"path,omitempty" jsonschema:"description=Local file or directory (relative paths are resolved against the manifest directory)"`
+	Path     string   `yaml:"path" json:"path,omitempty" jsonschema:"description=Local file or directory (relative paths are resolved against the directory of the manifest file which declares it)"`
 	Patterns []string `yaml:"patterns" json:"patterns,omitempty" jsonschema:"description=Glob patterns matched against filenames when path is a directory (default: *)"`
 
 	// URL references an external file without uploading a binary.
@@ -930,33 +945,20 @@ func LoadManifest(path string) (*Manifest, error) {
 // LoadManifestWith reads a manifest like LoadManifest, with generated values
 // from opts.Secrets
 func LoadManifestWith(path string, opts LoadOptions) (*Manifest, error) {
-	raw, err := readManifestFile(path)
+	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-
-	expanded, err := expandManifest(string(raw), opts.Secrets)
+	loader := &manifestLoader{
+		opts:    opts,
+		rootDir: filepath.Dir(abs),
+		loaded:  map[string]bool{},
+	}
+	manifest, err := loader.load(path, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	manifest := &Manifest{}
-	decoder := yaml.NewDecoder(strings.NewReader(expanded))
-	// Strict parsing: unknown fields are errors so typos are caught early
-	decoder.KnownFields(true)
-	if err := decoder.Decode(manifest); err != nil {
-		if errors.Is(err, io.EOF) {
-			// Empty manifest
-			return manifest, nil
-		}
-		return nil, fmt.Errorf("failed to parse manifest: %w", err)
-	}
-
-	manifest.applyDefaults()
-	if err := manifest.Validate(); err != nil {
-		return nil, err
-	}
-
+	manifest.IncludedFiles = loader.files
 	return manifest, nil
 }
 

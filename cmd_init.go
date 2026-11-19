@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -116,6 +117,30 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
+// secretsGitignorePattern matches the secrets files of manifests
+const secretsGitignorePattern = "*.secrets.yaml"
+
+// ensureGitignore adds a pattern to the .gitignore in dir (creating it if
+// needed) unless it is already listed. It reports whether it was added.
+func ensureGitignore(dir, pattern string) (bool, error) {
+	path := filepath.Join(dir, ".gitignore")
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return false, nil
+		}
+	}
+	content := string(existing)
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += pattern + "\n"
+	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
 func runInit(args []string, full, force bool) error {
 	path, err := manifestPathFromArgs("", args)
 	if err != nil {
@@ -157,6 +182,13 @@ func runInit(args []string, full, force bool) error {
 			}
 			fmt.Printf("✓ Created %s folder (add your software packages here)\n", packagesDir)
 		}
+	}
+
+	// Generated values (${generate:NAME}) are stored next to the manifest
+	if added, err := ensureGitignore(filepath.Dir(path), secretsGitignorePattern); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ could not update .gitignore: %v\n", err)
+	} else if added {
+		fmt.Printf("✓ Added %s to %s (secrets files of generated values)\n", secretsGitignorePattern, filepath.Join(filepath.Dir(path), ".gitignore"))
 	}
 
 	fmt.Println("\nNext steps:")

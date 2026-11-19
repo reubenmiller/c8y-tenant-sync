@@ -1,2 +1,4 @@
 bin/
 dist/
+# Generated values of ${generate:NAME} references
+*.secrets.yaml

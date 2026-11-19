@@ -137,6 +137,12 @@ users:
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
     groups: [operators]
 
+  # A random initial password, stored in tenant.secrets.yaml (encrypted with
+  # sops when a .sops.yaml is found) and masked in the output
+  - email: svc-monitoring@example.invalid
+    password: ${generate:svc-monitoring-password}
+    groups: [operators]
+
   - userName: old-account@example.com
     enabled: false # keep the account but disable it
 

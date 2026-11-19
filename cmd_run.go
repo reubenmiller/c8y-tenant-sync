@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,23 +10,26 @@ import (
 	"time"
 
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/authentication"
 	"github.com/spf13/cobra"
 )
 
 // runOptions holds the flags of the run command
 type runOptions struct {
-	manifest        string
-	only            []string
-	dryRun          bool
-	force           bool
-	concurrency     int
-	verbose         bool
-	debug           bool
-	targets         []string
-	allChildren     bool
-	targetSelector  string
-	includeCurrent  bool
-	credentialsMode string
+	manifest          string
+	only              []string
+	dryRun            bool
+	force             bool
+	concurrency       int
+	verbose           bool
+	debug             bool
+	targets           []string
+	allChildren       bool
+	targetSelector    string
+	includeCurrent    bool
+	credentialsMode   string
+	secretsFile       string
+	secretsEncryption string
 }
 
 func newRunCmd() *cobra.Command {
@@ -66,20 +70,40 @@ Every operation is idempotent, so the same manifest can be applied repeatedly. U
 	flags.StringVar(&opts.targetSelector, "target-selector", "", "Apply to tenants matching criteria, e.g. domain=*.example.com,company=ACME (overrides the manifest targets section)")
 	flags.BoolVar(&opts.includeCurrent, "include-current", false, "Also include the current tenant when other target flags are used")
 	flags.StringVar(&opts.credentialsMode, "credentials-mode", "", "How credentials for other tenants are obtained: "+CredentialsModeServiceUser+" or "+CredentialsModeSessions+" (overrides the manifest)")
+	flags.StringVar(&opts.secretsFile, "secrets-file", "", "File which stores the values of ${generate:NAME} references (default: <manifest>.secrets.yaml)")
+	flags.StringVar(&opts.secretsEncryption, "secrets-encryption", string(SecretsEncryptionAuto), "Encrypt the secrets file with sops: auto (when sops and a .sops.yaml are found), sops (required) or none")
 	flags.StringArrayVar(&opts.targets, "target", nil, "Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest targets section)")
 
 	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFiles)
 	_ = cmd.RegisterFlagCompletionFunc("only", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return SectionOrder, cobra.ShellCompDirectiveNoFileComp
 	})
+	_ = cmd.RegisterFlagCompletionFunc("secrets-encryption", cobra.FixedCompletions(SecretsEncryptionModes, cobra.ShellCompDirectiveNoFileComp))
+	_ = cmd.RegisterFlagCompletionFunc("secrets-file", completeManifestFiles)
 	_ = cmd.RegisterFlagCompletionFunc("credentials-mode", cobra.FixedCompletions(
 		[]string{CredentialsModeServiceUser, CredentialsModeSessions}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 
-func runSync(opts *runOptions, args []string) error {
+func runSync(opts *runOptions, args []string) (err error) {
 	runtime := RuntimeFromEnv()
 	dryRun := opts.dryRun || runtime.DryRun
+
+	// Mask secrets (generated values, passwords, tokens) in all output,
+	// including the HTTP debug output. It is set up before logging, which
+	// keeps a reference to os.Stderr
+	redactor := &Redactor{}
+	restoreStdio, err := RedactStdio(redactor)
+	if err != nil {
+		return fmt.Errorf("failed to set up output masking: %w", err)
+	}
+	defer restoreStdio()
+	defer func() {
+		// The error is printed after the output is restored
+		if err != nil && !errors.Is(err, errExitFailures) {
+			err = errors.New(redactor.Redact(err.Error()))
+		}
+	}()
 	configureLogging(opts.verbose, opts.debug)
 
 	manifestPath, err := manifestPathFromArgs(opts.manifest, args)
@@ -87,10 +111,36 @@ func runSync(opts *runOptions, args []string) error {
 		return err
 	}
 
-	manifest, err := LoadManifest(manifestPath)
+	encryption := SecretsEncryption(strings.ToLower(strings.TrimSpace(opts.secretsEncryption)))
+	switch encryption {
+	case SecretsEncryptionAuto, SecretsEncryptionSops, SecretsEncryptionNone:
+	default:
+		return fmt.Errorf("invalid --secrets-encryption %q: use %s", opts.secretsEncryption, strings.Join(SecretsEncryptionModes, ", "))
+	}
+	secretsPath := opts.secretsFile
+	if secretsPath == "" {
+		secretsPath = DefaultSecretsPath(manifestPath)
+	}
+	secrets, err := OpenSecretStore(secretsPath, encryption)
 	if err != nil {
 		return err
 	}
+	secrets.DryRun = dryRun
+	secrets.Host = authentication.HostFromEnvironment()
+
+	manifest, err := LoadManifestWith(manifestPath, LoadOptions{Secrets: secrets})
+	// Values generated while loading are saved even when the run fails later,
+	// since they may already have been used (e.g. as a user's password)
+	defer func() {
+		if saveErr := saveSecrets(secrets); saveErr != nil && err == nil {
+			err = saveErr
+		}
+	}()
+	if err != nil {
+		return err
+	}
+	redactor.Add(secrets.Values()...)
+	redactor.Add(manifestSecretValues(manifest)...)
 
 	targets, err := targetsFromFlags(opts.targets, opts.allChildren, opts.targetSelector, opts.includeCurrent)
 	if err != nil {
@@ -147,6 +197,7 @@ func runSync(opts *runOptions, args []string) error {
 		Force:       opts.force,
 		Concurrency: opts.concurrency,
 		Targets:     targets,
+		Secrets:     secrets,
 	}
 
 	startTime := time.Now()
@@ -164,6 +215,53 @@ func runSync(opts *runOptions, args []string) error {
 		fmt.Println("\n✓ Dry run complete - no changes made")
 	}
 	return nil
+}
+
+// saveSecrets writes the values generated in this run to the secrets file and
+// reports their names (never the values)
+func saveSecrets(secrets *SecretStore) error {
+	generated := secrets.Generated()
+	if secrets.DryRun || len(generated) == 0 {
+		return nil
+	}
+	encrypted, err := secrets.Save()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n⚠ %v\n", err)
+		return fmt.Errorf("failed to save the generated values: %w", err)
+	}
+	protection := "unencrypted, permissions 0600"
+	if encrypted {
+		protection = "encrypted with sops"
+	}
+	fmt.Printf("\n🔐 Generated %d value(s): %s\n   Saved to %s (%s)\n", len(generated), strings.Join(generated, ", "), secrets.Path, protection)
+	return nil
+}
+
+// manifestSecretValues returns the secret values of a manifest which are
+// masked in the output (user passwords and GitHub tokens)
+func manifestSecretValues(manifest *Manifest) []string {
+	var values []string
+	for _, user := range manifest.Users {
+		values = append(values, user.Password)
+	}
+	addToken := func(source *Source) {
+		if source != nil && source.GitHub != nil {
+			values = append(values, source.GitHub.Token)
+		}
+	}
+	for i := range manifest.Software {
+		addToken(&manifest.Software[i].Source)
+	}
+	for i := range manifest.Firmware {
+		addToken(&manifest.Firmware[i].Source)
+	}
+	for i := range manifest.Configuration {
+		addToken(&manifest.Configuration[i].Source)
+	}
+	for i := range manifest.Applications {
+		addToken(manifest.Applications[i].Source)
+	}
+	return values
 }
 
 // targetsFromFlags builds a targets spec from the CLI flags. It returns nil

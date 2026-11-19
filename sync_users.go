@@ -174,7 +174,14 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 			userID = created.Data.ID()
 			userSelf = created.Data.Self()
 			action = ActionCreated
+			if name, ok := s.generatedName(spec.Password); ok {
+				details = append(details, "initial password from ${generate:"+name+"}")
+			}
 		} else {
+			if name, ok := s.newlyGeneratedName(spec.Password); ok {
+				// Passwords are only set when creating users
+				details = append(details, "generated password ${generate:"+name+"} not applied (the user already exists)")
+			}
 			userID = existing.Data.ID()
 			userSelf = existing.Data.Self()
 			if changes := userDiff(spec, existing.Data); len(changes) > 0 {
@@ -255,6 +262,22 @@ func (s *Syncer) ensureUserGroups(ctx context.Context, userID, userSelf string, 
 }
 
 // userCreateBody builds the create request body for a user
+// generatedName returns the name of a generated value
+func (s *Syncer) generatedName(value string) (string, bool) {
+	if s.Secrets == nil || value == "" {
+		return "", false
+	}
+	return s.Secrets.NameOf(value)
+}
+
+// newlyGeneratedName returns the name of a value generated in this run
+func (s *Syncer) newlyGeneratedName(value string) (string, bool) {
+	if s.Secrets == nil || value == "" {
+		return "", false
+	}
+	return s.Secrets.IsGenerated(value)
+}
+
 func userCreateBody(spec UserSpec) map[string]any {
 	body := map[string]any{
 		"userName": spec.Username,

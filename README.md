@@ -46,6 +46,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🔎 **Dry-run**: preview every change before applying
 - 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
+- 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
 - 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA and subscribed microservices)
 
@@ -154,6 +155,8 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--all-children` | | Apply to all child tenants of the current tenant (overrides the manifest `targets` section) |
 | `--target-selector` | | Apply to tenants matching criteria, e.g. `domain=*.example.com,company=ACME` (overrides the manifest `targets` section) |
 | `--include-current` | | Also include the current tenant when other target flags are used |
+| `--secrets-file` | `<manifest>.secrets.yaml` | File which stores the values of `${generate:NAME}` references, see [Generated values](#generated-values) |
+| `--secrets-encryption` | `auto` | Encrypt the secrets file with sops: `auto` (when sops and a `.sops.yaml` are found), `sops` (required) or `none` |
 | `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser` or `sessions` (overrides the manifest) |
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
@@ -183,6 +186,30 @@ c8y tenant-sync run -f tenant.yaml
 - `sops` must be installed (or set `TENANT_SYNC_SOPS` to its path) wherever an encrypted manifest is validated or applied, including CI.
 - `${VAR}` references are expanded after decryption, so both can be combined.
 - Editors with the manifest schema accept the `sops` section.
+
+### Generated values
+
+`${generate:NAME}` (or `${generate:NAME:LENGTH}`) is replaced with a random value, for example as the initial password of a user with a placeholder email address, or as a value which only the tenant needs to know:
+
+```yaml
+users:
+  - email: svc-dashboard@example.invalid
+    password: ${generate:svc-dashboard-password}
+
+tenantOptions:
+  - category: integration
+    key: api.secret
+    value: ${generate:integration-secret:32}
+```
+
+- **Values are stable.** A value is generated the first time a name is used and stored in the secrets file (`tenant.yaml` → `tenant.secrets.yaml`, or `--secrets-file`). Later runs reuse the stored value, so the run stays idempotent (e.g. the tenant option is not changed on every run). The same name always gets the same value, also across target tenants.
+- **Values are kept.** The secrets file is saved after every run which generated values (also when the run failed, since a value may already have been used), with permissions `0600`. Each entry records when it was generated and for which host. The run reports the names of new values, never the values.
+- **Encryption.** With `--secrets-encryption auto` (default), the secrets file is encrypted with [SOPS](#secrets-with-sops) when `sops` is installed and a `.sops.yaml` with creation rules is found in the folder of the secrets file or a parent folder, and an encrypted secrets file stays encrypted. `sops` requires encryption, and `none` always writes a plain file. If encryption fails, the values are saved unencrypted (`0600`) and the run fails, so no value is lost.
+- **Masking.** Generated values, user passwords and GitHub tokens are replaced with `***` in all output, including the request bodies printed by `--debug`.
+- **Passwords are only set when a user is created.** The result line says `initial password from ${generate:NAME}`, or `generated password ... not applied (the user already exists)` when a new value was generated for an existing user.
+- Values are 24 characters by default (12 to 128 with `:LENGTH`), start with a letter and contain lowercase and uppercase letters, digits and one of `-_.+=^~`, which satisfies the Cumulocity password rules.
+- References in YAML comments are ignored, and `$${generate:NAME}` is a literal `${generate:NAME}`. A dry run doesn't generate values (it shows `<generated:NAME>`), and `validate` checks the references.
+- `init` adds `*.secrets.yaml` to `.gitignore`. Only commit a secrets file when it is encrypted.
 
 ### Exporting a tenant
 

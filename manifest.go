@@ -670,14 +670,102 @@ const escapedDollarPlaceholder = "\x00tenant-sync-dollar\x00"
 // references are left in place (as ${VAR}) so they are easy to spot in
 // errors. "$$" is an escaped literal "$".
 func expandEnv(raw string) string {
+	expanded, _ := expandManifest(raw, nil)
+	return expanded
+}
+
+// expandManifest expands environment variables and ${generate:NAME[:LENGTH]}
+// references. Generated values come from the secrets store; without a store
+// the references are only checked and left in place.
+func expandManifest(raw string, secrets *SecretStore) (string, error) {
+	var errs []string
 	escaped := strings.ReplaceAll(raw, "$$", escapedDollarPlaceholder)
 	expanded := os.Expand(escaped, func(name string) string {
+		if strings.HasPrefix(name, generatePrefix) {
+			if _, err := parseGenerateRef(strings.TrimPrefix(name, generatePrefix)); err != nil {
+				errs = append(errs, err.Error())
+				return "${" + name + "}"
+			}
+			if secrets == nil {
+				return "${" + name + "}"
+			}
+			// Replaced in the YAML values below, so references in comments
+			// don't generate values
+			return generateMarkerStart + strings.TrimPrefix(name, generatePrefix) + generateMarkerEnd
+		}
 		if value, ok := os.LookupEnv(name); ok {
 			return value
 		}
 		return "${" + name + "}"
 	})
-	return strings.ReplaceAll(expanded, escapedDollarPlaceholder, "$")
+	expanded = strings.ReplaceAll(expanded, escapedDollarPlaceholder, "$")
+	if len(errs) > 0 {
+		return expanded, fmt.Errorf("invalid manifest:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	if secrets != nil && strings.Contains(expanded, generateMarkerStart) {
+		return generateInValues(expanded, secrets)
+	}
+	return expanded, nil
+}
+
+// Markers of ${generate:...} references between the text expansion and the
+// replacement in the YAML values (Unicode private use characters, which are
+// valid in YAML but don't appear in manifests)
+const (
+	generateMarkerStart = "\uE000"
+	generateMarkerEnd   = "\uE001"
+)
+
+var generateMarkerPattern = regexp.MustCompile(generateMarkerStart + `([^` + generateMarkerEnd + `]*)` + generateMarkerEnd)
+
+// generateInValues replaces the generate markers in the YAML values (not in
+// comments) with the generated values
+func generateInValues(text string, secrets *SecretStore) (string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		return "", fmt.Errorf("failed to parse manifest: %w", err)
+	}
+	var walkErr error
+	var walk func(node *yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node.Kind == yaml.ScalarNode && strings.Contains(node.Value, generateMarkerStart) {
+			node.Value = generateMarkerPattern.ReplaceAllStringFunc(node.Value, func(marker string) string {
+				ref, err := parseGenerateRef(generateMarkerPattern.FindStringSubmatch(marker)[1])
+				if err == nil {
+					var value string
+					if value, err = secrets.Value(ref); err == nil {
+						return value
+					}
+				}
+				if walkErr == nil {
+					walkErr = err
+				}
+				return marker
+			})
+			// The value is a string, also if it looks like another type
+			node.Tag = "!!str"
+			node.Style = 0
+		}
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(&doc)
+	if walkErr != nil {
+		return "", walkErr
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// LoadOptions are options of LoadManifestWith
+type LoadOptions struct {
+	// Secrets provides the values of ${generate:NAME} references. Without
+	// it, the references are only checked and left in place
+	Secrets *SecretStore
 }
 
 // escapeEnv escapes "$" as "$$", so the value is not expanded when the
@@ -815,12 +903,21 @@ func validateVersionRef(label, version, selector string, includePrereleases bool
 // encrypted), expanding ${VAR} environment variable
 // references before parsing so secrets (e.g. GitHub tokens) can be injected.
 func LoadManifest(path string) (*Manifest, error) {
+	return LoadManifestWith(path, LoadOptions{})
+}
+
+// LoadManifestWith reads a manifest like LoadManifest, with generated values
+// from opts.Secrets
+func LoadManifestWith(path string, opts LoadOptions) (*Manifest, error) {
 	raw, err := readManifestFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	expanded := expandEnv(string(raw))
+	expanded, err := expandManifest(string(raw), opts.Secrets)
+	if err != nil {
+		return nil, err
+	}
 
 	manifest := &Manifest{}
 	decoder := yaml.NewDecoder(strings.NewReader(expanded))

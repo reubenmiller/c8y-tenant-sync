@@ -90,6 +90,8 @@ type Syncer struct {
 	DryRun      bool
 	Force       bool
 	Concurrency int
+	// Secrets holds the generated values (${generate:NAME}), if any
+	Secrets *SecretStore
 
 	// Targets overrides the manifest targets section (set from CLI flags)
 	Targets *TargetsSpec

@@ -60,8 +60,15 @@ func loadTrustedCertificates(path, nameOverride string) ([]*model.TrustedCertifi
 	}
 
 	if len(certs) == 0 {
-		// Not PEM: try the whole file as a DER or base64 encoded certificate
-		cert, err := model.NewTrustedCertificate(bytes.TrimSpace(raw))
+		// Not PEM: try the whole file as a DER or base64 encoded certificate.
+		// Binary DER must be parsed as-is (its last byte can be a whitespace
+		// character); surrounding whitespace is only trimmed for base64 text
+		cert, err := model.NewTrustedCertificate(raw)
+		if err != nil {
+			if trimmed, trimErr := model.NewTrustedCertificate(bytes.TrimSpace(raw)); trimErr == nil {
+				cert, err = trimmed, nil
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("no certificates found (expected PEM, DER or base64 encoded DER): %w", err)
 		}

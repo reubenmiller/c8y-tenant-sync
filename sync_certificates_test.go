@@ -118,6 +118,43 @@ func TestLoadTrustedCertificates(t *testing.T) {
 		assert.Equal(t, "der-ca", certs[0].Name)
 	})
 
+	// Regression: DER is binary, so its last byte can be a whitespace
+	// character (about 2% of certificates), which must not be trimmed
+	t.Run("DER certificate ending with a whitespace byte", func(t *testing.T) {
+		var raw []byte
+		for i := 0; i < 5000 && raw == nil; i++ {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			cert, err := certutil.NewSelfSignedCertificate(key, "der-ws")
+			require.NoError(t, err)
+			switch cert.Raw[len(cert.Raw)-1] {
+			case '\t', '\n', '\v', '\f', '\r', ' ':
+				raw = cert.Raw
+			}
+		}
+		require.NotNil(t, raw, "no certificate ending with a whitespace byte generated")
+		path := writeFile(t, t.TempDir(), "der-ws.cer", raw)
+
+		certs, err := loadTrustedCertificates(path, "")
+		require.NoError(t, err)
+		require.Len(t, certs, 1)
+		assert.Equal(t, "der-ws", certs[0].Name)
+	})
+
+	t.Run("base64 certificate with surrounding whitespace", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		cert, err := certutil.NewSelfSignedCertificate(key, "b64-ca")
+		require.NoError(t, err)
+		content := "\n  " + base64.StdEncoding.EncodeToString(cert.Raw) + "\n\n"
+		path := writeFile(t, t.TempDir(), "b64-ca.txt", []byte(content))
+
+		certs, err := loadTrustedCertificates(path, "")
+		require.NoError(t, err)
+		require.Len(t, certs, 1)
+		assert.Equal(t, "b64-ca", certs[0].Name)
+	})
+
 	t.Run("non-certificate file is rejected", func(t *testing.T) {
 		path := writeFile(t, t.TempDir(), "not-a-cert.pem", []byte("hello"))
 		_, err := loadTrustedCertificates(path, "")

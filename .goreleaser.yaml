@@ -23,6 +23,7 @@ archives:
     files:
       - extension.yaml
       - README.md
+      - docs/**
       - LICENSE
       - tenant.example.yaml
       - tenant.schema.json

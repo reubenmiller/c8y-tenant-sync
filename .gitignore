@@ -2,3 +2,5 @@ bin/
 dist/
 # Generated values of ${generate:NAME} references
 *.secrets.yaml
+# Binary built with "go build" in the repository root
+/c8y-tenant-sync

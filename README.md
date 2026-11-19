@@ -604,6 +604,32 @@ deviceProfiles:
         type: mosquitto.conf
 ```
 
+#### Latest version
+
+Set `version: latest` on a firmware or software reference to use the highest version of that item in the tenant, compared by [semantic versioning](https://semver.org) (so `1.10.0` is newer than `1.9.0`). The version is resolved every time the manifest is applied, after the repository sections, so a profile follows the newest version which the same manifest synced. The profile is only updated when the resolved version changes.
+
+```yaml
+deviceProfiles:
+  - name: rpi4-latest
+    deviceType: raspberrypi4-64
+    firmware:
+      name: tedge-rugix-pi
+      version: latest
+    software:
+      - name: tedge
+        type: apt
+        version: latest
+      - name: tedge-inventory-plugin
+        version: latest
+        includePrereleases: true # also consider versions such as 1.2.0-rc1
+```
+
+- The profile entry contains the resolved version (e.g. `1.10.0`), never `latest`.
+- Versions which are not valid semver (e.g. `nightly`) are ignored. Versions with a `v` prefix, two parts (`1.2`) or build timestamps (`20261104.2250`) are accepted.
+- Prereleases (a `-` suffix such as `1.2.0-rc1`) are skipped unless `includePrereleases: true` is set. Package revisions written with a `-` (e.g. `1.2.3-1`) also count as prereleases in semver.
+- `url: none` still resolves the version, and only leaves out the url.
+- The profile fails with an error when no version qualifies.
+
 ## Example Output
 
 ```

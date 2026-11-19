@@ -84,15 +84,20 @@ func (s *Syncer) buildProfileBody(ctx context.Context, spec DeviceProfileSpec) (
 	profile := map[string]any{}
 
 	if spec.Firmware != nil {
-		url, include, err := profileRefURL(spec.Firmware.URL, func() (string, error) {
-			return s.lookupFirmwareVersionURL(ctx, spec.Firmware.Name, spec.Firmware.Version)
-		})
+		ref := spec.Firmware
+		version, lookup, err := resolveVersion(ref.Version, ref.IncludePrereleases,
+			func() ([]repositoryVersion, error) { return s.listFirmwareVersions(ctx, ref.Name) },
+			func() (string, error) { return s.lookupFirmwareVersionURL(ctx, ref.Name, ref.Version) })
 		if err != nil {
-			return nil, fmt.Errorf("firmware %s/%s: %w", spec.Firmware.Name, spec.Firmware.Version, err)
+			return nil, fmt.Errorf("firmware %s/%s: %w", ref.Name, ref.Version, err)
+		}
+		url, include, err := profileRefURL(ref.URL, lookup)
+		if err != nil {
+			return nil, fmt.Errorf("firmware %s/%s: %w", ref.Name, version, err)
 		}
 		entry := map[string]any{
-			"name":    spec.Firmware.Name,
-			"version": spec.Firmware.Version,
+			"name":    ref.Name,
+			"version": version,
 		}
 		if include {
 			entry["url"] = url
@@ -103,11 +108,15 @@ func (s *Syncer) buildProfileBody(ctx context.Context, spec DeviceProfileSpec) (
 	if len(spec.Software) > 0 {
 		software := make([]map[string]any, 0, len(spec.Software))
 		for _, ref := range spec.Software {
-			url, include, err := profileRefURL(ref.URL, func() (string, error) {
-				return s.lookupSoftwareVersionURL(ctx, ref.Name, ref.Type, ref.Version)
-			})
+			version, lookup, err := resolveVersion(ref.Version, ref.IncludePrereleases,
+				func() ([]repositoryVersion, error) { return s.listSoftwareVersions(ctx, ref.Name, ref.Type) },
+				func() (string, error) { return s.lookupSoftwareVersionURL(ctx, ref.Name, ref.Type, ref.Version) })
 			if err != nil {
 				return nil, fmt.Errorf("software %s/%s: %w", ref.Name, ref.Version, err)
+			}
+			url, include, err := profileRefURL(ref.URL, lookup)
+			if err != nil {
+				return nil, fmt.Errorf("software %s/%s: %w", ref.Name, version, err)
 			}
 			action := ref.Action
 			if action == "" {
@@ -115,7 +124,7 @@ func (s *Syncer) buildProfileBody(ctx context.Context, spec DeviceProfileSpec) (
 			}
 			entry := map[string]any{
 				"name":    ref.Name,
-				"version": ref.Version,
+				"version": version,
 				"action":  action,
 			}
 			if include {

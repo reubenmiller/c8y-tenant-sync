@@ -324,7 +324,15 @@
         },
         "version": {
           "type": "string",
-          "description": "Firmware version (must exist in the tenant unless url is set)"
+          "description": "Firmware version (must exist in the tenant unless url is set). latest selects the highest semver version of the firmware in the tenant",
+          "examples": [
+            "1.2.3",
+            "latest"
+          ]
+        },
+        "includePrereleases": {
+          "type": "boolean",
+          "description": "Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"
         },
         "url": {
           "type": "string",
@@ -349,7 +357,15 @@
         },
         "version": {
           "type": "string",
-          "description": "Software version (must exist in the tenant unless url is set)"
+          "description": "Software version (must exist in the tenant unless url is set). latest selects the highest semver version of the software in the tenant",
+          "examples": [
+            "1.2.3",
+            "latest"
+          ]
+        },
+        "includePrereleases": {
+          "type": "boolean",
+          "description": "Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"
         },
         "type": {
           "type": "string",

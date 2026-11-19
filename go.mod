@@ -3,6 +3,7 @@ module github.com/reubenmiller/c8y-tenant-sync
 go 1.27.0
 
 require (
+	github.com/Masterminds/semver/v3 v3.3.1
 	github.com/invopop/jsonschema v0.13.0
 	github.com/reubenmiller/go-c8y/v2 v2.0.0-20261119064753-3d2e6729d3e0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2

@@ -574,16 +574,24 @@ type DeviceProfileSpec struct {
 
 type ProfileFirmwareRef struct {
 	Name    string `yaml:"name" json:"name" jsonschema:"description=Firmware name (must exist in the tenant unless url is set)"`
-	Version string `yaml:"version" json:"version" jsonschema:"description=Firmware version (must exist in the tenant unless url is set)"`
-	URL     string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit binary URL skipping the lookup of the firmware version in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
+	Version string `yaml:"version" json:"version" jsonschema:"description=Firmware version (must exist in the tenant unless url is set). latest selects the highest semver version of the firmware in the tenant,example=1.2.3,example=latest"`
+
+	// IncludePrereleases considers prerelease versions (e.g. 1.2.0-rc1) for
+	// version: latest
+	IncludePrereleases bool   `yaml:"includePrereleases" json:"includePrereleases,omitempty" jsonschema:"description=Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"`
+	URL                string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit binary URL skipping the lookup of the firmware version in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
 }
 
 type ProfileSoftwareRef struct {
 	Name    string `yaml:"name" json:"name" jsonschema:"description=Software name (must exist in the tenant unless url is set)"`
-	Version string `yaml:"version" json:"version" jsonschema:"description=Software version (must exist in the tenant unless url is set)"`
-	Type    string `yaml:"type" json:"type,omitempty" jsonschema:"description=Software type of the referenced item (disambiguates the lookup and is written to the profile entry),example=apt"`
-	URL     string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit binary URL skipping the lookup of the software version in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
-	Action  string `yaml:"action" json:"action,omitempty" jsonschema:"description=Software action (defaults to install),example=install"` // defaults to "install"
+	Version string `yaml:"version" json:"version" jsonschema:"description=Software version (must exist in the tenant unless url is set). latest selects the highest semver version of the software in the tenant,example=1.2.3,example=latest"`
+
+	// IncludePrereleases considers prerelease versions (e.g. 1.2.0-rc1) for
+	// version: latest
+	IncludePrereleases bool   `yaml:"includePrereleases" json:"includePrereleases,omitempty" jsonschema:"description=Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"`
+	Type               string `yaml:"type" json:"type,omitempty" jsonschema:"description=Software type of the referenced item (disambiguates the lookup and is written to the profile entry),example=apt"`
+	URL                string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit binary URL skipping the lookup of the software version in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
+	Action             string `yaml:"action" json:"action,omitempty" jsonschema:"description=Software action (defaults to install),example=install"` // defaults to "install"
 }
 
 type ProfileConfigurationRef struct {
@@ -802,12 +810,20 @@ func (m *Manifest) Validate() error {
 		if profile.Name == "" {
 			errs = append(errs, fmt.Sprintf("deviceProfiles[%d]: name is required", i))
 		}
-		if profile.Firmware != nil && (profile.Firmware.Name == "" || profile.Firmware.Version == "") {
-			errs = append(errs, fmt.Sprintf("deviceProfiles[%d].firmware: name and version are required", i))
+		if profile.Firmware != nil {
+			if profile.Firmware.Name == "" || profile.Firmware.Version == "" {
+				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].firmware: name and version are required", i))
+			}
+			if profile.Firmware.IncludePrereleases && !isLatestVersion(profile.Firmware.Version) {
+				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].firmware: includePrereleases requires version: latest", i))
+			}
 		}
 		for j, sw := range profile.Software {
 			if sw.Name == "" || sw.Version == "" {
 				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].software[%d]: name and version are required", i, j))
+			}
+			if sw.IncludePrereleases && !isLatestVersion(sw.Version) {
+				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].software[%d]: includePrereleases requires version: latest", i, j))
 			}
 		}
 		for j, cfg := range profile.Configuration {

@@ -128,6 +128,23 @@ userGroups:
       - ROLE_ALARM_READ
       - ROLE_EVENT_READ
 
+# Create inventory roles: permissions which users get only on the devices of
+# specific device groups (see users[].inventoryAssignments). Roles are matched
+# by name; the permissions are replaced when the set differs. scope: ALARM,
+# AUDIT, EVENT, MANAGED_OBJECT, MEASUREMENT, OPERATION or *; type defaults to
+# *; permission: READ, ADMIN or * (ALL)
+inventoryRoles:
+  - name: Site operator
+    description: Alarms and operations for one site
+    permissions:
+      - {scope: ALARM, permission: ADMIN}
+      - {scope: OPERATION, permission: ADMIN}
+      - {scope: MEASUREMENT, permission: READ}
+      - {scope: MANAGED_OBJECT, permission: READ}
+  - name: Restart only
+    permissions:
+      - {scope: OPERATION, type: c8y_Restart, permission: ADMIN}
+
 # Create users and assign them to user groups. The password is only used when
 # creating a user (never updated afterwards); group memberships are additive.
 users:
@@ -151,6 +168,15 @@ users:
     passwordFrom:
       generate: svc-monitoring-password # or: env: MONITORING_PASSWORD
     groups: [operators]
+
+  # A site operator who only sees the devices of one site. The device group is
+  # looked up by name (or by a path such as Europe/Plant Berlin) and must
+  # exist; missing roles are added, existing ones are never removed
+  - email: berlin-ops@example.com
+    sendPasswordResetEmail: true
+    inventoryAssignments:
+      - group: Plant Berlin
+        roles: [Site operator, Restart only]
 
   - userName: old-account@example.com
     enabled: false # keep the account but disable it

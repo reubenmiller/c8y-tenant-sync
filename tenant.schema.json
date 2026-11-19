@@ -388,6 +388,100 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "InventoryAssignmentSpec": {
+      "properties": {
+        "group": {
+          "type": "string",
+          "description": "Device group name or a path of group names separated by / (e.g. Europe/Plant Berlin); the name must match exactly one group",
+          "examples": [
+            "Plant Berlin"
+          ]
+        },
+        "roles": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "Site operator"
+            ]
+          },
+          "type": "array",
+          "description": "Inventory role names the user gets on the group (declared in inventoryRoles or existing in the tenant)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "group",
+        "roles"
+      ]
+    },
+    "InventoryRolePermissionSpec": {
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "ALARM",
+            "AUDIT",
+            "EVENT",
+            "MANAGED_OBJECT",
+            "MEASUREMENT",
+            "OPERATION",
+            "*"
+          ],
+          "description": "Data the permission applies to"
+        },
+        "type": {
+          "type": "string",
+          "description": "Restrict the permission to a type or fragment name (defaults to *)",
+          "examples": [
+            "c8y_Restart"
+          ]
+        },
+        "permission": {
+          "type": "string",
+          "enum": [
+            "READ",
+            "ADMIN",
+            "*",
+            "ALL"
+          ],
+          "description": "Permission level (ALL is an alias of *)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "scope",
+        "permission"
+      ]
+    },
+    "InventoryRoleSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the inventory role (used to match an existing role)",
+          "examples": [
+            "Site operator"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the inventory role (only updated when set)"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/InventoryRolePermissionSpec"
+          },
+          "type": "array",
+          "description": "Permissions of the role (compared as a set; the role is updated when the set differs)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
     "ProfileConfigurationRef": {
       "properties": {
         "name": {
@@ -1148,6 +1242,13 @@
           },
           "type": "array",
           "description": "User group names the user is assigned to (additive; memberships not listed are never removed)"
+        },
+        "inventoryAssignments": {
+          "items": {
+            "$ref": "#/$defs/InventoryAssignmentSpec"
+          },
+          "type": "array",
+          "description": "Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"
         }
       },
       "additionalProperties": false,
@@ -1211,6 +1312,13 @@
       },
       "type": "array",
       "description": "User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"
+    },
+    "inventoryRoles": {
+      "items": {
+        "$ref": "#/$defs/InventoryRoleSpec"
+      },
+      "type": "array",
+      "description": "Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"
     },
     "users": {
       "items": {

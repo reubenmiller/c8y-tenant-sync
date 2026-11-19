@@ -19,6 +19,7 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/tenants/currenttenant"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/tenants/tenantoptions"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/trustedcertificates/certificateauthority"
+	inventoryroles "github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/userroles/inventory"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -30,6 +31,7 @@ var ExportSections = []string{
 	SectionRetentionRules,
 	SectionCertificateAuthority,
 	SectionApplications,
+	SectionInventoryRoles,
 }
 
 // exportOptions holds the flags of the export command
@@ -58,6 +60,8 @@ Exported sections: ` + strings.Join(ExportSections, ", ") + `.
 - certificateAuthority: the state of the Cumulocity CA, if the tenant has one
 - applications: applications the tenant is subscribed to but does not own (by default
   microservices; use --application-type to change)
+- inventoryRoles: all inventory roles with their permissions (users' inventory assignments
+  are not exported)
 
 Review the manifest before applying it to other tenants.`,
 		Example: formatExamples(
@@ -192,6 +196,7 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 		{SectionRetentionRules, func() (err error) { manifest.RetentionRules, err = e.retentionRules(ctx); return }},
 		{SectionCertificateAuthority, func() (err error) { manifest.CertificateAuthority, err = e.certificateAuthority(ctx); return }},
 		{SectionApplications, func() (err error) { manifest.Applications, err = e.applications(ctx, tenantID); return }},
+		{SectionInventoryRoles, func() (err error) { manifest.InventoryRoles, err = e.inventoryRoles(ctx); return }},
 	}
 	for _, step := range steps {
 		if !e.enabled(step.section) {
@@ -268,6 +273,28 @@ func (e *Exporter) retentionRules(ctx context.Context) ([]RetentionRuleSpec, err
 		}
 		specs = append(specs, spec)
 	}
+	return specs, nil
+}
+
+// inventoryRoles exports the inventory roles sorted by name. The permissions
+// are sorted and the default type "*" is left out.
+func (e *Exporter) inventoryRoles(ctx context.Context) ([]InventoryRoleSpec, error) {
+	var specs []InventoryRoleSpec
+	result := e.Client.InventoryRoles.List(ctx, inventoryroles.ListOptions{
+		PaginationOptions: pagination.PaginationOptions{PageSize: 2000},
+	})
+	for role, err := range result.Items() {
+		if err != nil {
+			return nil, err
+		}
+		spec := InventoryRoleSpec{Name: role.Name(), Description: role.Description()}
+		for _, permission := range existingPermissions(role) {
+			permission.Type = wildcardToEmpty(permission.Type)
+			spec.Permissions = append(spec.Permissions, permission)
+		}
+		specs = append(specs, spec)
+	}
+	sort.SliceStable(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	return specs, nil
 }
 

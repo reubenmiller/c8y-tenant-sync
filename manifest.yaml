@@ -41,8 +41,8 @@ tenantOptions:
 
 # Enable/disable feature toggles for the current tenant
 features:
-  - key: feature-branding
-  - key: feature-cep-custom-rules
+  - key: secure-tenant-options
+  - key: ui.datapoint-explorer.v2
     enabled: false
 
 # Ensure retention rules exist. Rules have no name: they are matched by the
@@ -113,6 +113,12 @@ userGroups:
       - ROLE_INVENTORY_READ
       - ROLE_ALARM_READ
       - ROLE_EVENT_READ
+
+  - name: admins
+    description: Device power users
+    roles:
+      # add to existing admins group
+      - ROLE_REMOTE_ACCESS_ADMIN
 
 # Create users and assign them to user groups. The password is only used when
 # creating a user (never updated afterwards); group memberships are additive.
@@ -227,11 +233,12 @@ deviceProfiles:
   - name: rpi4-base
     deviceType: raspberrypi4-64
     firmware:
-      name: core-image-tedge-raspberrypi4-64
-      version: "20240115103000"
+      name: tedge-raspios-arm64-tryboot-pi4
+      versionSelector: latest
     software:
       - name: tedge
-        version: 1.6.2
+        version: latest
+        # versionSelector: latest
         type: apt # optional software type (disambiguates the lookup)
         action: install
       # An explicit url skips the repository lookup (externally hosted binary)

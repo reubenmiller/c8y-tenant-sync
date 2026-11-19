@@ -190,6 +190,7 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 	}
 
 	tenantID := ""
+	current := s.activeTarget == nil || s.activeTarget.Current
 	if s.activeTarget != nil {
 		tenantID = s.activeTarget.TenantID
 	}
@@ -200,14 +201,37 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 			return fmt.Errorf("failed to get current tenant: %w", tenant.Err)
 		}
 		tenantID = tenant.Data.Name()
+		if s.baseTenantID == "" && current {
+			s.baseTenantID = tenantID
+		}
+		if current {
+			// The current tenant response also lists its subscriptions
+			s.cacheSubscriptions(tenantID, subscriptionsFromCurrentTenant(tenant.Data.Get("applications.references").Array()))
+		}
 		if s.activeTarget != nil {
 			s.activeTarget.TenantID = tenantID
 		}
 	}
 
+	// The current subscriptions, so subscribed applications are not
+	// subscribed again (which the owner tenant may deny)
+	subs, known := s.tenantSubscriptions(ctx, tenantID, current)
+
 	for _, spec := range specs {
+		subscribed, isSubscribed := subs.find(spec.Name, spec.Type)
 		if !spec.IsSubscribed() {
-			s.unsubscribeApplication(ctx, spec, tenantID)
+			if known && !isSubscribed {
+				s.record(SectionApplications, spec.Name, ActionUnchanged, "not subscribed", nil)
+				continue
+			}
+			s.unsubscribeApplication(ctx, spec, tenantID, subscribed.OwnerTenant)
+			continue
+		}
+
+		// Applications without a source need no further work when they are
+		// subscribed. With a source, the binary is still created/uploaded
+		if known && isSubscribed && spec.Source == nil {
+			s.record(SectionApplications, spec.Name, ActionUnchanged, "already subscribed", nil)
 			continue
 		}
 
@@ -215,9 +239,17 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 		if !ok {
 			continue
 		}
+		if known && isSubscribed {
+			s.record(SectionApplications, spec.Name, ActionUnchanged, "already subscribed", nil)
+			continue
+		}
 
 		result := s.Client.Applications.Subscribe(ctx, tenantID, selfLink)
 		if result.Err != nil {
+			if detail, skip := s.foreignOwnerSkip(ctx, result.Err, s.appOwners[spec.Name], tenantID, "subscribe"); skip {
+				s.record(SectionApplications, spec.Name, ActionSkipped, detail, nil)
+				continue
+			}
 			s.record(SectionApplications, spec.Name, ActionFailed, "subscribe", subscriptionErrorHint(result.Err, tenantID))
 			continue
 		}
@@ -235,9 +267,13 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 // unsubscribeApplication removes the application subscription from the target
 // tenant. A missing application or subscription both count as the desired
 // state being reached.
-func (s *Syncer) unsubscribeApplication(ctx context.Context, spec ApplicationSpec, tenantID string) {
+func (s *Syncer) unsubscribeApplication(ctx context.Context, spec ApplicationSpec, tenantID, owner string) {
 	result := s.Client.Applications.Unsubscribe(ctx, tenantID, s.Client.Applications.ByName(spec.Name, spec.Type))
 	if result.Err != nil {
+		if detail, skip := s.foreignOwnerSkip(ctx, result.Err, owner, tenantID, "unsubscribe"); skip {
+			s.record(SectionApplications, spec.Name, ActionSkipped, detail, nil)
+			return
+		}
 		s.record(SectionApplications, spec.Name, ActionFailed, "unsubscribe", subscriptionErrorHint(result.Err, tenantID))
 		return
 	}
@@ -273,6 +309,12 @@ func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (s
 	}
 
 	app := s.Client.Applications.Get(ctx, s.Client.Applications.ByName(spec.Name, spec.Type))
+	if app.Err == nil {
+		if s.appOwners == nil {
+			s.appOwners = map[string]string{}
+		}
+		s.appOwners[spec.Name] = app.Data.Get("owner.tenant.id").String()
+	}
 
 	if app.Err == nil && spec.Source == nil {
 		return s.cacheAppSelfLink(spec.Name, app.Data.Self()), true

@@ -418,7 +418,15 @@ applications:
     subscribed: false
 ```
 
-> **Note**: (un)subscribing an application that the tenant does not own fails with `403 security/Forbidden` — such subscriptions are managed by the application's owner tenant. Run `c8y tenant-sync` from the owner (parent) tenant instead, typically with a [targets section](#target-tenants) selecting the tenants to maintain.
+The current subscriptions of the target tenant are read first (for the current tenant with the same request as `c8y currenttenant listApplications`), so applications which are already subscribed (or already unsubscribed) are reported as `unchanged` without calling the (un)subscribe API. If `type` is set, it must match the subscribed application.
+
+Subscriptions to applications which the tenant does not own, such as the built-in microservices owned by the `management` tenant, can generally only be changed by the owner tenant. When an (un)subscribe request is denied (`403`) and the application is owned by a tenant which is neither the target tenant nor the tenant running the sync, the entry is reported as `skipped` with the owner tenant, instead of failing the run:
+
+```
+  ⏭ [applications] smartrule (skipped): subscribe denied: the application is owned by tenant management; subscribe it from tenant management (e.g. with a targets section selecting t12345)
+```
+
+To change such subscriptions, run `c8y tenant-sync` from the owner tenant with a [targets section](#target-tenants) selecting the tenants to maintain. A denied request for an application which the target tenant or the running tenant owns is still a failure, since it points to missing permissions.
 
 With a `source`, the application is also created when missing (type defaults to `MICROSERVICE`, `contextPath` to the name) and its binary (a single zip) uploaded. Since binary content cannot be compared, the upload only happens on creation — or on every run with `--force`:
 

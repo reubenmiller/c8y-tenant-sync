@@ -22,7 +22,7 @@ const (
 	ActionCreated   Action = "created"
 	ActionUpdated   Action = "updated"
 	ActionUnchanged Action = "unchanged"
-	ActionSkipped   Action = "skipped"  // optional source with nothing to do
+	ActionSkipped   Action = "skipped"  // nothing to do here, e.g. an optional source without files or a subscription only the owner tenant can change
 	ActionExecuted  Action = "executed" // hook commands
 	ActionPlanned   Action = "planned"  // dry-run
 	ActionFailed    Action = "failed"
@@ -104,6 +104,12 @@ type Syncer struct {
 	// appSelfLinks caches application self links by name so create/upload
 	// only happens once when applying to multiple tenants
 	appSelfLinks map[string]string
+	// appOwners caches the owner tenant of applications by name
+	appOwners map[string]string
+	// subscriptionCache caches the subscribed applications by tenant ID
+	subscriptionCache map[string]subscriptions
+	// baseTenantID is the tenant of the credentials running the sync
+	baseTenantID string
 	// featureOverrides caches the per-tenant feature toggle overrides by
 	// feature key (tenant ID -> active)
 	featureOverrides map[string]map[string]bool

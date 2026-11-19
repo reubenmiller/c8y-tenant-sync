@@ -9,6 +9,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
+	github.com/tidwall/gjson v1.20.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -25,7 +26,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/smallstep/pkcs7 v0.2.3 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/tidwall/gjson v1.20.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect

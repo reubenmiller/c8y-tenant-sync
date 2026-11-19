@@ -10,7 +10,6 @@ import (
 
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/devicegroups"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/inventory/managedobjects"
-	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/inventory/managedobjects/childassets"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/model"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/pagination"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
@@ -39,8 +38,8 @@ const deviceGroupPageSize = 2000
 
 // SyncDeviceGroups ensures the tree of device groups exists. A group is
 // identified by its name within its parent: a root group by name among the
-// groups without a parent, a nested group by name among the child assets of
-// its parent. Missing groups are created and linked to their parent; the
+// groups without a parent, a nested group by name among the groups whose asset
+// parents include its parent. Missing groups are created and linked to their parent; the
 // description and fragments are updated when they differ. Groups are never
 // deleted or unlinked.
 func (s *Syncer) SyncDeviceGroups(ctx context.Context, specs []DeviceGroupSpec) error {
@@ -171,11 +170,22 @@ func (s *Syncer) linkDeviceGroup(ctx context.Context, parentID, childID string) 
 // set when the group was found without any parent and must still be linked
 // to the parent (e.g. a previous run created it but failed to link it).
 // Several matches are an error: the manifest can not tell which one is meant.
+//
+// All device groups with the name are read with their asset parents in one
+// inventory query; the child asset references of the parent are not used,
+// since their managed objects often only carry id, name and self.
 func (s *Syncer) findDeviceGroup(ctx context.Context, parentID, name string) (group *jsonmodels.ManagedObject, needsLink bool, err error) {
+	candidates, err := s.deviceGroupsByName(ctx, name)
+	if err != nil {
+		return nil, false, err
+	}
+
 	if parentID != "" {
-		children, err := s.childDeviceGroups(ctx, parentID, name)
-		if err != nil {
-			return nil, false, err
+		var children []jsonmodels.ManagedObject
+		for _, item := range candidates {
+			if hasAssetParent(item, parentID) {
+				children = append(children, item)
+			}
 		}
 		switch len(children) {
 		case 0:
@@ -190,13 +200,9 @@ func (s *Syncer) findDeviceGroup(ctx context.Context, parentID, name string) (gr
 	// groups with the name which have no parent group. Root groups and
 	// unlinked subgroups are told apart by their type, so a root group is
 	// never moved below another group.
-	parentless, err := s.parentlessDeviceGroups(ctx, name)
-	if err != nil {
-		return nil, false, err
-	}
 	var orphans []jsonmodels.ManagedObject
-	for _, item := range parentless {
-		if isDeviceSubgroup(item) == (parentID != "") {
+	for _, item := range candidates {
+		if !hasAnyAssetParent(item) && isDeviceSubgroup(item) == (parentID != "") {
 			orphans = append(orphans, item)
 		}
 	}
@@ -224,27 +230,9 @@ func ambiguousDeviceGroupError(name, scope string, matches []jsonmodels.ManagedO
 		len(matches), name, scope, strings.Join(ids, ", "))
 }
 
-// childDeviceGroups returns the device groups with the name among the child
-// assets of the parent
-func (s *Syncer) childDeviceGroups(ctx context.Context, parentID, name string) ([]jsonmodels.ManagedObject, error) {
-	opts := childassets.ListOptions{}
-	opts.PageSize = deviceGroupPageSize
-	result := s.Client.ManagedObjects.ChildAssets.List(ctx, parentID, opts)
-	var matches []jsonmodels.ManagedObject
-	for item, err := range result.Items() {
-		if err != nil {
-			return nil, fmt.Errorf("list child assets: %w", err)
-		}
-		if item.Get(deviceGroupFragment).Exists() && item.Name() == name {
-			matches = append(matches, item)
-		}
-	}
-	return matches, nil
-}
-
-// parentlessDeviceGroups returns the device groups with the name which are
-// not a child asset of any other managed object
-func (s *Syncer) parentlessDeviceGroups(ctx context.Context, name string) ([]jsonmodels.ManagedObject, error) {
+// deviceGroupsByName returns the device groups with exactly the name,
+// including their asset parents
+func (s *Syncer) deviceGroupsByName(ctx context.Context, name string) ([]jsonmodels.ManagedObject, error) {
 	opts := devicegroups.ListOptions{
 		Query: model.NewInventoryQuery().
 			HasFragment(deviceGroupFragment).
@@ -261,17 +249,28 @@ func (s *Syncer) parentlessDeviceGroups(ctx context.Context, name string) ([]jso
 		}
 		// The query match is not necessarily exact (e.g. case), so compare
 		// the name again
-		if item.Name() == name && !hasAssetParent(item) {
+		if item.Name() == name {
 			matches = append(matches, item)
 		}
 	}
 	return matches, nil
 }
 
-// hasAssetParent reports whether a managed object (read with withParents) is
-// a child asset of another managed object
-func hasAssetParent(item jsonmodels.ManagedObject) bool {
+// hasAnyAssetParent reports whether a managed object (read with withParents)
+// is a child asset of another managed object
+func hasAnyAssetParent(item jsonmodels.ManagedObject) bool {
 	return len(item.Get("assetParents.references").Array()) > 0
+}
+
+// hasAssetParent reports whether a managed object (read with withParents) is
+// a child asset of the parent
+func hasAssetParent(item jsonmodels.ManagedObject, parentID string) bool {
+	for _, ref := range item.Get("assetParents.references").Array() {
+		if ref.Get("managedObject.id").String() == parentID {
+			return true
+		}
+	}
+	return false
 }
 
 // isDeviceSubgroup reports whether a group has the type of a nested group

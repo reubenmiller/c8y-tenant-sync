@@ -614,7 +614,7 @@ deviceGroups:
 ```
 
 - A device group is a managed object with the `c8y_IsDeviceGroup` fragment. Root groups are created with the type `c8y_DeviceGroup`, nested groups with `c8y_DeviceSubgroup`, and new groups get the [`c8y_TenantSync`](#identifying-synced-items) fragment.
-- A group is identified by its **name within its parent**: a root group by name among the device groups without a parent, a nested group by name among the child assets of its parent. Items are labelled with their path, e.g. `Europe/Plant Berlin/Line 1`.
+- A group is identified by its **name within its parent**: a root group by name among the device groups without a parent, a nested group by name among the device groups linked to its parent as a child asset. Groups are looked up with an inventory query (`has(c8y_IsDeviceGroup)` and the name, with their parents). Items are labelled with their path, e.g. `Europe/Plant Berlin/Line 1`.
 - A missing group is created and linked to its parent as a child asset. A nested group which exists without any parent (type `c8y_DeviceSubgroup`, e.g. left behind by an interrupted run) is linked instead of creating a second one. A root group is never moved below another group.
 - `description` and `fragments` are only updated when they differ. A fragment counts as unchanged when the existing value contains all values of the manifest, so values added by other tools are kept. An omitted `description` is left alone.
 - If several groups match a name (e.g. two root groups called `Europe`), the item fails with the IDs of the matches and its child groups are skipped. Rename or remove the duplicates; tenant-sync does not guess.

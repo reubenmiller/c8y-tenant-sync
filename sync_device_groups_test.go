@@ -123,8 +123,13 @@ func (inv *fakeInventory) add(id string, obj map[string]any) {
 	inv.f.Handle("GET /inventory/managedObjects/"+id+"/childAssets", func(w http.ResponseWriter, r *http.Request) {
 		inv.mu.Lock()
 		refs := []any{}
+		// Like real Cumulocity: the referenced managed objects only carry
+		// id, name and self (no fragments)
 		for _, child := range inv.children[id] {
-			refs = append(refs, map[string]any{"managedObject": inv.objects[child]})
+			obj := inv.objects[child]
+			refs = append(refs, map[string]any{"managedObject": map[string]any{
+				"id": obj["id"], "name": obj["name"], "self": "http://fake/inventory/managedObjects/" + child,
+			}})
 		}
 		inv.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"references": refs, "statistics": stats()})
@@ -309,6 +314,35 @@ func TestSyncDeviceGroupsLinksMissingChildAsset(t *testing.T) {
 	links := inv.f.Requests(http.MethodPost, "/inventory/managedObjects/1/childAssets")
 	require.Len(t, links, 1)
 	assert.Equal(t, map[string]any{"managedObject": map[string]any{"id": "2"}}, links[0].Body)
+}
+
+// TestSyncDeviceGroupsChildLookupUsesQuery checks that nested groups are found
+// by the inventory query with their asset parents, not by the child asset
+// references of the parent (which only carry id, name and self)
+func TestSyncDeviceGroupsChildLookupUsesQuery(t *testing.T) {
+	inv := newFakeInventory(t)
+	inv.group("1", "Europe", "c8y_DeviceGroup", "", nil)
+	inv.group("2", "Plant Berlin", "c8y_DeviceSubgroup", "1", nil)
+	// A device (not a group) with the same name below the parent is ignored
+	inv.add("3", map[string]any{"name": "Plant Berlin", "c8y_IsDevice": map[string]any{}})
+	inv.link("1", "3")
+
+	syncer := inv.syncer(t)
+	require.NoError(t, syncer.SyncDeviceGroups(context.Background(), []DeviceGroupSpec{{
+		Name:   "Europe",
+		Groups: []DeviceGroupSpec{{Name: "Plant Berlin"}},
+	}}))
+
+	results := deviceGroupResults(syncer)
+	assert.Equal(t, ActionUnchanged, results["Europe"].Action)
+	assert.Equal(t, ActionUnchanged, results["Europe/Plant Berlin"].Action)
+	assert.Empty(t, inv.f.Requests(http.MethodPost, "/inventory/managedObjects"), "nothing is created or linked")
+	assert.Empty(t, inv.f.Requests(http.MethodGet, "/inventory/managedObjects/1/childAssets"))
+
+	queries := inv.f.Requests(http.MethodGet, "/inventory/managedObjects")
+	require.Len(t, queries, 2)
+	assert.Contains(t, queries[1].Query, "name+eq+%27Plant+Berlin%27")
+	assert.Contains(t, queries[1].Query, "withParents=true")
 }
 
 func TestSyncDeviceGroupsAmbiguousName(t *testing.T) {

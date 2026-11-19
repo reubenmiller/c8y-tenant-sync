@@ -26,6 +26,26 @@
 #     mode: serviceUser           # serviceUser (default) | sessions
 #     application: tenant-sync    # placeholder microservice name (serviceUser mode)
 
+# Provision child tenants from a management or enterprise tenant (most tenants
+# can't create child tenants, so the example is commented out). Tenants are
+# matched by domain: a missing tenant is created, an existing tenant gets its
+# company, contact and custom properties updated when they differ. Admin
+# credentials are only used on creation, and tenants are never deleted. The
+# section runs once before the targets are resolved, so targets.tenants can
+# select a tenant created in the same run.
+# tenants:
+#   - domain: customer-a.eu-latest.cumulocity.com   # unique key: the full domain
+#     company: Customer A
+#     adminName: admin
+#     adminEmail: admin@customer-a.example.com
+#     adminPasswordFrom:
+#       generate: customer-a-admin    # or adminPass: ${VAR}, or sendPasswordResetEmail: true
+#     contactName: Jane Doe
+#     contactPhone: "+49 123 456"
+#     customProperties:
+#       externalReference: CRM-1234
+#     applications: [devicemanagement, cockpit]    # subscribed when missing
+
 # Set tenant options (created if missing, updated when the value differs)
 tenantOptions:
   - category: configuration

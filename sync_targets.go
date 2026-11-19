@@ -10,6 +10,7 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/pagination"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/tenants"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/tenants/currenttenant"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
 )
 
 // Target is a single tenant the manifest is applied to
@@ -68,19 +69,14 @@ func (s *Syncer) resolveTargets(ctx context.Context, spec *TargetsSpec) ([]Targe
 	}
 
 	if spec.AllChildren {
-		it := s.Client.Tenants.ListAll(ctx, tenants.ListOptions{
-			Parent:            currentID,
-			PaginationOptions: pagination.PaginationOptions{PageSize: 100},
-		})
-		count := 0
-		for item, err := range it.Items() {
-			if err != nil {
-				return nil, fmt.Errorf("failed to list child tenants of %s: %w", currentID, err)
-			}
-			add(Target{TenantID: item.ID(), Domain: item.Domain()})
-			count++
+		children, err := s.listChildTenants(ctx, currentID)
+		if err != nil {
+			return nil, err
 		}
-		if count == 0 {
+		for _, item := range children {
+			add(Target{TenantID: item.ID(), Domain: item.Domain()})
+		}
+		if len(children) == 0 {
 			fmt.Printf("⚠️  targets.allChildren matched no child tenants of %s\n", currentID)
 		}
 	}
@@ -137,6 +133,22 @@ func (s *Syncer) resolveTargets(ctx context.Context, spec *TargetsSpec) ([]Targe
 		return nil, fmt.Errorf("targets did not match any tenant")
 	}
 	return targets, nil
+}
+
+// listChildTenants lists the child tenants of a parent tenant
+func (s *Syncer) listChildTenants(ctx context.Context, parentID string) ([]jsonmodels.Tenant, error) {
+	it := s.Client.Tenants.ListAll(ctx, tenants.ListOptions{
+		Parent:            parentID,
+		PaginationOptions: pagination.PaginationOptions{PageSize: 100},
+	})
+	var children []jsonmodels.Tenant
+	for item, err := range it.Items() {
+		if err != nil {
+			return nil, fmt.Errorf("failed to list child tenants of %s: %w", parentID, err)
+		}
+		children = append(children, item)
+	}
+	return children, nil
 }
 
 // dryRunTargets returns placeholder targets describing the selection without

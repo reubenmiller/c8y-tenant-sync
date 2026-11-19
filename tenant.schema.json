@@ -324,15 +324,20 @@
         },
         "version": {
           "type": "string",
-          "description": "Firmware version (must exist in the tenant unless url is set). latest selects the highest semver version of the firmware in the tenant",
+          "description": "Exact firmware version (must exist in the tenant unless url is set); mutually exclusive with versionSelector"
+        },
+        "versionSelector": {
+          "type": "string",
+          "description": "Select the version from the versions in the tenant by semver: latest or latest-N (e.g. latest-1 for the second latest) or a semver constraint selecting the highest matching version (e.g. ^1.2 or \u003e=1.0 \u003c2.0); mutually exclusive with version",
           "examples": [
-            "1.2.3",
-            "latest"
+            "latest",
+            "latest-1",
+            "^1.2"
           ]
         },
         "includePrereleases": {
           "type": "boolean",
-          "description": "Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"
+          "description": "Consider prerelease versions (e.g. 1.2.0-rc1) for versionSelector"
         },
         "url": {
           "type": "string",
@@ -345,8 +350,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "name",
-        "version"
+        "name"
       ]
     },
     "ProfileSoftwareRef": {
@@ -357,15 +361,20 @@
         },
         "version": {
           "type": "string",
-          "description": "Software version (must exist in the tenant unless url is set). latest selects the highest semver version of the software in the tenant",
+          "description": "Exact software version (must exist in the tenant unless url is set); mutually exclusive with versionSelector"
+        },
+        "versionSelector": {
+          "type": "string",
+          "description": "Select the version from the versions in the tenant by semver: latest or latest-N (e.g. latest-1 for the second latest) or a semver constraint selecting the highest matching version (e.g. ^1.2 or \u003e=1.0 \u003c2.0); mutually exclusive with version",
           "examples": [
-            "1.2.3",
-            "latest"
+            "latest",
+            "latest-1",
+            "^1.2"
           ]
         },
         "includePrereleases": {
           "type": "boolean",
-          "description": "Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"
+          "description": "Consider prerelease versions (e.g. 1.2.0-rc1) for versionSelector"
         },
         "type": {
           "type": "string",
@@ -392,8 +401,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "name",
-        "version"
+        "name"
       ]
     },
     "RetentionRuleSpec": {

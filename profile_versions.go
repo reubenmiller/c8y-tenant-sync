@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -13,57 +15,135 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/repository/software/softwareversions"
 )
 
-// VersionLatest selects the highest semver version of a firmware or software
-// item in a device profile
-const VersionLatest = "latest"
-
-// isLatestVersion reports whether a profile reference asks for the latest version
-func isLatestVersion(version string) bool {
-	return strings.EqualFold(strings.TrimSpace(version), VersionLatest)
-}
-
 // repositoryVersion is a firmware or software version in the tenant
 type repositoryVersion struct {
 	Version string
 	URL     string
 }
 
-// selectLatestVersion returns the version with the highest semver version.
-// Versions which are not valid semver are ignored. Prereleases (versions with
-// a "-" suffix, e.g. 1.2.0-rc1) are only considered with includePrereleases.
-// When versions are equal (e.g. 1.2 and 1.2.0), the first one wins.
-func selectLatestVersion(versions []repositoryVersion, includePrereleases bool) (repositoryVersion, error) {
-	var (
-		latest      repositoryVersion
-		latestSem   *semver.Version
-		skipped     int
-		prereleases int
-	)
-	for _, candidate := range versions {
-		parsed, err := semver.NewVersion(strings.TrimSpace(candidate.Version))
+// VersionSelector selects a version of a firmware or software item by
+// semver: "latest", "latest-N" (the Nth version before the latest, e.g.
+// latest-1 is the second latest), or a semver constraint such as "^1.2" or
+// ">=1.0, <2.0" (the highest matching version).
+type VersionSelector struct {
+	raw        string
+	offset     int
+	constraint *semver.Constraints
+}
+
+// ParseVersionSelector parses a versionSelector value
+func ParseVersionSelector(value string) (VersionSelector, error) {
+	raw := strings.TrimSpace(value)
+	selector := VersionSelector{raw: raw}
+	lower := strings.ToLower(raw)
+
+	switch {
+	case raw == "":
+		return selector, fmt.Errorf("versionSelector is empty")
+	case lower == "latest":
+		return selector, nil
+	case strings.HasPrefix(lower, "latest-"):
+		offset, err := strconv.Atoi(strings.TrimPrefix(lower, "latest-"))
+		if err != nil || offset < 1 {
+			return selector, fmt.Errorf("invalid versionSelector %q: latest-N requires a positive number, e.g. latest-1 for the second latest version", raw)
+		}
+		selector.offset = offset
+		return selector, nil
+	}
+
+	constraint, err := semver.NewConstraint(raw)
+	if err != nil {
+		return selector, fmt.Errorf("invalid versionSelector %q: expected latest, latest-N or a semver constraint such as ^1.2 or \">=1.0, <2.0\": %w", raw, err)
+	}
+	selector.constraint = constraint
+	return selector, nil
+}
+
+// String returns the selector as written in the manifest
+func (s VersionSelector) String() string {
+	return s.raw
+}
+
+// matches reports whether a version passes the constraint of the selector.
+// Prereleases are matched by the release they lead up to (1.5.0-rc1 is
+// checked as 1.5.0), since semver constraints never match prereleases.
+func (s VersionSelector) matches(version *semver.Version) bool {
+	if s.constraint == nil {
+		return true
+	}
+	if version.Prerelease() != "" {
+		release, err := version.SetPrerelease("")
 		if err != nil {
-			skipped++
+			return false
+		}
+		return s.constraint.Check(&release)
+	}
+	return s.constraint.Check(version)
+}
+
+// Select returns the version chosen by the selector. Versions which are not
+// valid semver are ignored, and prereleases (e.g. 1.2.0-rc1) are only
+// considered with includePrereleases. Versions which are equal in semver
+// (e.g. 1.2 and 1.2.0) count once, keeping the first one.
+func (s VersionSelector) Select(versions []repositoryVersion, includePrereleases bool) (repositoryVersion, error) {
+	type candidate struct {
+		version repositoryVersion
+		semver  *semver.Version
+	}
+	var (
+		candidates  []candidate
+		invalid     int
+		prereleases int
+		unmatched   int
+	)
+	for _, item := range versions {
+		parsed, err := semver.NewVersion(strings.TrimSpace(item.Version))
+		if err != nil {
+			invalid++
 			continue
 		}
 		if parsed.Prerelease() != "" && !includePrereleases {
 			prereleases++
 			continue
 		}
-		if latestSem == nil || parsed.GreaterThan(latestSem) {
-			latest, latestSem = candidate, parsed
+		if !s.matches(parsed) {
+			unmatched++
+			continue
+		}
+		duplicate := false
+		for _, existing := range candidates {
+			if existing.semver.Equal(parsed) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			candidates = append(candidates, candidate{version: item, semver: parsed})
 		}
 	}
-	if latestSem == nil {
-		detail := fmt.Sprintf("%d version(s)", len(versions))
-		if skipped > 0 {
-			detail += fmt.Sprintf(", %d not valid semver", skipped)
-		}
-		if prereleases > 0 {
-			detail += fmt.Sprintf(", %d prerelease(s) excluded (set includePrereleases: true to use them)", prereleases)
-		}
-		return repositoryVersion{}, fmt.Errorf("no version found to use as latest (%s)", detail)
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].semver.GreaterThan(candidates[j].semver)
+	})
+
+	if s.offset < len(candidates) {
+		return candidates[s.offset].version, nil
 	}
-	return latest, nil
+
+	detail := fmt.Sprintf("%d version(s)", len(versions))
+	if s.constraint != nil {
+		detail += fmt.Sprintf(", %d not matching %s", unmatched, s.raw)
+	}
+	if invalid > 0 {
+		detail += fmt.Sprintf(", %d not valid semver", invalid)
+	}
+	if prereleases > 0 {
+		detail += fmt.Sprintf(", %d prerelease(s) excluded (set includePrereleases: true to use them)", prereleases)
+	}
+	if s.offset > 0 && len(candidates) > 0 {
+		return repositoryVersion{}, fmt.Errorf("versionSelector %s needs at least %d versions, but only %d qualify (%s)", s.raw, s.offset+1, len(candidates), detail)
+	}
+	return repositoryVersion{}, fmt.Errorf("no version matches versionSelector %s (%s)", s.raw, detail)
 }
 
 // listFirmwareVersions returns all versions of a firmware item
@@ -113,20 +193,32 @@ func (s *Syncer) listSoftwareVersions(ctx context.Context, name, softwareType st
 }
 
 // resolveVersion resolves the version and url lookup of a firmware or
-// software reference. For "latest", all versions are listed once and the
-// highest semver version is used; otherwise the version is used as-is with
-// the given lookup.
-func resolveVersion(version string, includePrereleases bool, list func() ([]repositoryVersion, error), lookup func() (string, error)) (string, func() (string, error), error) {
-	if !isLatestVersion(version) {
+// software reference. An exact version is used as-is (it can be any string,
+// including "latest") with the given lookup. A versionSelector lists all
+// versions once and selects one of them.
+func resolveVersion(version, selector string, includePrereleases bool, list func() ([]repositoryVersion, error), lookup func() (string, error)) (string, func() (string, error), error) {
+	if selector == "" {
 		return version, lookup, nil
+	}
+	parsed, err := ParseVersionSelector(selector)
+	if err != nil {
+		return "", nil, err
 	}
 	versions, err := list()
 	if err != nil {
 		return "", nil, err
 	}
-	latest, err := selectLatestVersion(versions, includePrereleases)
+	selected, err := parsed.Select(versions, includePrereleases)
 	if err != nil {
 		return "", nil, err
 	}
-	return latest.Version, func() (string, error) { return latest.URL, nil }, nil
+	return selected.Version, func() (string, error) { return selected.URL, nil }, nil
+}
+
+// versionLabel describes the requested version of a reference in messages
+func versionLabel(version, selector string) string {
+	if selector != "" {
+		return "versionSelector " + selector
+	}
+	return version
 }

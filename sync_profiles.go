@@ -85,11 +85,11 @@ func (s *Syncer) buildProfileBody(ctx context.Context, spec DeviceProfileSpec) (
 
 	if spec.Firmware != nil {
 		ref := spec.Firmware
-		version, lookup, err := resolveVersion(ref.Version, ref.IncludePrereleases,
+		version, lookup, err := resolveVersion(ref.Version, ref.VersionSelector, ref.IncludePrereleases,
 			func() ([]repositoryVersion, error) { return s.listFirmwareVersions(ctx, ref.Name) },
 			func() (string, error) { return s.lookupFirmwareVersionURL(ctx, ref.Name, ref.Version) })
 		if err != nil {
-			return nil, fmt.Errorf("firmware %s/%s: %w", ref.Name, ref.Version, err)
+			return nil, fmt.Errorf("firmware %s (%s): %w", ref.Name, versionLabel(ref.Version, ref.VersionSelector), err)
 		}
 		url, include, err := profileRefURL(ref.URL, lookup)
 		if err != nil {
@@ -108,11 +108,11 @@ func (s *Syncer) buildProfileBody(ctx context.Context, spec DeviceProfileSpec) (
 	if len(spec.Software) > 0 {
 		software := make([]map[string]any, 0, len(spec.Software))
 		for _, ref := range spec.Software {
-			version, lookup, err := resolveVersion(ref.Version, ref.IncludePrereleases,
+			version, lookup, err := resolveVersion(ref.Version, ref.VersionSelector, ref.IncludePrereleases,
 				func() ([]repositoryVersion, error) { return s.listSoftwareVersions(ctx, ref.Name, ref.Type) },
 				func() (string, error) { return s.lookupSoftwareVersionURL(ctx, ref.Name, ref.Type, ref.Version) })
 			if err != nil {
-				return nil, fmt.Errorf("software %s/%s: %w", ref.Name, ref.Version, err)
+				return nil, fmt.Errorf("software %s (%s): %w", ref.Name, versionLabel(ref.Version, ref.VersionSelector), err)
 			}
 			url, include, err := profileRefURL(ref.URL, lookup)
 			if err != nil {

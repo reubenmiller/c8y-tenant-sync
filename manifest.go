@@ -574,21 +574,27 @@ type DeviceProfileSpec struct {
 
 type ProfileFirmwareRef struct {
 	Name    string `yaml:"name" json:"name" jsonschema:"description=Firmware name (must exist in the tenant unless url is set)"`
-	Version string `yaml:"version" json:"version" jsonschema:"description=Firmware version (must exist in the tenant unless url is set). latest selects the highest semver version of the firmware in the tenant,example=1.2.3,example=latest"`
+	Version string `yaml:"version" json:"version,omitempty" jsonschema:"description=Exact firmware version (must exist in the tenant unless url is set); mutually exclusive with versionSelector"`
+
+	// VersionSelector selects the version by semver when the manifest is applied
+	VersionSelector string `yaml:"versionSelector" json:"versionSelector,omitempty" jsonschema:"description=Select the version from the versions in the tenant by semver: latest or latest-N (e.g. latest-1 for the second latest) or a semver constraint selecting the highest matching version (e.g. ^1.2 or >=1.0 <2.0); mutually exclusive with version,example=latest,example=latest-1,example=^1.2"`
 
 	// IncludePrereleases considers prerelease versions (e.g. 1.2.0-rc1) for
-	// version: latest
-	IncludePrereleases bool   `yaml:"includePrereleases" json:"includePrereleases,omitempty" jsonschema:"description=Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"`
+	// versionSelector
+	IncludePrereleases bool   `yaml:"includePrereleases" json:"includePrereleases,omitempty" jsonschema:"description=Consider prerelease versions (e.g. 1.2.0-rc1) for versionSelector"`
 	URL                string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit binary URL skipping the lookup of the firmware version in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
 }
 
 type ProfileSoftwareRef struct {
 	Name    string `yaml:"name" json:"name" jsonschema:"description=Software name (must exist in the tenant unless url is set)"`
-	Version string `yaml:"version" json:"version" jsonschema:"description=Software version (must exist in the tenant unless url is set). latest selects the highest semver version of the software in the tenant,example=1.2.3,example=latest"`
+	Version string `yaml:"version" json:"version,omitempty" jsonschema:"description=Exact software version (must exist in the tenant unless url is set); mutually exclusive with versionSelector"`
+
+	// VersionSelector selects the version by semver when the manifest is applied
+	VersionSelector string `yaml:"versionSelector" json:"versionSelector,omitempty" jsonschema:"description=Select the version from the versions in the tenant by semver: latest or latest-N (e.g. latest-1 for the second latest) or a semver constraint selecting the highest matching version (e.g. ^1.2 or >=1.0 <2.0); mutually exclusive with version,example=latest,example=latest-1,example=^1.2"`
 
 	// IncludePrereleases considers prerelease versions (e.g. 1.2.0-rc1) for
-	// version: latest
-	IncludePrereleases bool   `yaml:"includePrereleases" json:"includePrereleases,omitempty" jsonschema:"description=Consider prerelease versions (e.g. 1.2.0-rc1) when version is latest"`
+	// versionSelector
+	IncludePrereleases bool   `yaml:"includePrereleases" json:"includePrereleases,omitempty" jsonschema:"description=Consider prerelease versions (e.g. 1.2.0-rc1) for versionSelector"`
 	Type               string `yaml:"type" json:"type,omitempty" jsonschema:"description=Software type of the referenced item (disambiguates the lookup and is written to the profile entry),example=apt"`
 	URL                string `yaml:"url" json:"url,omitempty" jsonschema:"description=Explicit binary URL skipping the lookup of the software version in the tenant; the special values - and none omit the url from the profile entirely,example=none"`
 	Action             string `yaml:"action" json:"action,omitempty" jsonschema:"description=Software action (defaults to install),example=install"` // defaults to "install"
@@ -622,6 +628,27 @@ func expandEnv(raw string) string {
 // manifest is loaded
 func escapeEnv(value string) string {
 	return strings.ReplaceAll(value, "$", "$$")
+}
+
+// validateVersionRef checks the version fields of a device profile
+// firmware/software reference: exactly one of version and versionSelector,
+// a valid selector, and includePrereleases only with a selector
+func validateVersionRef(label, version, selector string, includePrereleases bool) []string {
+	var errs []string
+	switch {
+	case version == "" && selector == "":
+		errs = append(errs, label+": version or versionSelector is required")
+	case version != "" && selector != "":
+		errs = append(errs, label+": version and versionSelector are mutually exclusive")
+	case selector != "":
+		if _, err := ParseVersionSelector(selector); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
+		}
+	}
+	if includePrereleases && selector == "" {
+		errs = append(errs, label+": includePrereleases requires versionSelector")
+	}
+	return errs
 }
 
 // LoadManifest reads a manifest file (decrypting it with sops when it is
@@ -811,20 +838,18 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("deviceProfiles[%d]: name is required", i))
 		}
 		if profile.Firmware != nil {
-			if profile.Firmware.Name == "" || profile.Firmware.Version == "" {
-				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].firmware: name and version are required", i))
+			label := fmt.Sprintf("deviceProfiles[%d].firmware", i)
+			if profile.Firmware.Name == "" {
+				errs = append(errs, label+": name is required")
 			}
-			if profile.Firmware.IncludePrereleases && !isLatestVersion(profile.Firmware.Version) {
-				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].firmware: includePrereleases requires version: latest", i))
-			}
+			errs = append(errs, validateVersionRef(label, profile.Firmware.Version, profile.Firmware.VersionSelector, profile.Firmware.IncludePrereleases)...)
 		}
 		for j, sw := range profile.Software {
-			if sw.Name == "" || sw.Version == "" {
-				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].software[%d]: name and version are required", i, j))
+			label := fmt.Sprintf("deviceProfiles[%d].software[%d]", i, j)
+			if sw.Name == "" {
+				errs = append(errs, label+": name is required")
 			}
-			if sw.IncludePrereleases && !isLatestVersion(sw.Version) {
-				errs = append(errs, fmt.Sprintf("deviceProfiles[%d].software[%d]: includePrereleases requires version: latest", i, j))
-			}
+			errs = append(errs, validateVersionRef(label, sw.Version, sw.VersionSelector, sw.IncludePrereleases)...)
 		}
 		for j, cfg := range profile.Configuration {
 			if cfg.Name == "" {

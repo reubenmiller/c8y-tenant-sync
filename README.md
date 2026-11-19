@@ -604,9 +604,15 @@ deviceProfiles:
         type: mosquitto.conf
 ```
 
-#### Latest version
+#### Selecting versions by semver
 
-Set `version: latest` on a firmware or software reference to use the highest version of that item in the tenant, compared by [semantic versioning](https://semver.org) (so `1.10.0` is newer than `1.9.0`). The version is resolved every time the manifest is applied, after the repository sections, so a profile follows the newest version which the same manifest synced. The profile is only updated when the resolved version changes.
+Instead of an exact `version`, a firmware or software reference can set `versionSelector` to pick a version from the versions of that item in the tenant, compared by [semantic versioning](https://semver.org) (so `1.10.0` is newer than `1.9.0`):
+
+| `versionSelector` | Selects |
+|-------------------|---------|
+| `latest` | The highest version |
+| `latest-N` | The Nth version before the highest, e.g. `latest-1` is the second highest |
+| A semver constraint, e.g. `^1.2`, `~1.6.0`, `">=1.0, <2.0"`, `1.x` | The highest version which matches the constraint |
 
 ```yaml
 deviceProfiles:
@@ -614,21 +620,22 @@ deviceProfiles:
     deviceType: raspberrypi4-64
     firmware:
       name: tedge-rugix-pi
-      version: latest
+      versionSelector: latest
     software:
       - name: tedge
         type: apt
-        version: latest
+        versionSelector: ^1.6       # highest 1.x version from 1.6.0
       - name: tedge-inventory-plugin
-        version: latest
-        includePrereleases: true # also consider versions such as 1.2.0-rc1
+        versionSelector: latest-1   # the version before the latest
+        includePrereleases: true    # also consider versions such as 1.2.0-rc1
 ```
 
-- The profile entry contains the resolved version (e.g. `1.10.0`), never `latest`.
-- Versions which are not valid semver (e.g. `nightly`) are ignored. Versions with a `v` prefix, two parts (`1.2`) or build timestamps (`20261104.2250`) are accepted.
-- Prereleases (a `-` suffix such as `1.2.0-rc1`) are skipped unless `includePrereleases: true` is set. Package revisions written with a `-` (e.g. `1.2.3-1`) also count as prereleases in semver.
-- `url: none` still resolves the version, and only leaves out the url.
-- The profile fails with an error when no version qualifies.
+- `version` is always an exact version, so a version which is literally called `latest` is used with `version: latest`. `version` and `versionSelector` are mutually exclusive.
+- The version is selected every time the manifest is applied, after the repository sections, so a profile follows the versions which the same manifest synced. The profile entry contains the selected version (e.g. `1.10.0`), and the profile is only updated when the selection changes.
+- Versions which are not valid semver (e.g. `nightly`) are ignored. Versions with a `v` prefix, two parts (`1.2`) or build timestamps (`20261104.2250`) are accepted. Versions which are equal in semver (`1.2` and `1.2.0`) count once.
+- Prereleases (a `-` suffix such as `1.2.0-rc1`) are skipped unless `includePrereleases: true` is set. Package revisions written with a `-` (e.g. `1.2.3-1`) also count as prereleases in semver. With constraints, a prerelease is matched by the release it leads up to: `1.5.0-rc1` matches `^1.0`, and `2.0.0-rc1` does not match `<2.0.0`.
+- `url: none` still selects the version, and only leaves out the url.
+- The profile fails with an error which explains why when no version qualifies.
 
 ## Example Output
 

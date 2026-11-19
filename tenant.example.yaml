@@ -255,17 +255,18 @@ deviceProfiles:
       - name: mosquitto
         type: mosquitto.conf
 
-  # version: latest uses the highest semver version in the tenant (resolved
-  # on every run; prereleases such as 1.2.0-rc1 only with includePrereleases)
+  # versionSelector picks a version from the tenant by semver on every run:
+  # latest, latest-N (latest-1 = second latest) or a semver constraint such as
+  # ^1.6 (prereleases such as 1.2.0-rc1 only with includePrereleases: true)
   - name: rpi4-latest
     deviceType: raspberrypi4-64
     firmware:
       name: core-image-tedge-raspberrypi4-64
-      version: latest
+      versionSelector: latest
     software:
       - name: tedge
         type: apt
-        version: latest
+        versionSelector: ^1.6
 
 # Named groups of shell commands, run as the last section. Actions within a
 # group run in sequence (a failing action skips the rest of its group);

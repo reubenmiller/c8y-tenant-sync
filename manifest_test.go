@@ -251,7 +251,7 @@ deviceProfiles:
     firmware:
       name: image
 `,
-			errorMsg: "name and version are required",
+			errorMsg: "deviceProfiles[0].firmware: version or versionSelector is required",
 		},
 		{
 			name: "trusted certificate url source",

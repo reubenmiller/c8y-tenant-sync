@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Builds the release archives which "c8y extensions install <owner>/c8y-tenant-sync" installs.
+# Each archive contains the binary (bin/c8y-tenant-sync) and the extension files.
+version: 2
+
+project_name: c8y-tenant-sync
+
+builds:
+  - binary: bin/c8y-tenant-sync
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - extension.yaml
+      - README.md
+      - LICENSE
+      - tenant.example.yaml
+      - tenant.schema.json
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github

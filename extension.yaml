@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/reubenmiller/go-c8y-cli/v2/tools/schema/extension.json
+version: v1
+
+# Command name: c8y tenant-sync
+name: tenant-sync
+
+# The binary is mounted at the extension root and no commands are declared, so all
+# arguments are passed to the binary unchanged. This keeps flags such as -f/--manifest,
+# --force, --verbose, --debug, --dry-run and -o, which c8y would otherwise handle as
+# its own global flags on declared commands.
+#
+# c8y global flags placed before the extension name still apply, for example
+#   c8y --session prod.json --dry tenant-sync run -f tenant.yaml
+binary:
+  path: bin/c8y-tenant-sync
+  completion: cobra

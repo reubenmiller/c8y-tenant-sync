@@ -176,6 +176,9 @@ func runSync(opts *runOptions, args []string) (err error) {
 	fmt.Println("╚══════════════════════════════════════════╝")
 	fmt.Println()
 	fmt.Printf("📄 Manifest: %s\n", manifestPath)
+	for _, file := range manifest.IncludedFiles {
+		fmt.Printf("   includes %s\n", file)
+	}
 	if dryRun {
 		fmt.Println("🔎 Mode: dry-run (no changes will be made)")
 	}

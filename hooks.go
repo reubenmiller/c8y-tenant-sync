@@ -30,7 +30,7 @@ func (s *Syncer) runHooks(ctx context.Context, stage string, hooks []HookSpec) e
 		}
 
 		cmd := exec.CommandContext(ctx, "sh", "-c", hook.Run) // NOSONAR
-		cmd.Dir = s.Resolver.BaseDir
+		cmd.Dir = s.workDir(hook.Dir)
 		cmd.Env = s.hookEnv()
 
 		output, err := cmd.CombinedOutput()
@@ -73,4 +73,13 @@ func (s *Syncer) hookEnv() []string {
 		"C8Y_PASSWORD="+auth.Password,
 		"C8Y_TOKEN=",
 	)
+}
+
+// workDir returns the working directory of a hook or command: the directory
+// of the included manifest file which declares it, or the manifest directory
+func (s *Syncer) workDir(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	return s.Resolver.BaseDir
 }

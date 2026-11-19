@@ -44,6 +44,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
+- 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, user groups, certificates) from per-environment or per-customer manifests
 - 🔎 **Dry-run**: preview every change before applying
 - 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
@@ -300,6 +301,53 @@ c8y tenant-sync schema -o tenant.schema.json
 ```
 
 The schema encodes the same rules as `c8y tenant-sync validate`: unknown fields are rejected, required fields are enforced, and each `source` must set exactly one of `path`, `url` or `github`. A test keeps the committed schema file in sync with the Go types.
+
+### Composing manifests
+
+A manifest can include other manifest files with a top-level `include` list. This keeps shared settings (company-wide retention rules, user groups, trusted certificates) in one base file which per-environment or per-customer manifests reuse:
+
+```
+manifests/
+├── base/
+│   ├── common.yaml          # retention rules, user groups, certificates
+│   └── certs/company-ca.pem
+├── dev.yaml
+├── prod.yaml
+└── customer-a.yaml
+```
+
+```yaml
+# prod.yaml
+include:
+  - base/common.yaml                  # a path relative to this file
+  - path: "customers/*.yaml"          # or a glob pattern
+  - path: local-overrides.yaml        # skipped when the file does not exist
+    optional: true
+
+tenantOptions:
+  - category: configuration
+    key: system.timezone.default
+    value: Europe/Berlin
+```
+
+```bash
+c8y tenant-sync validate prod.yaml   # lists the included files
+c8y tenant-sync run -f prod.yaml --dry-run
+```
+
+Rules:
+
+- **Paths**: include paths and glob patterns (`*`, `?`, `[...]`) are relative to the including file. Glob matches are merged sorted by name. A missing file, or a glob which matches nothing, is an error unless the entry sets `optional: true`. Included files can include other files; a cycle is an error which names the chain (`include cycle: prod.yaml -> base/common.yaml -> prod.yaml`). A file reached more than once (e.g. a base included by two files) is merged once, at its first position.
+- **Same pipeline**: every included file is decrypted with sops when it is encrypted, `${VAR}` and `${generate:NAME}` references are expanded (with the same secrets file as the main manifest), and it is validated on its own. Validation errors name the file, e.g. `base/common.yaml: invalid manifest: ...`.
+- **Relative paths**: relative `source.path` values in an included file are resolved against the directory of that file, not the main manifest. Hooks and commands declared in an included file run from that file's directory.
+- **Merge order**: the included files are merged first, in the listed order, then the content of the including file.
+  - List sections are concatenated.
+  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), applications, user groups, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a user group redefined in `prod.yaml` must list all its roles.
+  - Entries without an identity (trusted certificates, certificate revocation lists, software, firmware, configuration and SmartREST templates, which are matched by their files at run time) are all kept and applied in order.
+  - `targets` and `certificateAuthority` of a later file replace those of earlier files.
+  - `hooks.pre` and `hooks.post` are concatenated, and so are the `pre` and `post` hooks of each section in `hooks.sections`.
+
+Duplicates within a single file are still validation errors, so a duplicate is only resolved by the "later wins" rule when the definitions come from different files. `include` only applies to `validate` and `run`; `export` writes a single file.
 
 ### Sources
 

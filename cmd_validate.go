@@ -45,7 +45,11 @@ func runValidate(manifestPath string, checkSources bool) error {
 		return err
 	}
 
-	fmt.Printf("✓ %s is valid\n\n", manifestPath)
+	fmt.Printf("✓ %s is valid\n", manifestPath)
+	for _, file := range manifest.IncludedFiles {
+		fmt.Printf("  includes %s\n", file)
+	}
+	fmt.Println()
 	printSectionCount(SectionTenantOptions, len(manifest.TenantOptions))
 	printSectionCount(SectionFeatures, len(manifest.Features))
 	printSectionCount(SectionRetentionRules, len(manifest.RetentionRules))

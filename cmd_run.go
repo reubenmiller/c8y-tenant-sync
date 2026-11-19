@@ -38,10 +38,14 @@ func newRunCmd() *cobra.Command {
 
 Every operation is idempotent, so the same manifest can be applied repeatedly. Use
 --dry-run (or "c8y --dry tenant-sync run") to preview the changes.`,
-		Example: `  ` + commandPrefix + ` run -f tenant.yaml --dry-run
-  ` + commandPrefix + ` run -f tenant.yaml
-  ` + commandPrefix + ` run -f tenant.yaml --only firmware,deviceProfiles
-  ` + commandPrefix + ` run -f tenant.yaml --all-children`,
+		Example: formatExamples(
+			example{"run -f tenant.yaml --dry-run", "Preview the changes without applying them"},
+			example{"run -f tenant.yaml", "Apply the manifest to the tenant of the active session"},
+			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
+			example{"run -f tenant.yaml --force", "Replace existing version binaries and configuration files"},
+			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
+			example{"run -f tenant.yaml --target-selector \"domain=*.example.com\" --include-current", "Apply the manifest to matching tenants and the current tenant"},
+		),
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeManifestFiles,
 		RunE: func(cmd *cobra.Command, args []string) error {

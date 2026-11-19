@@ -107,6 +107,13 @@ c8y tenant-sync run -f tenant.yaml --all-children
 
 Tab completion (commands, flags, `--only` sections and manifest files) works through c8y's own completion.
 
+Like the c8y built-in commands, every command shows its examples with `--examples`:
+
+```bash
+c8y tenant-sync init --examples
+c8y tenant-sync run --examples
+```
+
 ### Session and authentication
 
 c8y passes the active session to the extension as environment variables. tenant-sync reads:

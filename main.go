@@ -44,16 +44,22 @@ users and user groups, SmartREST 2.0 templates, device profiles) and apply it id
 to one or more tenants.
 
 The "run" command uses the active go-c8y-cli session.`,
-		Example: `  ` + commandPrefix + ` init
-  ` + commandPrefix + ` validate tenant.yaml
-  ` + commandPrefix + ` run -f tenant.yaml --dry-run
-  ` + commandPrefix + ` run -f tenant.yaml --only firmware,deviceProfiles
-  ` + commandPrefix + ` schema -o tenant.schema.json`,
+		Example: formatExamples(
+			example{"init", "Create a minimal tenant.yaml manifest"},
+			example{"validate tenant.yaml", "Validate a manifest without connecting to Cumulocity"},
+			example{"run -f tenant.yaml --dry-run", "Preview the changes the manifest would make"},
+			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
+			example{"schema -o tenant.schema.json", "Write the JSON schema of the manifest to a file"},
+		),
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	root.CompletionOptions.HiddenDefaultCmd = true
+	// Make the root runnable so its persistent pre-run (--examples) is called
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	}
 
 	root.AddCommand(
 		newInitCmd(),
@@ -61,11 +67,15 @@ The "run" command uses the active go-c8y-cli session.`,
 		newRunCmd(),
 		newSchemaCmd(),
 	)
+	addExamplesFlag(root)
 	return root
 }
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
+		if errors.Is(err, errExamplesShown) {
+			return
+		}
 		if !errors.Is(err, errExitFailures) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}

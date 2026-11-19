@@ -86,8 +86,11 @@ func newSchemaCmd() *cobra.Command {
 Reference the schema from a manifest for IDE completion (VS Code YAML extension, JetBrains):
 
   # yaml-language-server: $schema=` + SchemaID,
-		Example: `  ` + commandPrefix + ` schema -o tenant.schema.json`,
-		Args:    cobra.NoArgs,
+		Example: formatExamples(
+			example{"schema", "Print the JSON schema of the manifest"},
+			example{"schema -o tenant.schema.json", "Write the JSON schema to a file, for IDE completion"},
+		),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSchema(output)
 		},

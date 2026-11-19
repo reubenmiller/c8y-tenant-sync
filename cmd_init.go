@@ -95,8 +95,11 @@ func newInitCmd() *cobra.Command {
 		Use:   "init [manifest.yaml]",
 		Short: "Create a new tenant manifest file",
 		Long:  "Create a new tenant manifest file (default: tenant.yaml).",
-		Example: `  ` + commandPrefix + ` init
-  ` + commandPrefix + ` init --full examples/tenant.yaml`,
+		Example: formatExamples(
+			example{"init", "Create a minimal tenant.yaml manifest in the current folder"},
+			example{"init --full examples/tenant.yaml", "Create a fully annotated example manifest"},
+			example{"init tenant.yaml --force", "Overwrite an existing tenant.yaml with a new skeleton"},
+		),
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeManifestFiles,
 		RunE: func(cmd *cobra.Command, args []string) error {

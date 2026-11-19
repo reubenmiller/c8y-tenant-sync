@@ -17,8 +17,10 @@ func newValidateCmd() *cobra.Command {
 
 Unknown fields are errors. Use --check-sources to also resolve every source (local
 paths must exist, GitHub releases must have matching assets).`,
-		Example: `  ` + commandPrefix + ` validate tenant.yaml
-  ` + commandPrefix + ` validate tenant.yaml --check-sources`,
+		Example: formatExamples(
+			example{"validate tenant.yaml", "Validate the manifest schema (unknown fields are errors)"},
+			example{"validate tenant.yaml --check-sources", "Also check that every local path exists and every GitHub release has matching assets"},
+		),
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeManifestFiles,
 		RunE: func(cmd *cobra.Command, args []string) error {

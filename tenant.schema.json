@@ -218,7 +218,7 @@
         },
         "linkOnly": {
           "type": "boolean",
-          "description": "Reference the asset download URL instead of uploading the binary (public repositories only)"
+          "description": "Reference the asset download URL instead of downloading and uploading the binary (public repositories only). Default: true for firmware and false for all other entries. Set false on a firmware entry to upload the binary to Cumulocity"
         },
         "token": {
           "type": "string",

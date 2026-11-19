@@ -174,7 +174,7 @@ func (r *SourceResolver) resolveGitHub(source *GitHubSource) ([]ResolvedFile, er
 				continue
 			}
 
-			if source.LinkOnly {
+			if source.IsLinkOnly() {
 				files = append(files, ResolvedFile{
 					URL:         asset.BrowserDownloadURL,
 					Filename:    asset.Name,

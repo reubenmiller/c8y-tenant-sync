@@ -169,7 +169,9 @@ firmware:
       optional: true # skip instead of failing when the build dir is missing
 
   # Rugix Bakery images from GitHub releases; the release tag is used as the
-  # version when the filename does not contain one
+  # version when the filename does not contain one. Firmware from GitHub is
+  # linked by URL by default (devices download it from GitHub); set
+  # linkOnly: false to upload the images to Cumulocity instead
   - name: tedge-rugix-pi
     description: thin-edge.io Rugix image for Raspberry Pi
     deviceType: rugix-pi

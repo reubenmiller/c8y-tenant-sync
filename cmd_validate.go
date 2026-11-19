@@ -83,7 +83,7 @@ func runValidate(manifestPath string, checkSources bool) error {
 		check(SectionSoftware, i, spec.Source)
 	}
 	for i, spec := range manifest.Firmware {
-		check(SectionFirmware, i, spec.Source)
+		check(SectionFirmware, i, spec.resolvedSource())
 	}
 	for i, spec := range manifest.Configuration {
 		check(SectionConfiguration, i, spec.Source)

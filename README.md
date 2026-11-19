@@ -36,7 +36,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
   - **Update frameworks**: `*.swu` (SWUpdate), `*.raucb` (RAUC), `*.mender`
   - **Custom types**: any extension, with a `versionPattern` regex for custom naming schemes
 - ⚙️ **Configuration repository sync**: upload configuration files with type and device type filters
-- 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries
+- 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
@@ -203,6 +203,7 @@ source:
     assets: ["*.wic.xz"]   # glob patterns against asset names
     includePrereleases: false
     linkOnly: false        # true: reference the download URL, don't upload the binary
+                           # (default: true for firmware, false for everything else)
     token: ${GITHUB_TOKEN} # optional; falls back to GITHUB_TOKEN / GH_TOKEN env vars
 ```
 
@@ -211,6 +212,25 @@ source:
   # 3. External URL (referenced, not uploaded)
   url: https://example.com/files/config.toml
 ```
+
+#### Linking or uploading GitHub assets
+
+Firmware images are often large, so firmware entries with a GitHub source **link** the release assets by default: the asset's download URL is stored in the firmware version's URL field, and nothing is downloaded or uploaded. Devices then download the image from GitHub, so this only works for public repositories.
+
+Set `linkOnly: false` on a firmware entry to download the assets and upload them to Cumulocity instead, for example for private repositories or devices without access to GitHub:
+
+```yaml
+firmware:
+  - name: tedge-rugix-pi
+    deviceType: rugix-pi
+    source:
+      github:
+        repo: thin-edge/tedge-rugix-image
+        assets: ["*.img.xz"]
+        linkOnly: false # upload the images to Cumulocity
+```
+
+Software and configuration entries upload by default. Set `linkOnly: true` on them to link instead.
 
 Any source can be marked `optional: true`: when the local path does not exist or nothing matches (no files, no release assets), the entry is reported as `skipped` instead of failing the run — useful when a build directory only exists on some pipelines.
 

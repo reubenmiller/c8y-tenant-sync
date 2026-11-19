@@ -384,6 +384,24 @@ type Source struct {
 	Optional bool `yaml:"optional" json:"optional,omitempty" jsonschema:"description=Skip this entry instead of failing when the path does not exist or nothing matches"`
 }
 
+// IsLinkOnly reports whether the GitHub assets are referenced by URL instead
+// of being downloaded and uploaded
+func (g *GitHubSource) IsLinkOnly() bool {
+	return g != nil && g.LinkOnly != nil && *g.LinkOnly
+}
+
+// withLinkOnlyDefault returns the source with github.linkOnly set to
+// defaultValue when the manifest does not set it
+func (s Source) withLinkOnlyDefault(defaultValue bool) Source {
+	if s.GitHub == nil || s.GitHub.LinkOnly != nil {
+		return s
+	}
+	gh := *s.GitHub
+	gh.LinkOnly = &defaultValue
+	s.GitHub = &gh
+	return s
+}
+
 func (s *Source) IsSet() bool {
 	return s != nil && (s.Path != "" || s.URL != "" || s.GitHub != nil)
 }
@@ -431,8 +449,9 @@ type GitHubSource struct {
 
 	// LinkOnly references the asset download URL instead of downloading and
 	// uploading the binary to Cumulocity. Only useful for public repositories
-	// since devices must be able to fetch the URL.
-	LinkOnly bool `yaml:"linkOnly" json:"linkOnly,omitempty" jsonschema:"description=Reference the asset download URL instead of uploading the binary (public repositories only)"`
+	// since devices must be able to fetch the URL. When unset, firmware
+	// entries link (true) and all other entries upload (false).
+	LinkOnly *bool `yaml:"linkOnly" json:"linkOnly,omitempty" jsonschema:"description=Reference the asset download URL instead of downloading and uploading the binary (public repositories only). Default: true for firmware and false for all other entries. Set false on a firmware entry to upload the binary to Cumulocity"`
 
 	// Token for the GitHub API (falls back to GITHUB_TOKEN / GH_TOKEN env vars).
 	// Supports ${VAR} expansion, e.g. token: ${MY_GITHUB_TOKEN}

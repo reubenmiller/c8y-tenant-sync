@@ -11,11 +11,18 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/op"
 )
 
+// resolvedSource returns the firmware source. GitHub release assets are
+// linked by URL unless the manifest sets github.linkOnly: false, so devices
+// download the images from GitHub instead of from Cumulocity
+func (spec FirmwareSpec) resolvedSource() Source {
+	return spec.Source.withLinkOnlyDefault(true)
+}
+
 // SyncFirmware resolves each firmware source and uploads the images as
 // firmware versions, creating the firmware items as needed.
 func (s *Syncer) SyncFirmware(ctx context.Context, specs []FirmwareSpec) error {
 	for index, spec := range specs {
-		files, ok := s.resolveSource(SectionFirmware, fmt.Sprintf("firmware[%d]", index), spec.Source)
+		files, ok := s.resolveSource(SectionFirmware, fmt.Sprintf("firmware[%d]", index), spec.resolvedSource())
 		if !ok {
 			continue
 		}

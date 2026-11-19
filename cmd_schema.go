@@ -15,6 +15,12 @@ import (
 //	# yaml-language-server: $schema=<SchemaID>
 const SchemaID = "https://raw.githubusercontent.com/reubenmiller/c8y-tenant-sync/main/tenant.schema.json"
 
+// JSONSchemaExtend makes adminPass and adminPasswordFrom mutually exclusive,
+// mirroring the manifest validation
+func (ChildTenantSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.Not = &jsonschema.Schema{Required: []string{"adminPass", "adminPasswordFrom"}}
+}
+
 // JSONSchemaExtend requires a userName or an email (the userName defaults to
 // the email)
 func (UserSpec) JSONSchemaExtend(schema *jsonschema.Schema) {

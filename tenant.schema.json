@@ -65,6 +65,74 @@
         "source"
       ]
     },
+    "ChildTenantSpec": {
+      "not": {
+        "required": [
+          "adminPass",
+          "adminPasswordFrom"
+        ]
+      },
+      "properties": {
+        "domain": {
+          "type": "string",
+          "description": "Full domain name of the tenant; the unique key matched case-insensitively against the domains of the child tenants",
+          "examples": [
+            "customer-a.eu-latest.cumulocity.com"
+          ]
+        },
+        "company": {
+          "type": "string",
+          "description": "Company name (required to create the tenant; updated when it differs)"
+        },
+        "adminName": {
+          "type": "string",
+          "description": "Username of the tenant's first administrator (only used when creating the tenant)"
+        },
+        "adminEmail": {
+          "type": "string",
+          "description": "Email address of the tenant's first administrator (only used when creating the tenant; required with sendPasswordResetEmail)"
+        },
+        "adminPass": {
+          "type": "string",
+          "description": "Initial password of the administrator used only when creating the tenant; supports ${VAR} expansion; mutually exclusive with adminPasswordFrom and sendPasswordResetEmail"
+        },
+        "adminPasswordFrom": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Take the initial administrator password from an environment variable (env) or a generated value (generate); mutually exclusive with adminPass and sendPasswordResetEmail"
+        },
+        "sendPasswordResetEmail": {
+          "type": "boolean",
+          "description": "Email a password reset link to adminEmail when creating the tenant (instead of adminPass or adminPasswordFrom)"
+        },
+        "contactName": {
+          "type": "string",
+          "description": "Name of the contact person (updated when it differs)"
+        },
+        "contactPhone": {
+          "type": "string",
+          "description": "Phone number of the contact person (updated when it differs)"
+        },
+        "customProperties": {
+          "type": "object",
+          "description": "Custom properties of the tenant (declared keys are set when they differ; other keys are kept)"
+        },
+        "applications": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "devicemanagement"
+            ]
+          },
+          "type": "array",
+          "description": "Names of applications to subscribe to the tenant (additive; missing subscriptions are also added to existing tenants)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "domain"
+      ]
+    },
     "CommandGroupSpec": {
       "properties": {
         "name": {
@@ -1327,6 +1395,13 @@
     "targets": {
       "$ref": "#/$defs/TargetsSpec",
       "description": "Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"
+    },
+    "tenants": {
+      "items": {
+        "$ref": "#/$defs/ChildTenantSpec"
+      },
+      "type": "array",
+      "description": "Child tenants of the current (parent/management) tenant to create or update (matched by domain); runs once with the base credentials before the targets are resolved; tenants are never deleted or suspended"
     },
     "tenantOptions": {
       "items": {

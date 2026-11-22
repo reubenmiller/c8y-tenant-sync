@@ -72,6 +72,35 @@ type reportOutput struct {
 	Format string
 	// Append adds to an existing file instead of replacing it (step summary)
 	Append bool
+	// Automatic marks the step summary added without --report: a failure to
+	// write it is only a warning
+	Automatic bool
+}
+
+// EnvGitHubActions is set to "true" by GitHub Actions
+const EnvGitHubActions = "GITHUB_ACTIONS"
+
+// withGitHubSummary adds the GitHub step summary to the outputs when the run
+// is inside GitHub Actions (GITHUB_ACTIONS=true and GITHUB_STEP_SUMMARY set),
+// unless the summary is disabled or already requested, so it is written once
+func withGitHubSummary(outputs []reportOutput, enabled bool) []reportOutput {
+	summary := os.Getenv(EnvGitHubStepSummary)
+	if !enabled || os.Getenv(EnvGitHubActions) != "true" || summary == "" {
+		return outputs
+	}
+	for _, output := range outputs {
+		if output.Path == ReportGitHub || samePath(output.Path, summary) {
+			return outputs
+		}
+	}
+	return append(outputs, reportOutput{Path: ReportGitHub, Format: ReportFormatMarkdown, Append: true, Automatic: true})
+}
+
+// samePath reports whether two paths name the same file
+func samePath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && absA == absB
 }
 
 // isChange reports whether an action changes (or would change) the tenant
@@ -303,15 +332,23 @@ func mdCode(text string) string {
 	return "`" + strings.ReplaceAll(strings.ReplaceAll(text, "`", "'"), "|", "\\|") + "`"
 }
 
-// WriteReports writes the report to every output. It returns the first error
-// after attempting all outputs.
+// WriteReports writes the report to every output and prints each failure. It
+// returns the first error of an explicitly requested output; failures of the
+// automatic GitHub step summary are only warnings.
 func WriteReports(report *RunReport, outputs []reportOutput) error {
 	var firstErr error
 	for _, output := range outputs {
-		if err := writeReport(report, output); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+		err := writeReport(report, output)
+		if err == nil {
+			continue
+		}
+		if output.Automatic {
+			fmt.Fprintf(os.Stderr, "\n⚠ %v (GitHub step summary, ignored)\n", err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "\n⚠ %v\n", err)
+		if firstErr == nil {
+			firstErr = err
 		}
 	}
 	return firstErr

@@ -356,3 +356,104 @@ func TestRunFailOnChange(t *testing.T) {
 	})
 	assert.NoError(t, applyErr)
 }
+
+// inGitHubActions simulates a GitHub Actions runner with an existing step
+// summary and returns its path
+func inGitHubActions(t *testing.T) string {
+	t.Helper()
+	summary := filepath.Join(t.TempDir(), "step-summary.md")
+	require.NoError(t, os.WriteFile(summary, []byte("# Earlier step\n\n"), 0o644))
+	t.Setenv("C8Y_SETTINGS_DEFAULTS_DRY", "true")
+	t.Setenv(EnvGitHubActions, "true")
+	t.Setenv(EnvGitHubStepSummary, summary)
+	return summary
+}
+
+func runCaptured(t *testing.T, args ...string) (error, string, string) {
+	t.Helper()
+	var runErr error
+	stdout, stderr := captureStdio(t, func() {
+		runErr = runRoot(t, args...)
+	})
+	return runErr, stdout, stderr
+}
+
+func TestRunGitHubSummaryAutomatic(t *testing.T) {
+	summary := inGitHubActions(t)
+	manifest := writeManifest(t, reportManifest)
+
+	runErr, stdout, _ := runCaptured(t, "run", "-f", manifest)
+	require.NoError(t, runErr, stdout)
+	content := readText(t, summary)
+	assert.True(t, strings.HasPrefix(content, "# Earlier step\n\n## Tenant sync report: success"), "appended: %s", content)
+	assert.Equal(t, 1, strings.Count(content, "## Tenant sync report"))
+}
+
+func TestRunGitHubSummaryOptOut(t *testing.T) {
+	summary := inGitHubActions(t)
+	manifest := writeManifest(t, reportManifest)
+
+	runErr, stdout, _ := runCaptured(t, "run", "-f", manifest, "--github-summary=false")
+	require.NoError(t, runErr, stdout)
+	assert.Equal(t, "# Earlier step\n\n", readText(t, summary))
+
+	// An explicit --report github still writes it
+	runErr, stdout, _ = runCaptured(t, "run", "-f", manifest, "--github-summary=false", "--report", ReportGitHub)
+	require.NoError(t, runErr, stdout)
+	assert.Equal(t, 1, strings.Count(readText(t, summary), "## Tenant sync report"))
+}
+
+func TestRunGitHubSummaryNotInActions(t *testing.T) {
+	summary := inGitHubActions(t)
+	t.Setenv(EnvGitHubActions, "")
+	manifest := writeManifest(t, reportManifest)
+
+	runErr, stdout, _ := runCaptured(t, "run", "-f", manifest)
+	require.NoError(t, runErr, stdout)
+	assert.Equal(t, "# Earlier step\n\n", readText(t, summary), "nothing is written outside GitHub Actions")
+}
+
+func TestRunGitHubSummaryWrittenOnce(t *testing.T) {
+	summary := inGitHubActions(t)
+	manifest := writeManifest(t, reportManifest)
+
+	runErr, stdout, _ := runCaptured(t, "run", "-f", manifest, "--report", ReportGitHub)
+	require.NoError(t, runErr, stdout)
+	assert.Equal(t, 1, strings.Count(readText(t, summary), "## Tenant sync report"))
+
+	// Also when the summary file is given as a --report path
+	runErr, stdout, _ = runCaptured(t, "run", "-f", manifest, "--report-format", "markdown", "--report", summary)
+	require.NoError(t, runErr, stdout)
+	assert.Equal(t, 1, strings.Count(readText(t, summary), "## Tenant sync report"))
+}
+
+func TestRunGitHubSummaryWriteFailureIsAWarning(t *testing.T) {
+	inGitHubActions(t)
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o644))
+	t.Setenv(EnvGitHubStepSummary, filepath.Join(blocker, "summary.md")) // parent is a file
+	manifest := writeManifest(t, reportManifest)
+
+	runErr, stdout, stderr := runCaptured(t, "run", "-f", manifest)
+	assert.NoError(t, runErr, stdout)
+	assert.Contains(t, stderr, "failed to write report")
+	assert.Contains(t, stderr, "GitHub step summary, ignored")
+
+	// An explicit request fails the run
+	runErr, _, _ = runCaptured(t, "run", "-f", manifest, "--report", ReportGitHub)
+	assert.ErrorContains(t, runErr, "failed to write report")
+}
+
+func TestRunGitHubSummaryOnFailure(t *testing.T) {
+	f := newFakeC8y(t)
+	f.JSON("POST /tenant/options", http.StatusUnprocessableEntity, map[string]any{"error": "x/y", "message": "rejected"})
+	setupRunAgainst(t, f)
+	summary := filepath.Join(t.TempDir(), "summary.md")
+	t.Setenv(EnvGitHubActions, "true")
+	t.Setenv(EnvGitHubStepSummary, summary)
+	manifest := writeManifest(t, reportManifest)
+
+	runErr, _, _ := runCaptured(t, "run", "-f", manifest, "--only", SectionTenantOptions)
+	assert.ErrorIs(t, runErr, errExitFailures)
+	assert.Contains(t, readText(t, summary), "## Tenant sync report: failed")
+}

@@ -162,6 +162,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser` or `sessions` (overrides the manifest) |
 | `--report` | | Write a report of the run to a file (`.json` or `.md`); repeatable. `github` appends the Markdown report to `$GITHUB_STEP_SUMMARY`. See [Run reports](#run-reports) |
 | `--report-format` | *(from the extension)* | Format of the `--report` files: `json` or `markdown` |
+| `--github-summary` | `true` | Inside GitHub Actions, append the Markdown report to the step summary; `--github-summary=false` turns it off. No effect elsewhere |
 | `--fail-on-change` | | Exit with an error when any item was created, updated or planned (drift check) |
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
@@ -179,7 +180,8 @@ c8y tenant-sync run -f tenant.yaml --report report.json --report report.md
 - The report is written in dry-run mode and also when items fail or the run is aborted (e.g. by a failing pre hook). It is not written when the run stops before syncing, e.g. for an invalid manifest.
 - Secrets are masked (`***`) in every field, like in the console output.
 - Missing parent directories are created. A report which cannot be written is reported and makes a successful run fail; it never replaces the error of a failed run.
-- `--report github` appends the Markdown report to the GitHub Actions step summary (the file named by `GITHUB_STEP_SUMMARY`). Outside GitHub Actions, where the variable is not set, it is skipped with a notice.
+- Inside GitHub Actions (`GITHUB_ACTIONS=true` and `GITHUB_STEP_SUMMARY` set), the Markdown report is appended to the job's step summary automatically, also in dry-run and when the run fails. Turn it off with `--github-summary=false`. The step summary is a file owned by the runner, so the report is only ever appended, and a failure to write it prints a warning without failing an otherwise successful run.
+- `--report github` requests the step summary explicitly (also with `--github-summary=false`). Then a write failure fails the run like any other `--report` file. The summary is written at most once per run, also when both apply. Outside GitHub Actions, where `GITHUB_STEP_SUMMARY` is not set, `--report github` is skipped with a notice.
 - `--fail-on-change` exits with `changes detected: N item(s) created, updated or planned` when the run changed (or, in dry-run, would change) anything. Combined with `--dry-run` it is a drift check: the job fails when the tenant no longer matches the manifest. Executed hook commands do not count as changes.
 
 The JSON report:
@@ -221,10 +223,10 @@ The JSON report:
 
 The Markdown report has a heading with the status, the run details, a table of counts, and a table of the changed and failed items. Unchanged items are collapsed in a `<details>` block. With several tenants the items are grouped under a heading per tenant.
 
-In GitHub Actions, write the step summary and upload the JSON report as an artifact, also when the sync fails:
+In GitHub Actions the step summary is written automatically. Upload the JSON report as an artifact, also when the sync fails:
 
 ```yaml
-      - run: go run github.com/reubenmiller/c8y-tenant-sync@latest run -f tenant.yaml --report tenant-sync-report.json --report github
+      - run: go run github.com/reubenmiller/c8y-tenant-sync@latest run -f tenant.yaml --report tenant-sync-report.json
         env:
           C8Y_BASEURL: ${{ secrets.C8Y_BASEURL }}
           C8Y_TENANT: ${{ secrets.C8Y_TENANT }}

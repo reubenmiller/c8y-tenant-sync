@@ -34,6 +34,7 @@ type runOptions struct {
 	reports           []string
 	reportFormat      string
 	failOnChange      bool
+	githubSummary     bool
 }
 
 func newRunCmd() *cobra.Command {
@@ -54,6 +55,7 @@ Every operation is idempotent, so the same manifest can be applied repeatedly. U
 			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
 			example{"run -f tenant.yaml --target-selector \"domain=*.example.com\" --include-current", "Apply the manifest to matching tenants and the current tenant"},
 			example{"run -f tenant.yaml --report report.json --report report.md", "Write a JSON and a Markdown report of the run"},
+			example{"run -f tenant.yaml --github-summary=false", "Do not append the report to the GitHub Actions step summary"},
 			example{"run -f tenant.yaml --dry-run --fail-on-change", "Exit with an error when the tenant differs from the manifest (drift check)"},
 		),
 		Args:              cobra.MaximumNArgs(1),
@@ -80,6 +82,7 @@ Every operation is idempotent, so the same manifest can be applied repeatedly. U
 	flags.StringVar(&opts.secretsEncryption, "secrets-encryption", string(SecretsEncryptionAuto), "Encrypt the secrets file with sops: auto (when sops and a .sops.yaml are found), sops (required) or none")
 	flags.StringArrayVar(&opts.reports, "report", nil, "Write a report of the run to a file (.json or .md); repeatable. \""+ReportGitHub+"\" appends Markdown to $"+EnvGitHubStepSummary)
 	flags.StringVar(&opts.reportFormat, "report-format", "", "Format of the --report files: "+strings.Join(ReportFormats, " or ")+" (default: from the file extension)")
+	flags.BoolVar(&opts.githubSummary, "github-summary", true, "Inside GitHub Actions, append the Markdown report to $"+EnvGitHubStepSummary+" (no effect elsewhere)")
 	flags.BoolVar(&opts.failOnChange, "fail-on-change", false, "Exit with an error when any item was created, updated or planned (drift check)")
 	flags.StringArrayVar(&opts.targets, "target", nil, "Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest targets section)")
 
@@ -128,6 +131,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 	if err != nil {
 		return err
 	}
+	reportOutputs = withGitHubSummary(reportOutputs, opts.githubSummary)
 
 	encryption := SecretsEncryption(strings.ToLower(strings.TrimSpace(opts.secretsEncryption)))
 	switch encryption {
@@ -243,7 +247,6 @@ func runSync(opts *runOptions, args []string) (err error) {
 		}
 		report := BuildRunReport(syncer.Results, redactor, manifestPath, secrets.Host, startTime, elapsed, dryRun, applyErr)
 		if reportErr := WriteReports(report, reportOutputs); reportErr != nil {
-			fmt.Fprintf(os.Stderr, "\n⚠ %v\n", reportErr)
 			if err == nil {
 				err = reportErr
 			}

@@ -443,3 +443,16 @@ func TestRunOnlyChildTenants(t *testing.T) {
 	assert.NotContains(t, stdout, "[tenants]")
 	assert.Empty(t, f2.Requests(http.MethodPost, "/tenant/tenants"))
 }
+
+func TestIncludeMergesChildTenantsByDomain(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"base.yaml":   "tenants:\n  - domain: Customer-A.example.com\n    company: Old name\n  - domain: customer-b.example.com\n    company: B\n",
+		"tenant.yaml": "include: [base.yaml]\ntenants:\n  - domain: customer-a.example.com\n    company: Customer A\n",
+	})
+	manifest, err := LoadManifest(filepath.Join(dir, "tenant.yaml"))
+	require.NoError(t, err)
+	require.Len(t, manifest.Tenants, 2)
+	assert.Equal(t, "Customer A", manifest.Tenants[0].Company, "the later file wins (domains match case-insensitively)")
+	assert.Equal(t, "customer-b.example.com", manifest.Tenants[1].Domain)
+}

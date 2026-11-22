@@ -331,11 +331,12 @@ func (m *Manifest) rebase(dir, rootDir string) {
 
 // mergeManifests merges over into base and returns the result:
 //   - list sections are concatenated (base first)
-//   - entries with an identity (tenant option category+key, feature key,
-//     retention rule selector, application name, root device group name
-//     (the whole tree is replaced), user group name, inventory role name,
-//     user name, device profile name, command group name) replace an entry with
-//     the same identity in base, at its position (the later definition wins)
+//   - entries with an identity (child tenant domain, tenant option
+//     category+key, feature key, retention rule selector, application name,
+//     root device group name (the whole tree is replaced), user group name,
+//     inventory role name, user name, device profile name, command group
+//     name) replace an entry with the same identity in base, at its
+//     position (the later definition wins)
 //   - entries without an identity (trusted certificates, revocation lists,
 //     software, firmware, configuration, SmartREST templates) are all kept
 //     and applied in order
@@ -353,6 +354,7 @@ func mergeManifests(base, over *Manifest) *Manifest {
 		out.CertificateAuthority = over.CertificateAuthority
 	}
 
+	out.Tenants = mergeByKey(base.Tenants, over.Tenants, func(t ChildTenantSpec) string { return strings.ToLower(t.Domain) })
 	out.TenantOptions = mergeByKey(base.TenantOptions, over.TenantOptions, func(o TenantOptionSpec) string {
 		if o.Category == "" || o.Key == "" {
 			return ""

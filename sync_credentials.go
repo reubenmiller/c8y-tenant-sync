@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,18 +17,56 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// serviceUserRequiredRoles are the permissions requested for the placeholder
-// microservice's service users. They cover everything the sync sections do
-// inside a target tenant (inventory repositories, tenant options).
-var serviceUserRequiredRoles = []string{
-	"ROLE_INVENTORY_READ",
-	"ROLE_INVENTORY_ADMIN",
-	"ROLE_INVENTORY_CREATE",
-	"ROLE_OPTION_MANAGEMENT_READ",
-	"ROLE_OPTION_MANAGEMENT_ADMIN",
-	"ROLE_APPLICATION_MANAGEMENT_READ",
-	"ROLE_TENANT_MANAGEMENT_READ",
+// sectionServiceUserRoles are the roles each section needs inside a target
+// tenant when the serviceUser credentials mode is used. Sections which run
+// with the base credentials (features, applications, tenants) or which make
+// no API calls in the target tenant (commands) need none. A test checks that
+// every section is listed, so a new section has to declare its roles.
+var sectionServiceUserRoles = map[string][]string{
+	// Lookups used by several sections: tenant ID, application IDs
+	// (valueFrom.application) and device IDs (valueFrom.device)
+	"common": {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_APPLICATION_MANAGEMENT_READ", "ROLE_INVENTORY_READ"},
+
+	SectionTenantOptions:          {"ROLE_OPTION_MANAGEMENT_READ", "ROLE_OPTION_MANAGEMENT_ADMIN"},
+	SectionFeatures:               nil, // base credentials
+	SectionRetentionRules:         {"ROLE_RETENTION_RULE_READ", "ROLE_RETENTION_RULE_ADMIN"},
+	SectionCertificateAuthority:   {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_TENANT_MANAGEMENT_ADMIN"},
+	SectionTrustedCertificates:    {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_TENANT_MANAGEMENT_ADMIN"},
+	SectionCertificateRevocations: {"ROLE_TENANT_MANAGEMENT_ADMIN"},
+	SectionApplications:           nil, // base credentials
+	SectionDeviceGroups:           {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
+	SectionUserGroups:             {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
+	SectionInventoryRoles:         {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
+	// Users are also assigned inventory roles on device groups
+	SectionUsers:         {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN", "ROLE_INVENTORY_READ"},
+	SectionSoftware:      {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
+	SectionFirmware:      {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
+	SectionConfiguration: {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
+	// Collections are matched by their external identity (X-Id)
+	SectionSmartRest:      {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE", "ROLE_IDENTITY_READ", "ROLE_IDENTITY_ADMIN"},
+	SectionDeviceProfiles: {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
+	SectionCommands:       nil, // shell commands
 }
+
+// serviceUserRequiredRoles are the permissions requested for the placeholder
+// microservice's service users: the roles of all sections. The list does not
+// depend on the manifest, so different manifests applied with the same
+// placeholder application don't change its roles back and forth (which
+// would re-subscribe the target tenants on every run).
+var serviceUserRequiredRoles = func() []string {
+	seen := map[string]bool{}
+	var roles []string
+	for _, sectionRoles := range sectionServiceUserRoles {
+		for _, role := range sectionRoles {
+			if !seen[role] {
+				seen[role] = true
+				roles = append(roles, role)
+			}
+		}
+	}
+	sort.Strings(roles)
+	return roles
+}()
 
 // resolveTargetCredentials obtains credentials for every target that is not
 // the current tenant and stores them on the targets in place
@@ -124,50 +163,29 @@ func (s *Syncer) resolveServiceUserCredentials(ctx context.Context, targets []Ta
 	})
 	bootstrapClient.UseTenantInUsername = true
 
-	// Service users for freshly subscribed tenants can take a moment to
-	// appear, so retry a few times before giving up
-	users := make(map[string]authentication.AuthOptions)
-	var missing []string
-	for attempt := range 5 {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(2 * time.Second):
-			}
-		}
-
-		result := bootstrapClient.Microservices.CurrentMicroservice.ListUsers(ctx)
-		if result.Err != nil {
-			return fmt.Errorf("failed to list service users of credentials application %q: %w", name, result.Err)
-		}
-		for user, err := range result.Items() {
-			if err != nil {
-				return fmt.Errorf("failed to read service users of credentials application %q: %w", name, err)
-			}
-			users[user.Tenant()] = authentication.AuthOptions{
-				Tenant:   user.Tenant(),
-				Username: user.Username(),
-				Password: user.Password(),
-			}
-		}
-
-		missing = missing[:0]
-		for _, target := range targets {
-			if target.Current || target.Auth != nil {
-				continue
-			}
-			if _, ok := users[target.TenantID]; !ok {
-				missing = append(missing, target.TenantID)
-			}
-		}
-		if len(missing) == 0 {
-			break
-		}
+	users, err := fetchServiceUsers(ctx, bootstrapClient, name, targets)
+	if err != nil {
+		return err
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("no service user available for tenant(s) %s: check that the subscription of application %q succeeded",
-			strings.Join(missing, ", "), name)
+
+	// Required roles are granted to a tenant's service user when the tenant
+	// is subscribed, so tenants subscribed before the roles changed (e.g.
+	// by an older version of this tool) are subscribed again
+	if outdated := s.tenantsMissingServiceUserRoles(ctx, targets, users); len(outdated) > 0 {
+		for _, tenantID := range outdated {
+			fmt.Printf("🔑 Re-subscribing credentials application %q to tenant %s to grant the required roles\n", name, tenantID)
+			if result := s.Client.Microservices.Unsubscribe(ctx, tenantID, appID); result.Err != nil {
+				return fmt.Errorf("failed to unsubscribe credentials application %q from tenant %s: %w", name, tenantID, result.Err)
+			}
+			if result := s.Client.Microservices.Subscribe(ctx, tenantID, selfLink); result.Err != nil {
+				return fmt.Errorf("failed to subscribe credentials application %q to tenant %s: %w", name, tenantID, result.Err)
+			}
+			delete(users, tenantID)
+		}
+		// The new subscriptions have new service users
+		if users, err = fetchServiceUsers(ctx, bootstrapClient, name, targets); err != nil {
+			return err
+		}
 	}
 
 	for i := range targets {
@@ -324,4 +342,84 @@ func stringSetEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// fetchServiceUsers lists the service users of the placeholder application
+// by tenant. Service users for freshly subscribed tenants can take a moment
+// to appear, so it retries a few times until every target has one.
+func fetchServiceUsers(ctx context.Context, bootstrapClient *api.Client, name string, targets []Target) (map[string]authentication.AuthOptions, error) {
+	users := make(map[string]authentication.AuthOptions)
+	var missing []string
+	for attempt := range 5 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(serviceUserRetryDelay):
+			}
+		}
+
+		result := bootstrapClient.Microservices.CurrentMicroservice.ListUsers(ctx)
+		if result.Err != nil {
+			return nil, fmt.Errorf("failed to list service users of credentials application %q: %w", name, result.Err)
+		}
+		for user, err := range result.Items() {
+			if err != nil {
+				return nil, fmt.Errorf("failed to read service users of credentials application %q: %w", name, err)
+			}
+			users[user.Tenant()] = authentication.AuthOptions{
+				Tenant:   user.Tenant(),
+				Username: user.Username(),
+				Password: user.Password(),
+			}
+		}
+
+		missing = missing[:0]
+		for _, target := range targets {
+			if target.Current || target.Auth != nil {
+				continue
+			}
+			if _, ok := users[target.TenantID]; !ok {
+				missing = append(missing, target.TenantID)
+			}
+		}
+		if len(missing) == 0 {
+			return users, nil
+		}
+	}
+	return nil, fmt.Errorf("no service user available for tenant(s) %s: check that the subscription of application %q succeeded",
+		strings.Join(missing, ", "), name)
+}
+
+// serviceUserRetryDelay is the wait between service user lookups (shorter
+// in tests)
+var serviceUserRetryDelay = 2 * time.Second
+
+// tenantsMissingServiceUserRoles returns the target tenants whose service
+// user lacks one of the required roles. A tenant whose roles can't be read
+// is not reported: the sections then report any missing permission.
+func (s *Syncer) tenantsMissingServiceUserRoles(ctx context.Context, targets []Target, users map[string]authentication.AuthOptions) []string {
+	var outdated []string
+	for _, target := range targets {
+		auth, ok := users[target.TenantID]
+		if target.Current || target.Auth != nil || !ok {
+			continue
+		}
+		user := s.Client.Users.CurrentUser.Get(api.WithAuth(ctx, auth))
+		if user.Err != nil {
+			slog.Debug("Could not read the roles of the service user", "tenant", target.TenantID, "err", user.Err)
+			continue
+		}
+		have := map[string]bool{}
+		for _, role := range user.Data.Get("effectiveRoles").Array() {
+			have[role.Get("id").String()] = true
+		}
+		for _, role := range serviceUserRequiredRoles {
+			if !have[role] {
+				outdated = append(outdated, target.TenantID)
+				break
+			}
+		}
+	}
+	return outdated
 }

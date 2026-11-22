@@ -76,11 +76,23 @@ var SectionOrder = []string{
 
 // ChangeResult records what happened to a single item
 type ChangeResult struct {
+	// Tenant is the label of the target tenant. It is only set when the run
+	// covers tenants other than the current one.
+	Tenant  string
 	Section string
 	Item    string
 	Action  Action
 	Detail  string
 	Err     error
+}
+
+// DisplayItem returns the item prefixed with the tenant label (when set), as
+// shown in the console output
+func (r ChangeResult) DisplayItem() string {
+	if r.Tenant != "" {
+		return r.Tenant + ": " + r.Item
+	}
+	return r.Item
 }
 
 // Syncer applies a manifest to one or more tenants
@@ -131,16 +143,19 @@ func (s *Syncer) recordLocked(section, item string, action Action, detail string
 	if err != nil {
 		action = ActionFailed
 	}
+	var tenant string
 	if s.multiTarget && s.activeTarget != nil {
-		item = s.activeTarget.Label() + ": " + item
+		tenant = s.activeTarget.Label()
 	}
-	s.Results = append(s.Results, ChangeResult{
+	result := ChangeResult{
+		Tenant:  tenant,
 		Section: section,
 		Item:    item,
 		Action:  action,
 		Detail:  detail,
 		Err:     err,
-	})
+	}
+	s.Results = append(s.Results, result)
 
 	symbol := map[Action]string{
 		ActionCreated:   "✚",
@@ -152,7 +167,7 @@ func (s *Syncer) recordLocked(section, item string, action Action, detail string
 		ActionFailed:    "✗",
 	}[action]
 
-	line := fmt.Sprintf("  %s [%s] %s (%s)", symbol, section, item, action)
+	line := fmt.Sprintf("  %s [%s] %s (%s)", symbol, section, result.DisplayItem(), action)
 	if detail != "" {
 		line += ": " + detail
 	}
@@ -389,7 +404,7 @@ func (s *Syncer) PrintSummary(elapsed time.Duration) {
 	if len(failures) > 0 {
 		fmt.Printf("\n❌ Failures:\n")
 		for _, failure := range failures {
-			fmt.Printf("  • [%s] %s: %v\n", failure.Section, failure.Item, failure.Err)
+			fmt.Printf("  • [%s] %s: %v\n", failure.Section, failure.DisplayItem(), failure.Err)
 		}
 	}
 }

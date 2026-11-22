@@ -1,11 +1,20 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain clears the GitHub Actions variables, so runs in the tests never
+// append to the step summary of the CI job running them
+func TestMain(m *testing.M) {
+	os.Unsetenv(EnvGitHubActions)
+	os.Unsetenv(EnvGitHubStepSummary)
+	os.Exit(m.Run())
+}
 
 func TestManifestPathFromArgs(t *testing.T) {
 	path, err := manifestPathFromArgs("", nil)

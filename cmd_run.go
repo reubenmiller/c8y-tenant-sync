@@ -31,6 +31,10 @@ type runOptions struct {
 	credentialsMode   string
 	secretsFile       string
 	secretsEncryption string
+	reports           []string
+	reportFormat      string
+	failOnChange      bool
+	githubSummary     bool
 }
 
 func newRunCmd() *cobra.Command {
@@ -55,6 +59,9 @@ like files included in that order: later files win.`,
 			example{"run -f tenant.yaml --force", "Replace existing version binaries and configuration files"},
 			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
 			example{"run -f tenant.yaml --target-selector \"domain=*.example.com\" --include-current", "Apply the manifest to matching tenants and the current tenant"},
+			example{"run -f tenant.yaml --report report.json --report report.md", "Write a JSON and a Markdown report of the run"},
+			example{"run -f tenant.yaml --github-summary=false", "Do not append the report to the GitHub Actions step summary"},
+			example{"run -f tenant.yaml --dry-run --fail-on-change", "Exit with an error when the tenant differs from the manifest (drift check)"},
 		),
 		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeManifestFileList,
@@ -78,6 +85,10 @@ like files included in that order: later files win.`,
 	flags.StringVar(&opts.credentialsMode, "credentials-mode", "", "How credentials for other tenants are obtained: "+CredentialsModeServiceUser+" or "+CredentialsModeSessions+" (overrides the manifest)")
 	flags.StringVar(&opts.secretsFile, "secrets-file", "", "File which stores the values of ${generate:NAME} references (default: <manifest>.secrets.yaml)")
 	flags.StringVar(&opts.secretsEncryption, "secrets-encryption", string(SecretsEncryptionAuto), "Encrypt the secrets file with sops: auto (when sops and a .sops.yaml are found), sops (required) or none")
+	flags.StringArrayVar(&opts.reports, "report", nil, "Write a report of the run to a file (.json or .md); repeatable. \""+ReportGitHub+"\" appends Markdown to $"+EnvGitHubStepSummary)
+	flags.StringVar(&opts.reportFormat, "report-format", "", "Format of the --report files: "+strings.Join(ReportFormats, " or ")+" (default: from the file extension)")
+	flags.BoolVar(&opts.githubSummary, "github-summary", true, "Inside GitHub Actions, append the Markdown report to $"+EnvGitHubStepSummary+" (no effect elsewhere)")
+	flags.BoolVar(&opts.failOnChange, "fail-on-change", false, "Exit with an error when any item was created, updated or planned (drift check)")
 	flags.StringArrayVar(&opts.targets, "target", nil, "Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest targets section)")
 
 	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFileList)
@@ -86,6 +97,7 @@ like files included in that order: later files win.`,
 	})
 	_ = cmd.RegisterFlagCompletionFunc("secrets-encryption", cobra.FixedCompletions(SecretsEncryptionModes, cobra.ShellCompDirectiveNoFileComp))
 	_ = cmd.RegisterFlagCompletionFunc("secrets-file", completeManifestFiles)
+	_ = cmd.RegisterFlagCompletionFunc("report-format", cobra.FixedCompletions(ReportFormats, cobra.ShellCompDirectiveNoFileComp))
 	_ = cmd.RegisterFlagCompletionFunc("credentials-mode", cobra.FixedCompletions(
 		[]string{CredentialsModeServiceUser, CredentialsModeSessions}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
@@ -107,7 +119,10 @@ func runSync(opts *runOptions, args []string) (err error) {
 	defer func() {
 		// The error is printed after the output is restored
 		if err != nil && !errors.Is(err, errExitFailures) {
-			err = errors.New(redactor.Redact(err.Error()))
+			// Keep the error (and its chain) unless a secret was masked
+			if masked := redactor.Redact(err.Error()); masked != err.Error() {
+				err = errors.New(masked)
+			}
 		}
 	}()
 	configureLogging(opts.verbose, opts.debug)
@@ -119,6 +134,12 @@ func runSync(opts *runOptions, args []string) (err error) {
 	// Relative paths and the default secrets file are based on the first
 	// manifest
 	manifestPath := manifestPaths[0]
+
+	reportOutputs, err := parseReportOutputs(opts.reports, opts.reportFormat)
+	if err != nil {
+		return err
+	}
+	reportOutputs = withGitHubSummary(reportOutputs, opts.githubSummary)
 
 	encryption := SecretsEncryption(strings.ToLower(strings.TrimSpace(opts.secretsEncryption)))
 	switch encryption {
@@ -228,11 +249,28 @@ func runSync(opts *runOptions, args []string) (err error) {
 	}
 
 	startTime := time.Now()
-	if err := syncer.Apply(ctx, manifest, onlySections); err != nil {
-		return err
+	applyErr := syncer.Apply(ctx, manifest, onlySections)
+	elapsed := time.Since(startTime)
+
+	// The report is written for failed runs too, and a report which cannot
+	// be written never hides the outcome of the sync
+	defer func() {
+		if len(reportOutputs) == 0 {
+			return
+		}
+		report := BuildRunReport(syncer.Results, redactor, manifestPath, secrets.Host, startTime, elapsed, dryRun, applyErr)
+		if reportErr := WriteReports(report, reportOutputs); reportErr != nil {
+			if err == nil {
+				err = reportErr
+			}
+		}
+	}()
+
+	if applyErr != nil {
+		return applyErr
 	}
 
-	syncer.PrintSummary(time.Since(startTime))
+	syncer.PrintSummary(elapsed)
 
 	if _, failures := syncer.Summary(); len(failures) > 0 {
 		return errExitFailures
@@ -241,8 +279,17 @@ func runSync(opts *runOptions, args []string) (err error) {
 	if dryRun {
 		fmt.Println("\n✓ Dry run complete - no changes made")
 	}
+	if opts.failOnChange {
+		if changes := countChanges(syncer.Results); changes > 0 {
+			return fmt.Errorf("%w: %d item(s) created, updated or planned", errChangesDetected, changes)
+		}
+	}
 	return nil
 }
+
+// errChangesDetected is returned by --fail-on-change when the run changed (or
+// would change) the tenant
+var errChangesDetected = errors.New("changes detected")
 
 // saveSecrets writes the values generated in this run to the secrets file and
 // reports their names (never the values)

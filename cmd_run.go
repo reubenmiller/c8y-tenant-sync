@@ -17,7 +17,7 @@ import (
 
 // runOptions holds the flags of the run command
 type runOptions struct {
-	manifest          string
+	manifests         []string
 	only              []string
 	dryRun            bool
 	force             bool
@@ -36,30 +36,35 @@ type runOptions struct {
 func newRunCmd() *cobra.Command {
 	opts := &runOptions{}
 	cmd := &cobra.Command{
-		Use:     "run [manifest.yaml]",
+		Use:     "run [manifest.yaml...]",
 		Aliases: []string{"apply"},
 		Short:   "Apply a manifest to the tenant",
 		Long: `Apply a manifest to the tenant of the active go-c8y-cli session.
 
 Every operation is idempotent, so the same manifest can be applied repeatedly. Use
---dry-run (or "c8y --dry tenant-sync run") to preview the changes.`,
+--dry-run (or "c8y --dry tenant-sync run") to preview the changes.
+
+Several manifests (repeated -f flags or several arguments) are merged in order,
+like files included in that order: later files win.`,
 		Example: formatExamples(
 			example{"run -f tenant.yaml --dry-run", "Preview the changes without applying them"},
 			example{"run -f tenant.yaml", "Apply the manifest to the tenant of the active session"},
+			example{"run -f base.yaml -f prod.yaml --dry-run", "Merge two manifests (prod.yaml wins) and preview the changes"},
+			example{"run base.yaml customer-a.yaml", "Apply the merge of two manifests given as arguments"},
 			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
 			example{"run -f tenant.yaml --force", "Replace existing version binaries and configuration files"},
 			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
 			example{"run -f tenant.yaml --target-selector \"domain=*.example.com\" --include-current", "Apply the manifest to matching tenants and the current tenant"},
 		),
-		Args:              cobra.MaximumNArgs(1),
-		ValidArgsFunction: completeManifestFiles,
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeManifestFileList,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSync(opts, args)
 		},
 	}
 
 	flags := cmd.Flags()
-	flags.StringVarP(&opts.manifest, "manifest", "f", "", "Path to the tenant manifest file (default: tenant.yaml)")
+	flags.StringArrayVarP(&opts.manifests, "manifest", "f", nil, "Path to the tenant manifest file (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
 	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to apply (default: all). Sections: "+strings.Join(SectionOrder, ", "))
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "Preview the changes without applying them")
 	flags.BoolVar(&opts.dryRun, "dry", false, "Alias for --dry-run")
@@ -75,7 +80,7 @@ Every operation is idempotent, so the same manifest can be applied repeatedly. U
 	flags.StringVar(&opts.secretsEncryption, "secrets-encryption", string(SecretsEncryptionAuto), "Encrypt the secrets file with sops: auto (when sops and a .sops.yaml are found), sops (required) or none")
 	flags.StringArrayVar(&opts.targets, "target", nil, "Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest targets section)")
 
-	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFiles)
+	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFileList)
 	_ = cmd.RegisterFlagCompletionFunc("only", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return SectionOrder, cobra.ShellCompDirectiveNoFileComp
 	})
@@ -107,10 +112,13 @@ func runSync(opts *runOptions, args []string) (err error) {
 	}()
 	configureLogging(opts.verbose, opts.debug)
 
-	manifestPath, err := manifestPathFromArgs(opts.manifest, args)
+	manifestPaths, err := manifestPathsFromArgs(opts.manifests, args)
 	if err != nil {
 		return err
 	}
+	// Relative paths and the default secrets file are based on the first
+	// manifest
+	manifestPath := manifestPaths[0]
 
 	encryption := SecretsEncryption(strings.ToLower(strings.TrimSpace(opts.secretsEncryption)))
 	switch encryption {
@@ -130,7 +138,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 	secrets.Host = authentication.HostFromEnvironment()
 	secrets.Tenant = authentication.FromEnvironment().Tenant
 
-	manifest, err := LoadManifestWith(manifestPath, LoadOptions{Secrets: secrets})
+	manifest, err := LoadManifestsWith(manifestPaths, LoadOptions{Secrets: secrets})
 	// Values generated while loading are saved even when the run fails later,
 	// since they may already have been used (e.g. as a user's password)
 	defer func() {
@@ -175,7 +183,9 @@ func runSync(opts *runOptions, args []string) (err error) {
 	fmt.Println("║        Tenant Sync for Cumulocity        ║")
 	fmt.Println("╚══════════════════════════════════════════╝")
 	fmt.Println()
-	fmt.Printf("📄 Manifest: %s\n", manifestPath)
+	for _, path := range manifestPaths {
+		fmt.Printf("📄 Manifest: %s\n", path)
+	}
 	for _, file := range manifest.IncludedFiles {
 		fmt.Printf("   includes %s\n", file)
 	}

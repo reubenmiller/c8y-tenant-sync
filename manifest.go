@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -945,16 +946,27 @@ func LoadManifest(path string) (*Manifest, error) {
 // LoadManifestWith reads a manifest like LoadManifest, with generated values
 // from opts.Secrets
 func LoadManifestWith(path string, opts LoadOptions) (*Manifest, error) {
-	abs, err := filepath.Abs(path)
+	return LoadManifestsWith([]string{path}, opts)
+}
+
+// LoadManifestsWith reads one or more manifests and merges them in order,
+// like files included in that order (later files win). Relative paths are
+// resolved against the directory of the first manifest.
+func LoadManifestsWith(paths []string, opts LoadOptions) (*Manifest, error) {
+	if len(paths) == 0 {
+		return nil, errors.New("no manifest file given")
+	}
+	abs, err := filepath.Abs(paths[0])
 	if err != nil {
 		return nil, err
 	}
 	loader := &manifestLoader{
-		opts:    opts,
-		rootDir: filepath.Dir(abs),
-		loaded:  map[string]bool{},
+		opts:     opts,
+		rootDir:  filepath.Dir(abs),
+		rootFile: abs,
+		loaded:   map[string]bool{},
 	}
-	manifest, err := loader.load(path, nil)
+	manifest, err := loader.loadAll(paths)
 	if err != nil {
 		return nil, err
 	}

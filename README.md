@@ -98,6 +98,9 @@ More examples:
 # Only sync specific sections
 c8y tenant-sync run -f tenant.yaml --only firmware,deviceProfiles
 
+# Merge several manifests in order (later files win; see "Composing manifests")
+c8y tenant-sync run -f base.yaml -f prod.yaml --dry-run
+
 # Replace existing version binaries (instead of skipping existing versions)
 c8y tenant-sync run -f tenant.yaml --force
 
@@ -348,6 +351,22 @@ Rules:
   - `hooks.pre` and `hooks.post` are concatenated, and so are the `pre` and `post` hooks of each section in `hooks.sections`.
 
 Duplicates within a single file are still validation errors, so a duplicate is only resolved by the "later wins" rule when the definitions come from different files. `include` only applies to `validate` and `run`; `export` writes a single file.
+
+#### Several manifests on the command line
+
+`run` and `validate` also accept several manifests, as repeated `-f` flags or as arguments (not both in one call):
+
+```bash
+c8y tenant-sync run -f base.yaml -f prod.yaml --dry-run
+c8y tenant-sync validate base.yaml customer-a.yaml
+```
+
+The files are merged in the given order with the same rules as `include`: each file is merged with its own includes first, and later files win. A file given twice, or already included by an earlier file, is merged once. Relative paths, hooks and commands of each file use that file's directory. The default secrets file belongs to the first manifest (`base.yaml` → `base.secrets.yaml`), and the run header lists every manifest. Repeated `-f` values are not split on commas, so file names may contain commas.
+
+When to use which:
+
+- Use `include` when a manifest always needs its base, e.g. `prod.yaml` is never applied without `base/common.yaml`. The composition is then part of the reviewed file, and `run -f prod.yaml` is enough.
+- Use several files on the command line to combine independent manifests per call, e.g. a CI job which applies `base.yaml` with a different customer file for each tenant, or a local overlay file which is not committed.
 
 ### Sources
 

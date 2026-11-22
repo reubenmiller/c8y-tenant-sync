@@ -82,17 +82,19 @@ func (IncludeSpec) JSONSchema() *jsonschema.Schema {
 // manifestLoader loads a manifest with its includes
 type manifestLoader struct {
 	opts LoadOptions
-	// rootDir is the absolute directory of the main manifest, which relative
-	// source paths are resolved against at run time
+	// rootDir is the absolute directory of the main (first) manifest, which
+	// relative source paths are resolved against at run time
 	rootDir string
+	// rootFile is the absolute path of the main (first) manifest
+	rootFile string
 	// loaded holds the absolute paths of the files loaded so far. A file
 	// which is reached more than once (e.g. a shared base included by two
 	// files) is merged only once, at its first position
 	loaded map[string]bool
 	// files are the included files in load order (for display)
 	files []string
-	// labelRoot prefixes errors of the main manifest with its name (when it
-	// has includes)
+	// labelRoot prefixes errors of the manifests given on the command line
+	// with their name (when there are several or the first has includes)
 	labelRoot bool
 }
 
@@ -105,9 +107,39 @@ func (l *manifestLoader) displayPath(abs string) string {
 	return abs
 }
 
+// loadAll loads the manifests given on the command line and merges them in
+// order, so later files win (like files included in that order). A file
+// given more than once, or already included by an earlier file, is merged
+// once.
+func (l *manifestLoader) loadAll(paths []string) (*Manifest, error) {
+	if len(paths) > 1 {
+		l.labelRoot = true
+	}
+	merged := &Manifest{}
+	for _, path := range paths {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		if l.loaded[abs] {
+			continue
+		}
+		manifest, err := l.load(path, nil)
+		if err != nil {
+			return nil, err
+		}
+		if len(paths) == 1 {
+			return manifest, nil
+		}
+		merged = mergeManifests(merged, manifest)
+	}
+	return merged, nil
+}
+
 // load reads, expands, parses and validates one manifest file, then merges
 // its includes (first, in order) with its own content (last). chain holds
-// the absolute paths of the including files, for cycle detection.
+// the absolute paths of the including files, for cycle detection; it is
+// empty for the files given on the command line.
 func (l *manifestLoader) load(path string, chain []string) (*Manifest, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -162,7 +194,7 @@ func (l *manifestLoader) load(path string, chain []string) (*Manifest, error) {
 	}
 
 	dir := filepath.Dir(abs)
-	if !isRoot {
+	if abs != l.rootFile {
 		own.rebase(dir, l.rootDir)
 	}
 

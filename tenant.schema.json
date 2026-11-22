@@ -184,6 +184,38 @@
         "configurationType"
       ]
     },
+    "DeviceGroupSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the device group; identifies the group among the groups of its parent (or among the root groups)",
+          "examples": [
+            "Europe"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the device group (left alone when omitted)"
+        },
+        "fragments": {
+          "type": "object",
+          "description": "Additional fragments merged into the group managed object (updated when the existing value does not contain the desired values)"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/DeviceGroupSpec"
+          },
+          "type": "array",
+          "description": "Child groups linked to this group as child assets"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
     "DeviceProfileSpec": {
       "properties": {
         "name": {
@@ -1240,6 +1272,13 @@
       },
       "type": "array",
       "description": "Applications to subscribe to the current tenant (optionally created/uploaded from a source)"
+    },
+    "deviceGroups": {
+      "items": {
+        "$ref": "#/$defs/DeviceGroupSpec"
+      },
+      "type": "array",
+      "description": "Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"
     },
     "userGroups": {
       "items": {

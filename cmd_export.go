@@ -30,6 +30,7 @@ var ExportSections = []string{
 	SectionRetentionRules,
 	SectionCertificateAuthority,
 	SectionApplications,
+	SectionDeviceGroups,
 }
 
 // exportOptions holds the flags of the export command
@@ -58,6 +59,8 @@ Exported sections: ` + strings.Join(ExportSections, ", ") + `.
 - certificateAuthority: the state of the Cumulocity CA, if the tenant has one
 - applications: applications the tenant is subscribed to but does not own (by default
   microservices; use --application-type to change)
+- deviceGroups: the tree of device groups with name and description (other fragments
+  and the devices in the groups are not exported)
 
 Review the manifest before applying it to other tenants.`,
 		Example: formatExamples(
@@ -192,6 +195,10 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 		{SectionRetentionRules, func() (err error) { manifest.RetentionRules, err = e.retentionRules(ctx); return }},
 		{SectionCertificateAuthority, func() (err error) { manifest.CertificateAuthority, err = e.certificateAuthority(ctx); return }},
 		{SectionApplications, func() (err error) { manifest.Applications, err = e.applications(ctx, tenantID); return }},
+		{SectionDeviceGroups, func() (err error) {
+			manifest.DeviceGroups, err = listDeviceGroupTree(ctx, e.Client.DeviceGroups)
+			return
+		}},
 	}
 	for _, step := range steps {
 		if !e.enabled(step.section) {

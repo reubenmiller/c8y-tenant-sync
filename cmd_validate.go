@@ -72,6 +72,7 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 	printSectionCount(SectionTrustedCertificates, len(manifest.TrustedCertificates))
 	printSectionCount(SectionCertificateRevocations, len(manifest.CertificateRevocationLists))
 	printSectionCount(SectionApplications, len(manifest.Applications))
+	printSectionCount(SectionDeviceGroups, len(manifest.DeviceGroups))
 	printSectionCount(SectionUserGroups, len(manifest.UserGroups))
 	printSectionCount(SectionInventoryRoles, len(manifest.InventoryRoles))
 	printSectionCount(SectionUsers, len(manifest.Users))

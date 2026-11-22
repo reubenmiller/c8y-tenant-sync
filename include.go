@@ -332,8 +332,9 @@ func (m *Manifest) rebase(dir, rootDir string) {
 // mergeManifests merges over into base and returns the result:
 //   - list sections are concatenated (base first)
 //   - entries with an identity (tenant option category+key, feature key,
-//     retention rule selector, application name, user group name, user
-//     name, device profile name, command group name) replace an entry with
+//     retention rule selector, application name, root device group name
+//     (the whole tree is replaced), user group name, inventory role name,
+//     user name, device profile name, command group name) replace an entry with
 //     the same identity in base, at its position (the later definition wins)
 //   - entries without an identity (trusted certificates, revocation lists,
 //     software, firmware, configuration, SmartREST templates) are all kept
@@ -361,7 +362,9 @@ func mergeManifests(base, over *Manifest) *Manifest {
 	out.Features = mergeByKey(base.Features, over.Features, func(f FeatureSpec) string { return f.Key })
 	out.RetentionRules = mergeByKey(base.RetentionRules, over.RetentionRules, RetentionRuleSpec.Selector)
 	out.Applications = mergeByKey(base.Applications, over.Applications, func(a ApplicationSpec) string { return a.Name })
+	out.DeviceGroups = mergeByKey(base.DeviceGroups, over.DeviceGroups, func(g DeviceGroupSpec) string { return g.Name })
 	out.UserGroups = mergeByKey(base.UserGroups, over.UserGroups, func(g UserGroupSpec) string { return g.Name })
+	out.InventoryRoles = mergeByKey(base.InventoryRoles, over.InventoryRoles, func(r InventoryRoleSpec) string { return r.Name })
 	out.Users = mergeByKey(base.Users, over.Users, func(u UserSpec) string { return u.Username })
 	out.DeviceProfiles = mergeByKey(base.DeviceProfiles, over.DeviceProfiles, func(p DeviceProfileSpec) string { return p.Name })
 	out.Commands = mergeByKey(base.Commands, over.Commands, func(c CommandGroupSpec) string { return c.Name })

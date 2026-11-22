@@ -115,6 +115,35 @@ func manifestPathFromArgs(flagValue string, args []string) (string, error) {
 	}
 }
 
+// manifestPathsFromArgs returns the manifest paths of run and validate: the
+// repeatable -f flag or the positional arguments (not both), defaulting to
+// tenant.yaml. Values are not split on commas, since filenames may contain
+// them.
+func manifestPathsFromArgs(flagValues []string, args []string) ([]string, error) {
+	if len(flagValues) > 0 && len(args) > 0 {
+		return nil, fmt.Errorf("specify the manifests either with -f or as arguments, not both")
+	}
+	paths := flagValues
+	if len(paths) == 0 {
+		paths = args
+	}
+	if len(paths) == 0 {
+		return []string{"tenant.yaml"}, nil
+	}
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			return nil, fmt.Errorf("manifest path must not be empty")
+		}
+	}
+	return paths, nil
+}
+
+// completeManifestFileList completes YAML files for every manifest argument
+// (commands which accept several manifests)
+func completeManifestFileList(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return []string{"yaml", "yml"}, cobra.ShellCompDirectiveFilterFileExt
+}
+
 // completeManifestFiles completes YAML files for the manifest argument
 func completeManifestFiles(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {

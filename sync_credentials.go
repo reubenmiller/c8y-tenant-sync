@@ -27,6 +27,7 @@ var sectionServiceUserRoles = map[string][]string{
 	// (valueFrom.application) and device IDs (valueFrom.device)
 	"common": {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_APPLICATION_MANAGEMENT_READ", "ROLE_INVENTORY_READ"},
 
+	SectionTenants:                nil, // base credentials, before the targets
 	SectionTenantOptions:          {"ROLE_OPTION_MANAGEMENT_READ", "ROLE_OPTION_MANAGEMENT_ADMIN"},
 	SectionFeatures:               nil, // base credentials
 	SectionRetentionRules:         {"ROLE_RETENTION_RULE_READ", "ROLE_RETENTION_RULE_ADMIN"},

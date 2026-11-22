@@ -32,13 +32,16 @@ type Manifest struct {
 	TrustedCertificates        []TrustedCertificateSpec        `yaml:"trustedCertificates" json:"trustedCertificates,omitempty" jsonschema:"description=Trusted device certificates (PEM/DER) to upload into the tenant trust store (matched by fingerprint; name/status/autoRegistrationEnabled updated when they differ)"`
 	CertificateRevocationLists []CertificateRevocationListSpec `yaml:"certificateRevocationLists" json:"certificateRevocationLists,omitempty" jsonschema:"description=Certificate revocation entries to upload from CSV files (columns SERIALNO and optional DATE); additive: existing entries are never removed"`
 
-	Applications  []ApplicationSpec   `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Applications to subscribe to the current tenant (optionally created/uploaded from a source)"`
-	DeviceGroups  []DeviceGroupSpec   `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
-	UserGroups    []UserGroupSpec     `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
-	Users         []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and assign to user groups (additive: existing memberships are never removed)"`
-	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
-	Firmware      []FirmwareSpec      `yaml:"firmware" json:"firmware,omitempty" jsonschema:"description=Firmware (OS images) to sync into the firmware repository"`
-	Configuration []ConfigurationSpec `yaml:"configuration" json:"configuration,omitempty" jsonschema:"description=Configuration files to sync into the configuration repository"`
+	Applications []ApplicationSpec `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Applications to subscribe to the current tenant (optionally created/uploaded from a source)"`
+	DeviceGroups []DeviceGroupSpec `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
+	UserGroups   []UserGroupSpec   `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
+	// InventoryRoles are permission sets which users get on specific device
+	// groups through users[].inventoryAssignments
+	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"`
+	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and assign to user groups (additive: existing memberships are never removed)"`
+	Software       []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
+	Firmware       []FirmwareSpec      `yaml:"firmware" json:"firmware,omitempty" jsonschema:"description=Firmware (OS images) to sync into the firmware repository"`
+	Configuration  []ConfigurationSpec `yaml:"configuration" json:"configuration,omitempty" jsonschema:"description=Configuration files to sync into the configuration repository"`
 
 	SmartRestTemplates []SmartRestTemplateSpec `yaml:"smartrestTemplates" json:"smartrestTemplates,omitempty" jsonschema:"description=SmartREST 2.0 template collections to sync from exported JSON files (one collection per file)"`
 
@@ -417,6 +420,72 @@ type UserSpec struct {
 	// Groups lists user group names the user is assigned to. Missing
 	// memberships are added; memberships not listed are never removed.
 	Groups []string `yaml:"groups" json:"groups,omitempty" jsonschema:"description=User group names the user is assigned to (additive; memberships not listed are never removed),example=operators"`
+
+	// InventoryAssignments give the user inventory roles on device groups.
+	// Missing roles are added; roles and assignments not listed are never
+	// removed.
+	InventoryAssignments []InventoryAssignmentSpec `yaml:"inventoryAssignments" json:"inventoryAssignments,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"`
+}
+
+// InventoryRoleScopes are the scopes of inventory role permissions
+var InventoryRoleScopes = []string{"ALARM", "AUDIT", "EVENT", "MANAGED_OBJECT", "MEASUREMENT", "OPERATION", "*"}
+
+// InventoryRolePermissionLevels are the levels of inventory role permissions.
+// ALL is an alias of "*" (the name used in the Cumulocity UI).
+var InventoryRolePermissionLevels = []string{"READ", "ADMIN", "*", "ALL"}
+
+// InventoryRoleSpec ensures an inventory role exists with the given
+// description and permissions. The role is matched by name; its permissions
+// are replaced when the set differs from the manifest (the manifest owns the
+// role definition).
+type InventoryRoleSpec struct {
+	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the inventory role (used to match an existing role),example=Site operator"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the inventory role (only updated when set)"`
+
+	// Permissions is the full set of permissions of the role
+	Permissions []InventoryRolePermissionSpec `yaml:"permissions" json:"permissions,omitempty" jsonschema:"description=Permissions of the role (compared as a set; the role is updated when the set differs)"`
+}
+
+// InventoryRolePermissionSpec is a single permission of an inventory role,
+// e.g. ADMIN on operations of type c8y_Restart
+type InventoryRolePermissionSpec struct {
+	Scope      string `yaml:"scope" json:"scope" jsonschema:"description=Data the permission applies to,enum=ALARM,enum=AUDIT,enum=EVENT,enum=MANAGED_OBJECT,enum=MEASUREMENT,enum=OPERATION,enum=*"`
+	Type       string `yaml:"type" json:"type,omitempty" jsonschema:"description=Restrict the permission to a type or fragment name (defaults to *),example=c8y_Restart"`
+	Permission string `yaml:"permission" json:"permission" jsonschema:"description=Permission level (ALL is an alias of *),enum=READ,enum=ADMIN,enum=*,enum=ALL"`
+}
+
+// Normalized returns the permission with defaults applied: type "*" and
+// ALL written as "*"
+func (p InventoryRolePermissionSpec) Normalized() InventoryRolePermissionSpec {
+	out := InventoryRolePermissionSpec{
+		Scope:      strings.TrimSpace(p.Scope),
+		Type:       strings.TrimSpace(p.Type),
+		Permission: strings.TrimSpace(p.Permission),
+	}
+	if out.Type == "" {
+		out.Type = "*"
+	}
+	if out.Permission == "ALL" {
+		out.Permission = "*"
+	}
+	return out
+}
+
+// Key identifies the permission for set comparison
+func (p InventoryRolePermissionSpec) Key() string {
+	n := p.Normalized()
+	return n.Scope + ":" + n.Type + ":" + n.Permission
+}
+
+// InventoryAssignmentSpec gives a user inventory roles on a device group
+type InventoryAssignmentSpec struct {
+	// Group is the device group name, or a path of group names separated by
+	// "/" (e.g. Europe/Plant Berlin)
+	Group string `yaml:"group" json:"group" jsonschema:"description=Device group name or a path of group names separated by / (e.g. Europe/Plant Berlin); the name must match exactly one group,example=Plant Berlin"`
+
+	// Roles are inventory role names; roles not declared in the manifest
+	// must exist in the tenant
+	Roles []string `yaml:"roles" json:"roles" jsonschema:"description=Inventory role names the user gets on the group (declared in inventoryRoles or existing in the tenant),example=Site operator"`
 }
 
 func (u UserSpec) IsEnabled() bool {
@@ -1116,6 +1185,33 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
+	roleNames := make(map[string]bool, len(m.InventoryRoles))
+	for i, role := range m.InventoryRoles {
+		if strings.TrimSpace(role.Name) == "" {
+			errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: name is required", i))
+		} else if roleNames[role.Name] {
+			errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: duplicate inventory role name %q", i, role.Name))
+		}
+		roleNames[role.Name] = true
+		permissionKeys := make(map[string]bool, len(role.Permissions))
+		for j, permission := range role.Permissions {
+			prefix := fmt.Sprintf("inventoryRoles[%d].permissions[%d]", i, j)
+			if permission.Scope == "" {
+				errs = append(errs, prefix+": scope is required")
+			} else if !slices.Contains(InventoryRoleScopes, permission.Scope) {
+				errs = append(errs, fmt.Sprintf("%s: unknown scope %q: supported values are %s", prefix, permission.Scope, strings.Join(InventoryRoleScopes, ", ")))
+			}
+			if permission.Permission == "" {
+				errs = append(errs, prefix+": permission is required")
+			} else if !slices.Contains(InventoryRolePermissionLevels, permission.Permission) {
+				errs = append(errs, fmt.Sprintf("%s: unknown permission %q: supported values are %s", prefix, permission.Permission, strings.Join(InventoryRolePermissionLevels, ", ")))
+			}
+			if permissionKeys[permission.Key()] {
+				errs = append(errs, fmt.Sprintf("%s: duplicate permission %s", prefix, permission.Key()))
+			}
+			permissionKeys[permission.Key()] = true
+		}
+	}
 	usernames := make(map[string]bool, len(m.Users))
 	for i, user := range m.Users {
 		if user.PasswordFrom != nil {
@@ -1136,6 +1232,27 @@ func (m *Manifest) Validate() error {
 		for j, group := range user.Groups {
 			if strings.TrimSpace(group) == "" {
 				errs = append(errs, fmt.Sprintf("users[%d].groups[%d]: group must not be empty", i, j))
+			}
+		}
+		assignedGroups := make(map[string]bool, len(user.InventoryAssignments))
+		for j, assignment := range user.InventoryAssignments {
+			prefix := fmt.Sprintf("users[%d].inventoryAssignments[%d]", i, j)
+			group := strings.TrimSpace(assignment.Group)
+			if group == "" {
+				errs = append(errs, prefix+": group is required")
+			} else if slices.Contains(splitGroupPath(group), "") {
+				errs = append(errs, fmt.Sprintf("%s: invalid group path %q: empty group name", prefix, assignment.Group))
+			} else if assignedGroups[group] {
+				errs = append(errs, fmt.Sprintf("%s: duplicate group %q (list all roles of a group in one entry)", prefix, assignment.Group))
+			}
+			assignedGroups[group] = true
+			if len(assignment.Roles) == 0 {
+				errs = append(errs, prefix+": at least one role is required")
+			}
+			for k, role := range assignment.Roles {
+				if strings.TrimSpace(role) == "" {
+					errs = append(errs, fmt.Sprintf("%s.roles[%d]: role must not be empty", prefix, k))
+				}
 			}
 		}
 	}

@@ -39,15 +39,27 @@ func (s *Syncer) SyncTenants(ctx context.Context, specs []ChildTenantSpec) error
 		return err
 	}
 	byDomain := make(map[string]jsonmodels.Tenant, len(children))
+	byID := make(map[string]jsonmodels.Tenant, len(children))
 	for _, child := range children {
 		byDomain[strings.ToLower(child.Domain())] = child
+		byID[strings.ToLower(child.ID())] = child
 	}
 
 	for _, spec := range specs {
 		existing, found := byDomain[strings.ToLower(strings.TrimSpace(spec.Domain))]
-		if found {
+		switch {
+		case found && spec.ID != "" && !strings.EqualFold(existing.ID(), spec.ID):
+			// The tenant ID can never be changed
+			s.record(SectionTenants, spec.Domain, ActionFailed, "id: "+existing.ID(),
+				fmt.Errorf("the tenant with this domain has the id %q, not %q (a tenant id cannot be changed)", existing.ID(), spec.ID))
+		case found:
 			s.updateChildTenant(ctx, spec, existing)
-		} else {
+		default:
+			if other, taken := byID[strings.ToLower(spec.ID)]; spec.ID != "" && taken {
+				s.record(SectionTenants, spec.Domain, ActionFailed, "create tenant",
+					fmt.Errorf("the id %q is already used by the tenant with the domain %q (a tenant domain is not changed)", spec.ID, other.Domain()))
+				continue
+			}
 			s.createChildTenant(ctx, spec)
 		}
 	}
@@ -57,6 +69,9 @@ func (s *Syncer) SyncTenants(ctx context.Context, specs []ChildTenantSpec) error
 // childTenantPlan describes the planned work for a dry run
 func childTenantPlan(spec ChildTenantSpec) string {
 	detail := "create if missing, otherwise update company, contact and custom properties when they differ"
+	if spec.ID != "" {
+		detail = "create with id " + spec.ID + " if missing, otherwise update company, contact and custom properties when they differ"
+	}
 	if len(spec.Applications) > 0 {
 		detail += "; subscribe: " + strings.Join(spec.Applications, ", ")
 	}
@@ -182,6 +197,9 @@ func childTenantCreateBody(spec ChildTenantSpec) map[string]any {
 	body := map[string]any{
 		"domain":  strings.TrimSpace(spec.Domain),
 		"company": spec.Company,
+	}
+	if spec.ID != "" {
+		body["id"] = spec.ID
 	}
 	for key, value := range map[string]string{
 		"adminName":    spec.AdminName,

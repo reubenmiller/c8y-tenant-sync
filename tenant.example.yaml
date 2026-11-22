@@ -47,6 +47,7 @@
 # select a tenant created in the same run.
 # tenants:
 #   - domain: customer-a.eu-latest.cumulocity.com   # unique key: the full domain
+#     id: customer-a                                  # optional tenant ID (generated when omitted)
 #     company: Customer A
 #     adminName: admin
 #     adminEmail: admin@customer-a.example.com

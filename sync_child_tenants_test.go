@@ -47,8 +47,13 @@ func fakeChildTenants(t *testing.T, apps []fakeApp, existing ...map[string]any) 
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		store.mu.Lock()
 		defer store.mu.Unlock()
-		tenant := map[string]any{"id": "t" + strconv.Itoa(store.nextID), "domain": body["domain"], "company": body["company"]}
-		store.nextID++
+		id, ok := body["id"].(string)
+		if !ok {
+			// The platform generates the ID when the request has none
+			id = "t" + strconv.Itoa(store.nextID)
+			store.nextID++
+		}
+		tenant := map[string]any{"id": id, "domain": body["domain"], "company": body["company"]}
 		store.tenants = append(store.tenants, tenant)
 		writeJSON(w, http.StatusCreated, tenant)
 	})
@@ -158,6 +163,91 @@ func TestChildTenantCreateRequirements(t *testing.T) {
 	assert.Equal(t, ActionFailed, r.Action)
 	assert.ErrorContains(t, r.Err, "creating it requires company and one of adminPass, adminPasswordFrom or sendPasswordResetEmail")
 	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants"))
+}
+
+func TestChildTenantCreateWithID(t *testing.T) {
+	f, _ := fakeChildTenants(t, builtinApps())
+	s := newFakeSyncer(t, f)
+
+	require.NoError(t, s.SyncTenants(context.Background(), []ChildTenantSpec{{
+		ID:                     "customer-a",
+		Domain:                 customerDomain,
+		Company:                "Customer A",
+		AdminEmail:             "admin@customer-a.example.invalid",
+		SendPasswordResetEmail: true,
+	}}))
+	r := resultFor(t, s, SectionTenants)
+	require.NoError(t, r.Err)
+	assert.Equal(t, ActionCreated, r.Action)
+	assert.Equal(t, "created: customer-a; password reset email sent to the admin", r.Detail)
+	created := f.Requests(http.MethodPost, "/tenant/tenants")
+	require.Len(t, created, 1)
+	assert.Equal(t, "customer-a", created[0].Body["id"])
+}
+
+func TestChildTenantCreateWithoutIDLeavesItToThePlatform(t *testing.T) {
+	f, _ := fakeChildTenants(t, builtinApps())
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncTenants(context.Background(), []ChildTenantSpec{{
+		Domain: customerDomain, Company: "Customer A", AdminPass: "Secret-Pass-123",
+	}}))
+	created := f.Requests(http.MethodPost, "/tenant/tenants")
+	require.Len(t, created, 1)
+	assert.NotContains(t, created[0].Body, "id")
+	assert.Equal(t, "created: t456", resultFor(t, s, SectionTenants).Detail)
+}
+
+func TestChildTenantExistingWithSameID(t *testing.T) {
+	f, _ := fakeChildTenants(t, builtinApps(), existingCustomerTenant())
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncTenants(context.Background(), []ChildTenantSpec{{
+		ID: "T456", Domain: customerDomain, Company: "Customer A",
+	}}))
+	r := resultFor(t, s, SectionTenants)
+	assert.Equal(t, ActionUnchanged, r.Action, "the id matches case-insensitively")
+}
+
+func TestChildTenantExistingWithOtherIDFails(t *testing.T) {
+	f, _ := fakeChildTenants(t, builtinApps(), existingCustomerTenant())
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncTenants(context.Background(), []ChildTenantSpec{{
+		ID: "customer-a", Domain: customerDomain, Company: "Customer A (renamed)",
+	}}))
+	r := resultFor(t, s, SectionTenants)
+	assert.Equal(t, ActionFailed, r.Action)
+	assert.ErrorContains(t, r.Err, `the tenant with this domain has the id "t456", not "customer-a" (a tenant id cannot be changed)`)
+	assert.Empty(t, f.Requests(http.MethodPut, "/tenant/tenants/t456"), "nothing is updated")
+}
+
+func TestChildTenantIDUsedByOtherDomainFails(t *testing.T) {
+	f, _ := fakeChildTenants(t, builtinApps(), existingCustomerTenant())
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncTenants(context.Background(), []ChildTenantSpec{{
+		ID: "t456", Domain: "customer-b.example.invalid", Company: "Customer B", AdminPass: "Secret-Pass-123",
+	}}))
+	r := resultFor(t, s, SectionTenants)
+	assert.Equal(t, ActionFailed, r.Action)
+	assert.ErrorContains(t, r.Err, `the id "t456" is already used by the tenant with the domain "`+customerDomain+`"`)
+	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants"))
+}
+
+func TestChildTenantIDValidation(t *testing.T) {
+	_, err := LoadManifest(writeManifest(t, `
+tenants:
+  - id: customer.a
+    domain: a.example.invalid
+  - id: dup
+    domain: b.example.invalid
+  - id: DUP
+    domain: c.example.invalid
+  - id: "with space"
+    domain: d.example.invalid
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `tenants[0]: id "customer.a" must not contain spaces, dots, colons or slashes`)
+	assert.Contains(t, err.Error(), `tenants[2]: duplicate id "DUP"`)
+	assert.Contains(t, err.Error(), `tenants[3]: id "with space" must not contain`)
+	assert.NotContains(t, err.Error(), "tenants[1]")
 }
 
 func TestChildTenantExistingUnchanged(t *testing.T) {

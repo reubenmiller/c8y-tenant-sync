@@ -166,7 +166,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--include-current` | | Also include the current tenant when other target flags are used |
 | `--secrets-file` | `<manifest>.secrets.yaml` | File which stores the values of `${generate:NAME}` references, see [Generated values](#generated-values) |
 | `--secrets-encryption` | `auto` | Encrypt the secrets file with sops: `auto` (when sops and a `.sops.yaml` are found), `sops` (required) or `none` |
-| `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser` or `sessions` (overrides the manifest) |
+| `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser`, `sessions` or `tenantAdmin` (overrides the manifest) |
 | `--report` | | Write a report of the run to a file (`.json` or `.md`); repeatable. `github` appends the Markdown report to `$GITHUB_STEP_SUMMARY`. See [Run reports](#run-reports) |
 | `--report-format` | *(from the extension)* | Format of the `--report` files: `json` or `markdown` |
 | `--github-summary` | `true` | Inside GitHub Actions, append the Markdown report to the step summary; `--github-summary=false` turns it off. No effect elsewhere |
@@ -909,6 +909,7 @@ targets:
   - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (user groups, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
   - **Existing subscriptions.** A tenant's service user gets its roles when the tenant is subscribed. When the service user of a target lacks a required role (e.g. the tenant was subscribed by an older version), the tool subscribes the application to that tenant again, which creates a new service user with the current roles.
 - **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported — the run fails with a clear error listing tenants without a matching session.
+- **`tenantAdmin`** logs in to each target with the admin credentials of its entry in the [`tenants`](#provision-child-tenants) section: `adminName` and the admin password (`adminPass`, an `env` reference, or a generated value from the secrets file). It needs no placeholder microservice and no session files, so it suits tenants which this tool creates and manages, e.g. from a CI runner. Targets are matched to `tenants` entries by ID and then by domain. The credentials are checked before any section runs; the run fails for a target without a matching entry, with `sendPasswordResetEmail` (the password is not known), with a password generated in this run for a tenant which already existed (the secrets file was lost), or whose admin login is rejected (the password was changed or two-factor authentication was enabled).
 
 In multi-tenant runs every result line and the hook environment (`C8Y_TENANT`, `C8Y_USERNAME`, `C8Y_PASSWORD`) are scoped to the tenant being applied:
 
@@ -975,6 +976,21 @@ c8y tenant-sync run -f customer-a.yaml
 - **Never deleted.** Tenants not in the manifest are left alone, and tenants are never deleted or suspended.
 - **Subscriptions.** `applications` are subscribed to the tenant when missing (also for existing tenants); other subscriptions are kept. Use the [`applications`](#application-subscriptions) section with `targets` to unsubscribe applications.
 - **Runs once, before the targets.** The section runs once per run with the credentials of the current tenant (not per target), before the targets are resolved. A tenant created in the run can therefore be selected by `targets` (by domain, `allChildren` or `selector`) and configured by every other section. Global hooks run per target and so after this section; `hooks.sections.tenants` runs around it.
+- **Configure tenants with their admin credentials.** With `targets.credentials.mode: tenantAdmin`, the other sections log in to each tenant as its admin, using the password from the `tenants` entry. The first run creates the tenant and configures it; later runs find the generated password in the secrets file and use it again. Keep the secrets file between runs: in CI, commit it encrypted with [sops](docs/sops.md) (remove `*.secrets.yaml` from `.gitignore` and add a `.sops.yaml` creation rule for `\.secrets\.yaml$`), and commit it back after a run which generated a value.
+
+  ```yaml
+  tenants:
+    - domain: customer-a.eu-latest.cumulocity.com
+      company: Customer A
+      adminName: admin
+      adminEmail: admin@customer-a.example.com
+      adminPasswordFrom:
+        generate: customer-a-admin
+  targets:
+    tenants: [customer-a.eu-latest.cumulocity.com]
+    credentials:
+      mode: tenantAdmin
+  ```
 - **`--only tenants`** only provisions the tenants: the targets are not resolved and no other section runs. `--only` without `tenants` skips the section.
 - Most tenants are not management or enterprise tenants: creating child tenants requires the tenant management permissions of a parent tenant. With the `sessions` [credentials mode](#target-tenants), add a go-c8y-cli session for the new tenant (matched by its domain) before the run which configures it; the default `serviceUser` mode needs no extra step.
 - `export` does not include child tenants, since they are not part of the current tenant's configuration.

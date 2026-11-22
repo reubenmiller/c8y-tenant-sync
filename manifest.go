@@ -105,6 +105,10 @@ const (
 	CredentialsModeServiceUser = "serviceUser"
 	// CredentialsModeSessions reads credentials from go-c8y-cli session files
 	CredentialsModeSessions = "sessions"
+	// CredentialsModeTenantAdmin logs in to each target with the admin
+	// credentials of its entry in the tenants section (e.g. a generated
+	// password stored in the secrets file)
+	CredentialsModeTenantAdmin = "tenantAdmin"
 )
 
 // DefaultCredentialsApplication is the name of the placeholder microservice
@@ -176,7 +180,7 @@ type TargetCredentials struct {
 	// placeholder microservice owned by the current tenant, subscribes it to
 	// each target and uses the resulting per-tenant service users; sessions
 	// reads go-c8y-cli session files.
-	Mode string `yaml:"mode" json:"mode,omitempty" jsonschema:"description=Credential source for other tenants (defaults to serviceUser),enum=serviceUser,enum=sessions"`
+	Mode string `yaml:"mode" json:"mode,omitempty" jsonschema:"description=Credential source for other tenants (defaults to serviceUser). tenantAdmin uses the admin credentials of the matching tenants entry,enum=serviceUser,enum=sessions,enum=tenantAdmin"`
 
 	// Application is the name of the placeholder microservice used in
 	// serviceUser mode (created if missing; defaults to tenant-sync)
@@ -199,10 +203,10 @@ func (t *TargetsSpec) Validate() error {
 	}
 	if t.Credentials != nil {
 		switch t.Credentials.Mode {
-		case "", CredentialsModeServiceUser, CredentialsModeSessions:
+		case "", CredentialsModeServiceUser, CredentialsModeSessions, CredentialsModeTenantAdmin:
 		default:
-			return fmt.Errorf("unknown credentials mode %q: supported modes are %s and %s",
-				t.Credentials.Mode, CredentialsModeServiceUser, CredentialsModeSessions)
+			return fmt.Errorf("unknown credentials mode %q: supported modes are %s, %s and %s",
+				t.Credentials.Mode, CredentialsModeServiceUser, CredentialsModeSessions, CredentialsModeTenantAdmin)
 		}
 	}
 	return nil

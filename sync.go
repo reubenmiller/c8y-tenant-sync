@@ -143,6 +143,11 @@ type Syncer struct {
 	// feature key (tenant ID -> active)
 	featureOverrides map[string]map[string]bool
 
+	// tenantSpecs are the child tenants of the manifest, and createdTenants
+	// the IDs of those created in this run by domain (lower case)
+	tenantSpecs    []ChildTenantSpec
+	createdTenants map[string]string
+
 	// mu guards Results and the printed output: command groups record
 	// results from concurrent goroutines
 	mu sync.Mutex
@@ -263,6 +268,9 @@ func actionFromResult(status op.Status, meta map[string]any) Action {
 // other tenants by ID from the parent); all other sections run with the
 // target tenant's own credentials.
 func (s *Syncer) Apply(ctx context.Context, manifest *Manifest, only []string) error {
+	// The tenantAdmin credentials mode logs in with the admin credentials of
+	// the tenants section, also when the section itself is not applied
+	s.tenantSpecs = manifest.Tenants
 	if sectionEnabled(only, SectionTenants) {
 		if err := s.applyChildTenants(ctx, manifest); err != nil {
 			return err

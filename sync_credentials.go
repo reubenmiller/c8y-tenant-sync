@@ -86,6 +86,8 @@ func (s *Syncer) resolveTargetCredentials(ctx context.Context, targets []Target,
 	switch spec.CredentialsMode() {
 	case CredentialsModeSessions:
 		return s.resolveSessionCredentials(targets, spec)
+	case CredentialsModeTenantAdmin:
+		return s.resolveTenantAdminCredentials(ctx, targets)
 	default:
 		return s.resolveServiceUserCredentials(ctx, targets, spec)
 	}

@@ -82,7 +82,7 @@ like files included in that order: later files win.`,
 	flags.BoolVar(&opts.allChildren, "all-children", false, "Apply to all child tenants of the current tenant (overrides the manifest targets section)")
 	flags.StringVar(&opts.targetSelector, "target-selector", "", "Apply to tenants matching criteria, e.g. domain=*.example.com,company=ACME (overrides the manifest targets section)")
 	flags.BoolVar(&opts.includeCurrent, "include-current", false, "Also include the current tenant when other target flags are used")
-	flags.StringVar(&opts.credentialsMode, "credentials-mode", "", "How credentials for other tenants are obtained: "+CredentialsModeServiceUser+" or "+CredentialsModeSessions+" (overrides the manifest)")
+	flags.StringVar(&opts.credentialsMode, "credentials-mode", "", "How credentials for other tenants are obtained: "+CredentialsModeServiceUser+", "+CredentialsModeSessions+" or "+CredentialsModeTenantAdmin+" (overrides the manifest)")
 	flags.StringVar(&opts.secretsFile, "secrets-file", "", "File which stores the values of ${generate:NAME} references (default: <manifest>.secrets.yaml)")
 	flags.StringVar(&opts.secretsEncryption, "secrets-encryption", string(SecretsEncryptionAuto), "Encrypt the secrets file with sops: auto (when sops and a .sops.yaml are found), sops (required) or none")
 	flags.StringArrayVar(&opts.reports, "report", nil, "Write a report of the run to a file (.json or .md); repeatable. \""+ReportGitHub+"\" appends Markdown to $"+EnvGitHubStepSummary)
@@ -99,7 +99,7 @@ like files included in that order: later files win.`,
 	_ = cmd.RegisterFlagCompletionFunc("secrets-file", completeManifestFiles)
 	_ = cmd.RegisterFlagCompletionFunc("report-format", cobra.FixedCompletions(ReportFormats, cobra.ShellCompDirectiveNoFileComp))
 	_ = cmd.RegisterFlagCompletionFunc("credentials-mode", cobra.FixedCompletions(
-		[]string{CredentialsModeServiceUser, CredentialsModeSessions}, cobra.ShellCompDirectiveNoFileComp))
+		[]string{CredentialsModeServiceUser, CredentialsModeSessions, CredentialsModeTenantAdmin}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 

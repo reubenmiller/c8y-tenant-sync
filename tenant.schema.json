@@ -1018,9 +1018,10 @@
           "type": "string",
           "enum": [
             "serviceUser",
-            "sessions"
+            "sessions",
+            "tenantAdmin"
           ],
-          "description": "Credential source for other tenants (defaults to serviceUser)"
+          "description": "Credential source for other tenants (defaults to serviceUser). tenantAdmin uses the admin credentials of the matching tenants entry"
         },
         "application": {
           "type": "string",

@@ -99,6 +99,10 @@ func (s *Syncer) createChildTenant(ctx context.Context, spec ChildTenantSpec) {
 		return
 	}
 	tenantID := created.Data.ID()
+	if s.createdTenants == nil {
+		s.createdTenants = map[string]string{}
+	}
+	s.createdTenants[strings.ToLower(strings.TrimSpace(spec.Domain))] = tenantID
 
 	details := []string{"created: " + tenantID}
 	if name, ok := s.generatedName(spec.AdminPass); ok {

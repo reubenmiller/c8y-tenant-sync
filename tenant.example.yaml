@@ -35,7 +35,7 @@
 #     domain: "*.iot.example.com" # glob matched against the tenant domain
 #     company: ACME               # exact company name
 #   credentials:
-#     mode: serviceUser           # serviceUser (default) | sessions
+#     mode: serviceUser           # serviceUser (default) | sessions | tenantAdmin (admin credentials of the tenants section)
 #     application: tenant-sync    # placeholder microservice name (serviceUser mode)
 
 # Provision child tenants from a management or enterprise tenant (most tenants

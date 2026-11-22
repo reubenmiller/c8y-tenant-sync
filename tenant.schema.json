@@ -388,35 +388,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "IncludeSpec": {
-      "oneOf": [
-        {
-          "type": "string",
-          "examples": [
-            "base.yaml",
-            "common/*.yaml"
-          ]
-        },
-        {
-          "properties": {
-            "path": {
-              "type": "string",
-              "description": "File path or glob pattern (*, ?, [...]) relative to the directory of the including file"
-            },
-            "optional": {
-              "type": "boolean",
-              "description": "Skip the entry instead of failing when the file does not exist or the glob pattern matches nothing"
-            }
-          },
-          "additionalProperties": false,
-          "type": "object",
-          "required": [
-            "path"
-          ]
-        }
-      ],
-      "description": "Manifest file path or glob pattern relative to the including file, or an object with path and optional"
-    },
     "ProfileConfigurationRef": {
       "properties": {
         "name": {
@@ -786,7 +757,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Local file or directory (relative paths are resolved against the directory of the manifest file which declares it)"
+          "description": "Local file or directory (relative paths are resolved against the manifest directory)"
         },
         "patterns": {
           "items": {
@@ -1184,13 +1155,6 @@
     }
   },
   "properties": {
-    "include": {
-      "items": {
-        "$ref": "#/$defs/IncludeSpec"
-      },
-      "type": "array",
-      "description": "Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or user group name) and the targets and certificateAuthority sections of a later file replace earlier ones"
-    },
     "targets": {
       "$ref": "#/$defs/TargetsSpec",
       "description": "Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"

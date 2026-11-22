@@ -9,18 +9,6 @@
 # Environment variables are expanded with ${VAR} syntax before parsing,
 # so secrets (e.g. GitHub tokens) can be injected from the environment.
 
-# Merge other manifest files before this file's content: paths or glob
-# patterns relative to this file. List sections are concatenated (includes
-# first); entries with the same identity (e.g. tenant option category+key,
-# user group name) and the targets and certificateAuthority sections of a
-# later file replace earlier ones. Relative source paths in an included file
-# are resolved against that file's directory.
-# include:
-#   - base/common.yaml                    # a missing file is an error
-#   - path: "customers/*.yaml"            # glob matches are merged sorted by name
-#   - path: local-overrides.yaml
-#     optional: true                      # skip when missing / nothing matches
-
 # Apply the manifest to other tenants than the current one. Selection modes
 # are additive (union of all matches) and overridable on the command line
 # (--target, --all-children, --target-selector, --include-current).

@@ -3,64 +3,49 @@ package main
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 func newValidateCmd() *cobra.Command {
-	var manifestFlags []string
+	var manifestFlag string
 	var checkSources, verbose bool
 	cmd := &cobra.Command{
-		Use:   "validate [manifest.yaml...]",
+		Use:   "validate [manifest.yaml]",
 		Short: "Validate a manifest file",
 		Long: `Validate a manifest file without connecting to Cumulocity.
 
 Unknown fields are errors. Use --check-sources to also resolve every source (local
-paths must exist, GitHub releases must have matching assets).
-
-Several manifests (repeated -f flags or several arguments) are validated and merged
-in order, like files included in that order: later files win.`,
+paths must exist, GitHub releases must have matching assets).`,
 		Example: formatExamples(
 			example{"validate tenant.yaml", "Validate the manifest schema (unknown fields are errors)"},
-			example{"validate base.yaml prod.yaml", "Validate the merge of two manifests (prod.yaml wins)"},
 			example{"validate tenant.yaml --check-sources", "Also check that every local path exists and every GitHub release has matching assets"},
 		),
-		Args:              cobra.ArbitraryArgs,
-		ValidArgsFunction: completeManifestFileList,
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeManifestFiles,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configureLogging(verbose, false)
-			manifestPaths, err := manifestPathsFromArgs(manifestFlags, args)
+			manifestPath, err := manifestPathFromArgs(manifestFlag, args)
 			if err != nil {
 				return err
 			}
-			return runValidate(manifestPaths, checkSources)
+			return runValidate(manifestPath, checkSources)
 		},
 	}
-	cmd.Flags().StringArrayVarP(&manifestFlags, "manifest", "f", nil, "Path to the tenant manifest file (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
+	cmd.Flags().StringVarP(&manifestFlag, "manifest", "f", "", "Path to the tenant manifest file (default: tenant.yaml)")
 	cmd.Flags().BoolVar(&checkSources, "check-sources", false, "Also resolve every source (local paths must exist, GitHub releases must have matching assets)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Enable detailed logging")
-	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFileList)
+	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFiles)
 	return cmd
 }
 
-func runValidate(manifestPaths []string, checkSources bool) error {
-	manifest, err := LoadManifestsWith(manifestPaths, LoadOptions{})
+func runValidate(manifestPath string, checkSources bool) error {
+	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
 		return err
 	}
-	// Relative source paths are based on the first manifest
-	manifestPath := manifestPaths[0]
 
-	if len(manifestPaths) == 1 {
-		fmt.Printf("✓ %s is valid\n", manifestPath)
-	} else {
-		fmt.Printf("✓ %s are valid\n", strings.Join(manifestPaths, ", "))
-	}
-	for _, file := range manifest.IncludedFiles {
-		fmt.Printf("  includes %s\n", file)
-	}
-	fmt.Println()
+	fmt.Printf("✓ %s is valid\n\n", manifestPath)
 	printSectionCount(SectionTenantOptions, len(manifest.TenantOptions))
 	printSectionCount(SectionFeatures, len(manifest.Features))
 	printSectionCount(SectionRetentionRules, len(manifest.RetentionRules))

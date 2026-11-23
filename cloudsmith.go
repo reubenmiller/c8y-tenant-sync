@@ -33,9 +33,10 @@ type CloudsmithSource struct {
 	// Version selects the versions of each package and format
 	Version string `yaml:"version" json:"version,omitempty" jsonschema:"description=Which versions of each package and format to use: latest (default) or latest-N for the latest N versions or all or an exact version,example=latest,example=latest-3,example=2.1.0"`
 
-	// LinkOnly references the Cloudsmith download URL (the default) instead
-	// of downloading the packages and uploading them to Cumulocity
-	LinkOnly *bool `yaml:"linkOnly" json:"linkOnly,omitempty" jsonschema:"description=Reference the package download URL instead of downloading and uploading the binary. Default: true (devices download the packages from Cloudsmith)"`
+	// Binary sets what the software versions reference: nothing (the
+	// package manager installs the version from its repositories), the
+	// Cloudsmith download URL, or a binary uploaded to Cumulocity
+	Binary string `yaml:"binary" json:"binary,omitempty" jsonschema:"description=What each version references. auto (default): none for deb and rpm and alpine packages and link for raw packages. none: no url so the device's package manager installs the version from its configured repositories (one software item for all architectures). link: the Cloudsmith download URL. upload: download the package and upload it to Cumulocity,enum=auto,enum=none,enum=link,enum=upload"`
 }
 
 // cloudsmithFormats are the supported package formats and the Cumulocity
@@ -61,9 +62,28 @@ type PackageInfo struct {
 	Architecture string
 }
 
-// IsLinkOnly reports whether the packages are referenced by URL (default)
-func (c *CloudsmithSource) IsLinkOnly() bool {
-	return c != nil && (c.LinkOnly == nil || *c.LinkOnly)
+// Binary modes of a cloudsmith source
+const (
+	CloudsmithBinaryAuto   = "auto"
+	CloudsmithBinaryNone   = "none"
+	CloudsmithBinaryLink   = "link"
+	CloudsmithBinaryUpload = "upload"
+)
+
+// BinaryMode returns what the versions of a package of the format
+// reference: none, link or upload. auto (the default) means none for
+// packages installed by a package manager (deb, rpm, alpine) and link for
+// raw packages.
+func (c *CloudsmithSource) BinaryMode(format string) string {
+	switch mode := strings.TrimSpace(c.Binary); mode {
+	case "", CloudsmithBinaryAuto:
+		if format == "raw" {
+			return CloudsmithBinaryLink
+		}
+		return CloudsmithBinaryNone
+	default:
+		return mode
+	}
 }
 
 // OwnerRepo returns the owner and repository, also from a repository URL
@@ -125,6 +145,11 @@ func (c *CloudsmithSource) validate() error {
 	if _, _, err := c.versionSelection(); err != nil {
 		return err
 	}
+	switch c.Binary {
+	case "", CloudsmithBinaryAuto, CloudsmithBinaryNone, CloudsmithBinaryLink, CloudsmithBinaryUpload:
+	default:
+		return fmt.Errorf("cloudsmith.binary: unsupported value %q (use auto, none, link or upload)", c.Binary)
+	}
 	return nil
 }
 
@@ -177,10 +202,19 @@ func (r *SourceResolver) resolveCloudsmith(source *CloudsmithSource) ([]Resolved
 				return nil, err
 			}
 			for _, pkg := range packages {
-				if !cloudsmithArchitectureMatches(source.Architectures, pkg.architecture()) || seen[pkg.SlugPerm] {
+				if !cloudsmithArchitectureMatches(source.Architectures, pkg.architecture()) {
 					continue
 				}
-				seen[pkg.SlugPerm] = true
+				// Without a binary, a version is the same for every
+				// architecture: the package manager picks the right one
+				key := pkg.SlugPerm
+				if source.BinaryMode(pkg.Format) == CloudsmithBinaryNone {
+					key = pkg.Name + "\x00" + pkg.Format + "\x00" + pkg.Version
+				}
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
 				file, err := r.cloudsmithFile(owner, repo, source, pkg)
 				if err != nil {
 					return nil, err
@@ -335,8 +369,8 @@ func (r *SourceResolver) cloudsmithAPI() string {
 	return "https://api.cloudsmith.io/v1"
 }
 
-// cloudsmithFile returns the package as a resolved file: its download URL
-// (link only), or the downloaded file
+// cloudsmithFile returns the package as a resolved file: without a binary,
+// with its download URL, or with the downloaded file
 func (r *SourceResolver) cloudsmithFile(owner, repo string, source *CloudsmithSource, pkg cloudsmithPackage) (ResolvedFile, error) {
 	file := ResolvedFile{
 		Filename:    pkg.Filename,
@@ -348,7 +382,13 @@ func (r *SourceResolver) cloudsmithFile(owner, repo string, source *CloudsmithSo
 			Architecture: pkg.architecture(),
 		},
 	}
-	if source.IsLinkOnly() {
+	switch source.BinaryMode(pkg.Format) {
+	case CloudsmithBinaryNone:
+		// The package manager installs the version from its repositories
+		// and picks the architecture
+		file.Package.Architecture = ""
+		return file, nil
+	case CloudsmithBinaryLink:
 		file.URL = pkg.CDNURL
 		return file, nil
 	}
@@ -405,9 +445,13 @@ func cloudsmithSoftwareInfo(file ResolvedFile, spec SoftwareSpec) (*SoftwareInfo
 		}
 		softwareType = parsed.SoftwareType
 	}
+	filename := file.Filename
+	if file.URL == "" && file.Path == "" {
+		filename = "" // no binary: the version has an empty url
+	}
 	info := &SoftwareInfo{
 		FilePath:     file.Path,
-		Filename:     file.Filename,
+		Filename:     filename,
 		Name:         spec.NamePrefix + pkg.Name,
 		Version:      pkg.Version,
 		SoftwareType: softwareType,

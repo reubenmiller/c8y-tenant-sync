@@ -37,7 +37,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
   - **Custom types**: any extension, with a `versionPattern` regex for custom naming schemes
 - ⚙️ **Configuration repository sync**: upload configuration files with type and device type filters
 - 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
-- 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata
+- 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata; versions are installed by the device's package manager, or link or upload the package
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
@@ -496,7 +496,8 @@ thin-edge.io publishes its packages to public [Cloudsmith](https://cloudsmith.io
 
 ```yaml
 software:
-  # The latest tedge and tedge-agent release, for arm64 devices with apt and apk
+  # The latest tedge and tedge-agent release for apt and apk: versions without
+  # a url, which the package manager installs from the device's repositories
   - source:
       cloudsmith:
         repo: https://broadcasts.cloudsmith.com/thinedge/tedge-release
@@ -512,11 +513,13 @@ software:
         formats: [deb]
         version: latest-2
 
-  # Every community plugin whose name starts with tedge-dot-
+  # Every community plugin whose name starts with tedge-dot-, linked to the
+  # download URL of each architecture's package
   - source:
       cloudsmith:
         repo: thinedge/community
         packages: ["tedge-dot-*"]
+        binary: link
 ```
 
 | Field | Description |
@@ -526,11 +529,21 @@ software:
 | `formats` | `deb`, `rpm`, `alpine` and/or `raw` (default: all of them) |
 | `architectures` | Architectures as the package format names them, e.g. `arm64`/`amd64` for deb and `aarch64`/`x86_64` for rpm and alpine (default: all) |
 | `version` | `latest` (default), `latest-N` for the newest N versions, `all`, or an exact version such as `2.1.0` |
-| `linkOnly` | `true` (default): the software version references the Cloudsmith download URL and devices download the package from Cloudsmith. `false`: download the packages and upload them to Cumulocity |
+| `binary` | What each software version references: `auto` (default), `none`, `link` or `upload`, see below |
 
+- **Binaries.** `binary` sets what the software versions reference:
+
+  | `binary` | Software version | Software items |
+  |----------|------------------|----------------|
+  | `none` | No url: the device's package manager installs the version from its configured repositories (e.g. `apt install tedge=2.1.0`), resolving dependencies and picking the architecture | One per package and type, for all architectures (`tedge [apt]`) |
+  | `link` | The Cloudsmith download URL: the device downloads that file and installs it | One per architecture (`tedge [arm64/apt]`) |
+  | `upload` | The package, downloaded and uploaded to Cumulocity | One per architecture |
+  | `auto` (default) | `none` for `deb`, `rpm` and `alpine` packages, `link` for `raw` packages, which no package manager installs | |
+
+  With `none`, devices need the Cloudsmith repository in their package manager configuration, which the thin-edge.io install script sets up. Use `link` or `upload` for devices without it.
 - **Metadata instead of filenames.** The name, version and architecture come from the package metadata, so every package format works, including apk files whose names have no architecture. The software type follows the format: `deb` → `apt`, `rpm` → `rpm`, `alpine` → `apk`; `raw` packages get the type from the filename (e.g. `archive`). The entry's `type`, `namePrefix` and `version` override them as for other sources.
 - **Versions as the package manager uses them.** The version is Cloudsmith's version of the package, e.g. `2.1.0` for deb, `2.1.0-1` for rpm (with the release) and `2.1.0-r0` for apk, so it can be passed to the package manager as it is.
-- **Selected per package and format.** `latest` and `latest-N` select the newest versions of each package name and format (sorted by Cloudsmith), with every architecture of those versions. Repositories with development builds such as `tedge-main` publish many versions, so for exact package names the listing stops as soon as the selected versions are complete. A glob reads every package whose name starts with the part before the first wildcard.
+- **Selected per package and format.** `latest` and `latest-N` select the newest versions of each package name and format (sorted by Cloudsmith), with every architecture of those versions (with `binary: none`, the `architectures` field only limits which packages are read). Repositories with development builds such as `tedge-main` publish many versions, so for exact package names the listing stops as soon as the selected versions are complete. A glob reads every package whose name starts with the part before the first wildcard.
 - **Public repositories.** The packages are listed through the Cloudsmith API without credentials. Private repositories are not supported yet.
 
 #### Linking or uploading GitHub assets

@@ -189,9 +189,15 @@
             "2.1.0"
           ]
         },
-        "linkOnly": {
-          "type": "boolean",
-          "description": "Reference the package download URL instead of downloading and uploading the binary. Default: true (devices download the packages from Cloudsmith)"
+        "binary": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "none",
+            "link",
+            "upload"
+          ],
+          "description": "What each version references. auto (default): none for deb and rpm and alpine packages and link for raw packages. none: no url so the device's package manager installs the version from its configured repositories (one software item for all architectures). link: the Cloudsmith download URL. upload: download the package and upload it to Cumulocity"
         }
       },
       "additionalProperties": false,

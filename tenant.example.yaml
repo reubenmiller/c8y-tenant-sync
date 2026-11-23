@@ -255,8 +255,9 @@ software:
 
   # The latest tedge and tedge-agent packages from the public thin-edge.io
   # Cloudsmith repository (also thinedge/tedge-main and thinedge/community).
-  # Name, version, architecture and type come from the package metadata, and
-  # the versions link to the Cloudsmith download URLs
+  # Name, version and type come from the package metadata. The versions have
+  # no url, so the device's package manager installs them from its configured
+  # repositories (binary: link or upload references the package instead)
   - source:
       cloudsmith:
         repo: https://broadcasts.cloudsmith.com/thinedge/tedge-release
@@ -264,6 +265,7 @@ software:
         formats: [deb, alpine]
         architectures: [arm64, aarch64]
         version: latest # or "latest-N", "all", or an exact version
+        binary: auto    # none for deb/rpm/alpine, link for raw packages
 
   # Reference release assets by URL instead of uploading the binaries
   # (only works for public repositories)

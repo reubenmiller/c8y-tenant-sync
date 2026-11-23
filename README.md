@@ -564,7 +564,21 @@ software:
 ```
 
 - **Per pattern.** `latest` gives the newest release of each pattern, `latest-N` the newest N of each, and `all` every matching release. A specific tag can't be combined with `tags`.
-- **Version fallback.** The part of the pattern before the first wildcard is removed from the tag, so `c8y-deploy-poll-v0.6.1` gives `0.6.1` (when the asset filename has no version).
+- **Per component.** A `{component}` placeholder groups the releases by the part of the tag it matches, and `release` then selects per component. `tags: ["{component}-v*"]` with `release: latest` gives the newest release of every component, including components added later, without listing them:
+
+  ```yaml
+  - type: flow
+    source:
+      github:
+        repo: thin-edge/tedge-flows-examples
+        tags: ["{component}-v*"]   # c8y-deploy-poll-v0.6.1: component c8y-deploy-poll
+        release: latest            # per component
+        assets: ["*.tar.gz"]
+        linkOnly: true
+  ```
+
+  The component matches as much of the tag as possible, so `{component}-v*` splits a tag at its last `-v`. Text around it narrows the components, e.g. `c8y-{component}-v*` only matches tags starting with `c8y-`. With `{component}`, every page of the release list is read, since a component can appear on any page.
+- **Version fallback.** The tag from the pattern's first wildcard on is the version, so `c8y-deploy-poll-v0.6.1` gives `0.6.1` with `c8y-deploy-poll-v*` or `{component}-v*` (used when the asset filename has no version).
 - **Paging.** The releases are read page by page (newest first) until every pattern has its releases, so components with older releases also work in repositories with many releases.
 
 #### Linking or uploading GitHub assets

@@ -272,8 +272,8 @@ software:
   - source:
       github:
         repo: thin-edge/tedge-flows-examples
-        tags: ["c8y-deploy-poll-v*", "c8y-deploy-status-v*"]
-        release: latest # per tag pattern
+        tags: ["c8y-deploy-poll-v*", "c8y-deploy-status-v*"] # or ["{component}-v*"] for every component
+        release: latest # per tag pattern (or per {component})
         assets: ["*.tar.gz"]
         linkOnly: true
 

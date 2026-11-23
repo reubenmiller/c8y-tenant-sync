@@ -611,6 +611,18 @@ func (s *Source) Validate() error {
 	if s.GitHub != nil && !strings.Contains(s.GitHub.Repo, "/") {
 		return fmt.Errorf("github.repo must be in the form owner/repo, got %q", s.GitHub.Repo)
 	}
+	if s.GitHub != nil && len(s.GitHub.Tags) > 0 {
+		for _, pattern := range s.GitHub.Tags {
+			if _, err := filepath.Match(pattern, ""); err != nil || strings.TrimSpace(pattern) == "" {
+				return fmt.Errorf("github.tags: invalid pattern %q", pattern)
+			}
+		}
+		if selector := releaseSelector(s.GitHub); selector != "latest" && selector != "all" {
+			if _, ok := latestCount(selector); !ok {
+				return fmt.Errorf("github.tags can't be combined with the release tag %q: use release latest, latest-N or all", selector)
+			}
+		}
+	}
 	if s.GitHub != nil && s.GitHub.TokenFrom != nil {
 		if s.GitHub.Token != "" {
 			return fmt.Errorf("github.token and github.tokenFrom are mutually exclusive")
@@ -632,7 +644,13 @@ type GitHubSource struct {
 	//   "latest-N"         - the latest N releases (e.g. "latest-5")
 	//   "all"              - every release (use with care)
 	//   "<tag>"            - a specific release tag (e.g. "v1.2.3")
-	Release string `yaml:"release" json:"release,omitempty" jsonschema:"description=Which release(s) to use: latest (default) or latest-N for the latest N releases or all or a specific tag,example=latest,example=latest-5,example=all,example=v1.2.3"`
+	Release string `yaml:"release" json:"release,omitempty" jsonschema:"description=Which release(s) to use: latest (default) or latest-N for the latest N releases or all or a specific tag. With tags: per tag pattern,example=latest,example=latest-5,example=all,example=v1.2.3"`
+
+	// Tags limits the releases to those whose tag matches one of the glob
+	// patterns. release (latest, latest-N, all) then selects per pattern,
+	// e.g. the latest release of each component of a monorepo which
+	// publishes separate releases per component (release-please)
+	Tags []string `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Glob patterns matched against the release tags (e.g. c8y-deploy-poll-v*); release then selects the latest or latest-N or all releases of each pattern (e.g. per component of a monorepo with release-please). The part of the tag before the first wildcard is removed for the version fallback,example=c8y-deploy-poll-v*"`
 
 	// Assets are glob patterns matched against asset filenames (default: ["*"])
 	Assets []string `yaml:"assets" json:"assets,omitempty" jsonschema:"description=Glob patterns matched against release asset filenames (default: *)"`

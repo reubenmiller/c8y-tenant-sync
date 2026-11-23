@@ -267,6 +267,16 @@ software:
         version: latest # or "latest-N", "all", or an exact version
         binary: auto    # none for deb/rpm/alpine, link for raw packages
 
+  # The latest release of each component of a monorepo which publishes a
+  # release per component (e.g. release-please tags like c8y-deploy-poll-v0.6.1)
+  - source:
+      github:
+        repo: thin-edge/tedge-flows-examples
+        tags: ["c8y-deploy-poll-v*", "c8y-deploy-status-v*"]
+        release: latest # per tag pattern
+        assets: ["*.tar.gz"]
+        linkOnly: true
+
   # Reference release assets by URL instead of uploading the binaries
   # (only works for public repositories)
   - namePrefix: "linked-"

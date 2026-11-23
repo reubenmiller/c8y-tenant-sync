@@ -480,13 +480,23 @@
         },
         "release": {
           "type": "string",
-          "description": "Which release(s) to use: latest (default) or latest-N for the latest N releases or all or a specific tag",
+          "description": "Which release(s) to use: latest (default) or latest-N for the latest N releases or all or a specific tag. With tags: per tag pattern",
           "examples": [
             "latest",
             "latest-5",
             "all",
             "v1.2.3"
           ]
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "c8y-deploy-poll-v*"
+            ]
+          },
+          "type": "array",
+          "description": "Glob patterns matched against the release tags (e.g. c8y-deploy-poll-v*); release then selects the latest or latest-N or all releases of each pattern (e.g. per component of a monorepo with release-please). The part of the tag before the first wildcard is removed for the version fallback"
         },
         "assets": {
           "items": {

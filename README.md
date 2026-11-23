@@ -469,6 +469,7 @@ source:
   github:
     repo: owner/repo
     release: latest        # "latest" (default) | "latest-N" e.g. "latest-5" | "all" | a tag e.g. "v1.2.0"
+    tags: ["comp-v*"]      # optional: only releases with matching tags; release then selects per pattern
     assets: ["*.wic.xz"]   # glob patterns against asset names
     includePrereleases: false
     linkOnly: false        # true: reference the download URL, don't upload the binary
@@ -545,6 +546,26 @@ software:
 - **Versions as the package manager uses them.** The version is Cloudsmith's version of the package, e.g. `2.1.0` for deb, `2.1.0-1` for rpm (with the release) and `2.1.0-r0` for apk, so it can be passed to the package manager as it is.
 - **Selected per package and format.** `latest` and `latest-N` select the newest versions of each package name and format (sorted by Cloudsmith), with every architecture of those versions (with `binary: none`, the `architectures` field only limits which packages are read). Repositories with development builds such as `tedge-main` publish many versions, so for exact package names the listing stops as soon as the selected versions are complete. A glob reads every package whose name starts with the part before the first wildcard.
 - **Public repositories.** The packages are listed through the Cloudsmith API without credentials. Private repositories are not supported yet.
+
+#### Monorepos with a release per component
+
+Some repositories publish separate releases for each component, e.g. with [release-please](https://github.com/googleapis/release-please): [thin-edge/tedge-flows-examples](https://github.com/thin-edge/tedge-flows-examples/releases) has tags such as `c8y-deploy-poll-v0.6.1` and `c8y-deploy-status-v0.3.1`. `release: latest` would only find the newest release of the whole repository. `tags` limits the releases to tags matching glob patterns, and `release` then selects per pattern:
+
+```yaml
+software:
+  # The latest release of each of the three flows
+  - source:
+      github:
+        repo: thin-edge/tedge-flows-examples
+        tags: ["c8y-deploy-poll-v*", "c8y-deploy-status-v*", "c8y-deploy-operation-v*"]
+        release: latest   # or latest-N (per pattern) or all
+        assets: ["*.tar.gz"]
+        linkOnly: true
+```
+
+- **Per pattern.** `latest` gives the newest release of each pattern, `latest-N` the newest N of each, and `all` every matching release. A specific tag can't be combined with `tags`.
+- **Version fallback.** The part of the pattern before the first wildcard is removed from the tag, so `c8y-deploy-poll-v0.6.1` gives `0.6.1` (when the asset filename has no version).
+- **Paging.** The releases are read page by page (newest first) until every pattern has its releases, so components with older releases also work in repositories with many releases.
 
 #### Linking or uploading GitHub assets
 

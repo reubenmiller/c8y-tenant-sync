@@ -56,6 +56,9 @@ type SourceResolver struct {
 
 	// CloudsmithAPI overrides the Cloudsmith API base URL (tests)
 	CloudsmithAPI string
+
+	// GitHubAPI overrides the GitHub API base URL (tests)
+	GitHubAPI string
 }
 
 func NewSourceResolver(baseDir, workDir string, skipDownload bool) *SourceResolver {
@@ -169,7 +172,7 @@ func (r *SourceResolver) resolveGitHub(source *GitHubSource) ([]ResolvedFile, er
 
 	var files []ResolvedFile
 	for _, release := range releases {
-		versionHint := strings.TrimPrefix(release.TagName, "v")
+		versionHint := strings.TrimPrefix(tagVersion(release.TagName, source.Tags), "v")
 
 		for _, asset := range release.Assets {
 			matched := false
@@ -285,6 +288,10 @@ func (r *SourceResolver) fetchReleases(source *GitHubSource) ([]githubRelease, e
 		}
 	}
 
+	if len(source.Tags) > 0 {
+		return r.fetchTaggedReleases(source, selector)
+	}
+
 	if listNeeded {
 		releases, err := r.listReleases(source)
 		if err != nil {
@@ -299,7 +306,7 @@ func (r *SourceResolver) fetchReleases(source *GitHubSource) ([]githubRelease, e
 
 	if selector == "latest" {
 		release := githubRelease{}
-		if err := r.githubGet(source, fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", source.Repo), &release); err != nil {
+		if err := r.githubGet(source, fmt.Sprintf("%s/repos/%s/releases/latest", r.githubAPI(), source.Repo), &release); err != nil {
 			return nil, err
 		}
 		return []githubRelease{release}, nil
@@ -307,7 +314,7 @@ func (r *SourceResolver) fetchReleases(source *GitHubSource) ([]githubRelease, e
 
 	// A specific tag
 	release := githubRelease{}
-	if err := r.githubGet(source, fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", source.Repo, selector), &release); err != nil {
+	if err := r.githubGet(source, fmt.Sprintf("%s/repos/%s/releases/tags/%s", r.githubAPI(), source.Repo, selector), &release); err != nil {
 		return nil, err
 	}
 	return []githubRelease{release}, nil
@@ -315,8 +322,89 @@ func (r *SourceResolver) fetchReleases(source *GitHubSource) ([]githubRelease, e
 
 func (r *SourceResolver) listReleases(source *GitHubSource) ([]githubRelease, error) {
 	var releases []githubRelease
-	err := r.githubGet(source, fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=100", source.Repo), &releases)
+	err := r.githubGet(source, fmt.Sprintf("%s/repos/%s/releases?per_page=100", r.githubAPI(), source.Repo), &releases)
 	return releases, err
+}
+
+// githubReleasesPageSize is the number of releases per page (the maximum)
+const githubReleasesPageSize = 100
+
+// fetchTaggedReleases selects releases per tag pattern: the latest,
+// latest-N or all releases whose tag matches each pattern (newest first,
+// as GitHub lists them). The release list is read page by page until every
+// pattern has its releases.
+func (r *SourceResolver) fetchTaggedReleases(source *GitHubSource, selector string) ([]githubRelease, error) {
+	limit := 0 // all
+	if selector == "latest" {
+		limit = 1
+	} else if n, ok := latestCount(selector); ok {
+		limit = n
+	}
+
+	counts := make([]int, len(source.Tags))
+	complete := func() bool {
+		if limit == 0 {
+			return false
+		}
+		for _, count := range counts {
+			if count < limit {
+				return false
+			}
+		}
+		return true
+	}
+
+	var selected []githubRelease
+	for page := 1; ; page++ {
+		var releases []githubRelease
+		url := fmt.Sprintf("%s/repos/%s/releases?per_page=%d&page=%d", r.githubAPI(), source.Repo, githubReleasesPageSize, page)
+		if err := r.githubGet(source, url, &releases); err != nil {
+			return nil, err
+		}
+		for _, release := range filterReleases(releases, source.IncludePrereleases, 0) {
+			wanted := false
+			for i, pattern := range source.Tags {
+				if ok, _ := filepath.Match(pattern, release.TagName); ok && (limit == 0 || counts[i] < limit) {
+					counts[i]++
+					wanted = true
+				}
+			}
+			if wanted {
+				selected = append(selected, release)
+			}
+		}
+		if len(releases) < githubReleasesPageSize || complete() {
+			break
+		}
+	}
+
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("no releases in %s matched tags: %s: %w", source.Repo, strings.Join(source.Tags, ", "), ErrNothingToDo)
+	}
+	return selected, nil
+}
+
+// tagVersion returns the version part of a release tag: the tag without the
+// literal prefix of the tag pattern it matches (e.g. c8y-deploy-poll-v0.6.1
+// with the pattern c8y-deploy-poll-v* gives 0.6.1)
+func tagVersion(tag string, patterns []string) string {
+	for _, pattern := range patterns {
+		if ok, _ := filepath.Match(pattern, tag); !ok {
+			continue
+		}
+		if index := strings.IndexAny(pattern, "*?["); index > 0 {
+			return strings.TrimPrefix(tag, pattern[:index])
+		}
+	}
+	return tag
+}
+
+// githubAPI returns the GitHub API base URL
+func (r *SourceResolver) githubAPI() string {
+	if r.GitHubAPI != "" {
+		return strings.TrimSuffix(r.GitHubAPI, "/")
+	}
+	return "https://api.github.com"
 }
 
 func githubToken(source *GitHubSource) string {

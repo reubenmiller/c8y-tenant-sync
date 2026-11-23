@@ -178,6 +178,11 @@ func OpenSecretStore(path string, encryption SecretsEncryption) (*SecretStore, e
 		if raw, err = decryptSops(path); err != nil {
 			return nil, err
 		}
+		if err := checkSopsValues(path, raw, true); err != nil {
+			return nil, err
+		}
+	} else if err := checkSopsValues(path, raw, false); err != nil {
+		return nil, err
 	}
 
 	var file secretsFile

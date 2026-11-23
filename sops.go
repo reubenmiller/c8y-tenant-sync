@@ -83,7 +83,82 @@ func readManifestFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
 	if !isSopsEncrypted(raw) {
+		if err := checkSopsValues(path, raw, false); err != nil {
+			return nil, err
+		}
 		return raw, nil
 	}
-	return decryptSops(path)
+	decrypted, err := decryptSops(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSopsValues(path, decrypted, true); err != nil {
+		return nil, err
+	}
+	return decrypted, nil
+}
+
+// checkSopsValues fails when a file which is not (or no longer) encrypted
+// still has sops encrypted ENC[...] values, which would otherwise be used as
+// literal text (e.g. as a token or password):
+//   - in a file without a sops section, the values were copied from another
+//     file and can't be decrypted
+//   - after decrypting, a value was encrypted twice (ENC[...] text pasted
+//     into the decrypted file)
+func checkSopsValues(path string, raw []byte, decrypted bool) error {
+	values := sopsEncryptedValues(raw)
+	if len(values) == 0 {
+		return nil
+	}
+	if decrypted {
+		return fmt.Errorf("%s has values which are still encrypted after decrypting it, i.e. encrypted twice "+
+			"(e.g. ENC[...] text pasted into the decrypted file): %s. Set them to the plain text with sops (e.g. sops %s)",
+			path, strings.Join(values, ", "), filepath.Base(path))
+	}
+	return fmt.Errorf("%s contains sops encrypted values but no sops metadata, so they can't be decrypted: %s. "+
+		"An ENC[...] value only decrypts in the file it was encrypted in (with that file's sops section): "+
+		"replace the values with the plain text and encrypt the file with sops, or use a secret reference such as tokenFrom: {env: NAME}",
+		path, strings.Join(values, ", "))
+}
+
+// sopsEncryptedValues returns the locations (YAML path and line) of values
+// which are sops encrypted (ENC[...]). Comments are not values, so they
+// can mention ENC[...] freely.
+func sopsEncryptedValues(raw []byte) []string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil
+	}
+	var found []string
+	var walk func(node *yaml.Node, path string)
+	walk = func(node *yaml.Node, path string) {
+		switch node.Kind {
+		case yaml.DocumentNode:
+			for _, child := range node.Content {
+				walk(child, path)
+			}
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key := node.Content[i].Value
+				if path == "" && key == "sops" {
+					continue
+				}
+				child := key
+				if path != "" {
+					child = path + "." + key
+				}
+				walk(node.Content[i+1], child)
+			}
+		case yaml.SequenceNode:
+			for i, child := range node.Content {
+				walk(child, fmt.Sprintf("%s[%d]", path, i))
+			}
+		case yaml.ScalarNode:
+			if strings.HasPrefix(node.Value, "ENC[AES256_GCM,") {
+				found = append(found, fmt.Sprintf("%s (line %d)", path, node.Line))
+			}
+		}
+	}
+	walk(&doc, "")
+	return found
 }

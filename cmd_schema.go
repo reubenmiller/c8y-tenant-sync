@@ -66,25 +66,20 @@ func (ConfigurationSpec) JSONSchemaExtend(schema *jsonschema.Schema) {
 // JSONSchemaExtend enforces that exactly one of path, url or github is set,
 // mirroring Source.Validate
 func (Source) JSONSchemaExtend(schema *jsonschema.Schema) {
-	schema.OneOf = []*jsonschema.Schema{
-		{Required: []string{"path"}, Not: &jsonschema.Schema{
-			AnyOf: []*jsonschema.Schema{
-				{Required: []string{"url"}},
-				{Required: []string{"github"}},
-			},
-		}},
-		{Required: []string{"url"}, Not: &jsonschema.Schema{
-			AnyOf: []*jsonschema.Schema{
-				{Required: []string{"path"}},
-				{Required: []string{"github"}},
-			},
-		}},
-		{Required: []string{"github"}, Not: &jsonschema.Schema{
-			AnyOf: []*jsonschema.Schema{
-				{Required: []string{"path"}},
-				{Required: []string{"url"}},
-			},
-		}},
+	// Exactly one of the source kinds
+	kinds := []string{"path", "url", "github", "cloudsmith"}
+	schema.OneOf = nil
+	for _, kind := range kinds {
+		var others []*jsonschema.Schema
+		for _, other := range kinds {
+			if other != kind {
+				others = append(others, &jsonschema.Schema{Required: []string{other}})
+			}
+		}
+		schema.OneOf = append(schema.OneOf, &jsonschema.Schema{
+			Required: []string{kind},
+			Not:      &jsonschema.Schema{AnyOf: others},
+		})
 	}
 }
 

@@ -553,6 +553,9 @@ type Source struct {
 	// GitHub pulls release assets from a GitHub repository.
 	GitHub *GitHubSource `yaml:"github" json:"github,omitempty" jsonschema:"description=Pull release assets from a GitHub repository"`
 
+	// Cloudsmith pulls packages from a Cloudsmith repository.
+	Cloudsmith *CloudsmithSource `yaml:"cloudsmith" json:"cloudsmith,omitempty" jsonschema:"description=Pull packages from a Cloudsmith repository (e.g. the public thin-edge.io repositories); the name and version and architecture come from the package metadata"`
+
 	// Optional marks the source as optional: when the local path does not
 	// exist or no files/assets match, the entry is skipped instead of failing.
 	Optional bool `yaml:"optional" json:"optional,omitempty" jsonschema:"description=Skip this entry instead of failing when the path does not exist or nothing matches"`
@@ -577,7 +580,7 @@ func (s Source) withLinkOnlyDefault(defaultValue bool) Source {
 }
 
 func (s *Source) IsSet() bool {
-	return s != nil && (s.Path != "" || s.URL != "" || s.GitHub != nil)
+	return s != nil && (s.Path != "" || s.URL != "" || s.GitHub != nil || s.Cloudsmith != nil)
 }
 
 func (s *Source) Validate() error {
@@ -591,11 +594,19 @@ func (s *Source) Validate() error {
 	if s.GitHub != nil {
 		count++
 	}
+	if s.Cloudsmith != nil {
+		count++
+	}
 	if count == 0 {
-		return fmt.Errorf("source requires one of: path, url, github")
+		return fmt.Errorf("source requires one of: path, url, github, cloudsmith")
 	}
 	if count > 1 {
-		return fmt.Errorf("source fields path, url and github are mutually exclusive")
+		return fmt.Errorf("source fields path, url, github and cloudsmith are mutually exclusive")
+	}
+	if s.Cloudsmith != nil {
+		if err := s.Cloudsmith.validate(); err != nil {
+			return err
+		}
 	}
 	if s.GitHub != nil && !strings.Contains(s.GitHub.Repo, "/") {
 		return fmt.Errorf("github.repo must be in the form owner/repo, got %q", s.GitHub.Repo)

@@ -612,10 +612,8 @@ func (s *Source) Validate() error {
 		return fmt.Errorf("github.repo must be in the form owner/repo, got %q", s.GitHub.Repo)
 	}
 	if s.GitHub != nil && len(s.GitHub.Tags) > 0 {
-		for _, pattern := range s.GitHub.Tags {
-			if _, err := filepath.Match(pattern, ""); err != nil || strings.TrimSpace(pattern) == "" {
-				return fmt.Errorf("github.tags: invalid pattern %q", pattern)
-			}
+		if _, err := compileTagPatterns(s.GitHub.Tags); err != nil {
+			return err
 		}
 		if selector := releaseSelector(s.GitHub); selector != "latest" && selector != "all" {
 			if _, ok := latestCount(selector); !ok {
@@ -650,7 +648,7 @@ type GitHubSource struct {
 	// patterns. release (latest, latest-N, all) then selects per pattern,
 	// e.g. the latest release of each component of a monorepo which
 	// publishes separate releases per component (release-please)
-	Tags []string `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Glob patterns matched against the release tags (e.g. c8y-deploy-poll-v*); release then selects the latest or latest-N or all releases of each pattern (e.g. per component of a monorepo with release-please). The part of the tag before the first wildcard is removed for the version fallback,example=c8y-deploy-poll-v*"`
+	Tags []string `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Glob patterns matched against the release tags (e.g. c8y-deploy-poll-v*); release then selects the latest or latest-N or all releases of each pattern (e.g. per component of a monorepo with release-please). A {component} placeholder selects per component instead (e.g. {component}-v* gives the latest release of every component). The part of the tag before the first wildcard is removed for the version fallback,example=c8y-deploy-poll-v*,example={component}-v*"`
 
 	// Assets are glob patterns matched against asset filenames (default: ["*"])
 	Assets []string `yaml:"assets" json:"assets,omitempty" jsonschema:"description=Glob patterns matched against release asset filenames (default: *)"`

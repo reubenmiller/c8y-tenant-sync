@@ -331,9 +331,15 @@ const githubReleasesPageSize = 100
 
 // fetchTaggedReleases selects releases per tag pattern: the latest,
 // latest-N or all releases whose tag matches each pattern (newest first,
-// as GitHub lists them). The release list is read page by page until every
-// pattern has its releases.
+// as GitHub lists them), and per component for patterns with {component}.
+// The release list is read page by page until every pattern has its
+// releases (to the end for {component}, since any page can have a new
+// component).
 func (r *SourceResolver) fetchTaggedReleases(source *GitHubSource, selector string) ([]githubRelease, error) {
+	patterns, err := compileTagPatterns(source.Tags)
+	if err != nil {
+		return nil, err
+	}
 	limit := 0 // all
 	if selector == "latest" {
 		limit = 1
@@ -341,13 +347,14 @@ func (r *SourceResolver) fetchTaggedReleases(source *GitHubSource, selector stri
 		limit = n
 	}
 
-	counts := make([]int, len(source.Tags))
+	// counts are the selected releases by pattern (and component)
+	counts := map[string]int{}
 	complete := func() bool {
 		if limit == 0 {
 			return false
 		}
-		for _, count := range counts {
-			if count < limit {
+		for i, pattern := range patterns {
+			if pattern.component > 0 || counts[fmt.Sprint(i)] < limit {
 				return false
 			}
 		}
@@ -363,9 +370,17 @@ func (r *SourceResolver) fetchTaggedReleases(source *GitHubSource, selector stri
 		}
 		for _, release := range filterReleases(releases, source.IncludePrereleases, 0) {
 			wanted := false
-			for i, pattern := range source.Tags {
-				if ok, _ := filepath.Match(pattern, release.TagName); ok && (limit == 0 || counts[i] < limit) {
-					counts[i]++
+			for i, pattern := range patterns {
+				component, _, ok := pattern.Match(release.TagName)
+				if !ok {
+					continue
+				}
+				key := fmt.Sprint(i)
+				if pattern.component > 0 {
+					key += "\x00" + component
+				}
+				if limit == 0 || counts[key] < limit {
+					counts[key]++
 					wanted = true
 				}
 			}
@@ -384,16 +399,17 @@ func (r *SourceResolver) fetchTaggedReleases(source *GitHubSource, selector stri
 	return selected, nil
 }
 
-// tagVersion returns the version part of a release tag: the tag without the
-// literal prefix of the tag pattern it matches (e.g. c8y-deploy-poll-v0.6.1
-// with the pattern c8y-deploy-poll-v* gives 0.6.1)
+// tagVersion returns the version part of a release tag: the tag from the
+// first wildcard of the tag pattern it matches (e.g. c8y-deploy-poll-v0.6.1
+// with the pattern c8y-deploy-poll-v* or {component}-v* gives 0.6.1)
 func tagVersion(tag string, patterns []string) string {
-	for _, pattern := range patterns {
-		if ok, _ := filepath.Match(pattern, tag); !ok {
-			continue
-		}
-		if index := strings.IndexAny(pattern, "*?["); index > 0 {
-			return strings.TrimPrefix(tag, pattern[:index])
+	compiled, err := compileTagPatterns(patterns)
+	if err != nil {
+		return tag
+	}
+	for _, pattern := range compiled {
+		if _, version, ok := pattern.Match(tag); ok {
+			return version
 		}
 	}
 	return tag

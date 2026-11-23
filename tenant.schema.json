@@ -492,11 +492,12 @@
           "items": {
             "type": "string",
             "examples": [
-              "c8y-deploy-poll-v*"
+              "c8y-deploy-poll-v*",
+              "{component}-v*"
             ]
           },
           "type": "array",
-          "description": "Glob patterns matched against the release tags (e.g. c8y-deploy-poll-v*); release then selects the latest or latest-N or all releases of each pattern (e.g. per component of a monorepo with release-please). The part of the tag before the first wildcard is removed for the version fallback"
+          "description": "Glob patterns matched against the release tags (e.g. c8y-deploy-poll-v*); release then selects the latest or latest-N or all releases of each pattern (e.g. per component of a monorepo with release-please). A {component} placeholder selects per component instead (e.g. {component}-v* gives the latest release of every component). The part of the tag before the first wildcard is removed for the version fallback"
         },
         "assets": {
           "items": {

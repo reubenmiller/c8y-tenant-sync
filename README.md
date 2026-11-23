@@ -47,6 +47,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, user groups, certificates) from per-environment or per-customer manifests
+- 🏗️ **Child tenant provisioning**: declare child tenants (domain, company, admin, contact, custom properties, subscriptions) and create them from the parent tenant, then configure them with the rest of the manifest in the same run
 - 🔎 **Dry-run**: preview every change before applying
 - 🧾 **Run reports**: JSON and Markdown reports of what a run changed per tenant, for CI pipelines and audits, plus `--fail-on-change` for drift checks
 - 🔐 **Env var expansion**: `${VAR}` references in the manifest (e.g. GitHub tokens); `$$` is a literal `$`
@@ -156,7 +157,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -165,7 +166,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--include-current` | | Also include the current tenant when other target flags are used |
 | `--secrets-file` | `<manifest>.secrets.yaml` | File which stores the values of `${generate:NAME}` references, see [Generated values](#generated-values) |
 | `--secrets-encryption` | `auto` | Encrypt the secrets file with sops: `auto` (when sops and a `.sops.yaml` are found), `sops` (required) or `none` |
-| `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser` or `sessions` (overrides the manifest) |
+| `--credentials-mode` | | How credentials for other tenants are obtained: `serviceUser`, `sessions` or `tenantAdmin` (overrides the manifest) |
 | `--report` | | Write a report of the run to a file (`.json` or `.md`); repeatable. `github` appends the Markdown report to `$GITHUB_STEP_SUMMARY`. See [Run reports](#run-reports) |
 | `--report-format` | *(from the extension)* | Format of the `--report` files: `json` or `markdown` |
 | `--github-summary` | `true` | Inside GitHub Actions, append the Markdown report to the step summary; `--github-summary=false` turns it off. No effect elsewhere |
@@ -173,7 +174,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
 
-Sections are applied in a fixed order — tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+Sections are applied in a fixed order — child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
 
 ### Run reports
 
@@ -280,6 +281,7 @@ Fields which hold secrets can reference their value instead of containing it:
 |-------|------------|------------|
 | `tenantOptions[].valueFrom` | `value` | `env`, `generate` (and `application`, `device`) |
 | `users[].passwordFrom` | `password` | `env`, `generate` |
+| `tenants[].adminPasswordFrom` | `adminPass` | `env`, `generate` |
 | `github.tokenFrom` (any GitHub source) | `github.token` | `env`, `generate` |
 
 ```yaml
@@ -325,7 +327,7 @@ tenantOptions:
 - **Values are stable.** A value is generated the first time a name is used and stored in the secrets file (`tenant.yaml` → `tenant.secrets.yaml`, or `--secrets-file`). Later runs reuse the stored value, so the run stays idempotent (e.g. the tenant option is not changed on every run). The same name always gets the same value, also across target tenants.
 - **Values are kept.** The secrets file is saved after every run which generated values (also when the run failed, since a value may already have been used), with permissions `0600`. Each entry records when it was generated and for which host and tenant ID (looked up from the platform when the session has no tenant ID). The run reports the names of new values, never the values.
 - **Encryption.** With `--secrets-encryption auto` (default), the secrets file is encrypted with [SOPS](docs/sops.md#encrypt-the-secrets-file-of-generated-values) when `sops` is installed and a creation rule of the nearest `.sops.yaml` (in the folder of the secrets file or a parent folder) matches it, and an encrypted secrets file stays encrypted. `sops` requires encryption, and `none` always writes a plain file. If encryption fails, the values are saved unencrypted (`0600`) and the run fails, so no value is lost.
-- **Masking.** Generated values, user passwords and GitHub tokens are replaced with `***` in all output, including the request bodies printed by `--debug`.
+- **Masking.** Generated values, user and tenant admin passwords and GitHub tokens are replaced with `***` in all output, including the request bodies printed by `--debug`.
 - **Passwords are only set when a user is created.** The result line says `initial password from ${generate:NAME}`, or `generated password ... not applied (the user already exists)` when a new value was generated for an existing user.
 - Values are 24 characters by default (12 to 128 with `:LENGTH`), start with a letter and contain lowercase and uppercase letters, digits and one of `-_.+=^~`, which satisfies the Cumulocity password rules.
 - References in YAML comments are ignored, and `$${generate:NAME}` is a literal `${generate:NAME}`. A dry run doesn't generate values (it shows `<generated:NAME>`), and `validate` checks the references.
@@ -907,6 +909,7 @@ targets:
   - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (user groups, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
   - **Existing subscriptions.** A tenant's service user gets its roles when the tenant is subscribed. When the service user of a target lacks a required role (e.g. the tenant was subscribed by an older version), the tool subscribes the application to that tenant again, which creates a new service user with the current roles.
 - **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported — the run fails with a clear error listing tenants without a matching session.
+- **`tenantAdmin`** logs in to each target with the admin credentials of its entry in the [`tenants`](#provision-child-tenants) section: `adminName` and the admin password (`adminPass`, an `env` reference, or a generated value from the secrets file). It needs no placeholder microservice and no session files, so it suits tenants which this tool creates and manages, e.g. from a CI runner. Targets are matched to `tenants` entries by ID and then by domain. The credentials are checked before any section runs; the run fails for a target without a matching entry, with `sendPasswordResetEmail` (the password is not known), with a password generated in this run for a tenant which already existed (the secrets file was lost), or whose admin login is rejected (the password was changed or two-factor authentication was enabled).
 
 In multi-tenant runs every result line and the hook environment (`C8Y_TENANT`, `C8Y_USERNAME`, `C8Y_PASSWORD`) are scoped to the tenant being applied:
 
@@ -915,6 +918,82 @@ In multi-tenant runs every result line and the hook environment (`C8Y_TENANT`, `
   ✓ [applications] t12345: cloud-remote-access (unchanged): not subscribed
   ↻ [features] t12345: mqtt-service.smartrest (updated): enabled
 ```
+
+### Provision child tenants
+
+A management or enterprise tenant can create its child tenants from the manifest. An MSP onboarding a customer, or a platform team adding a site, declares the tenant in git and runs one command: the `tenants` section creates the tenant, and the [`targets`](#target-tenants) section applies the rest of the manifest to it in the same run.
+
+```yaml
+# customer-a.yaml, applied with the credentials of the parent tenant
+tenants:
+  - domain: customer-a.eu-latest.cumulocity.com  # unique key: the full domain
+    id: customer-a                               # optional: generated by the platform when omitted
+    company: Customer A
+    adminName: admin
+    adminEmail: admin@customer-a.example.com
+    adminPasswordFrom:
+      generate: customer-a-admin                 # stored in the secrets file
+    contactName: Jane Doe
+    contactPhone: "+49 123 456"
+    customProperties:
+      externalReference: CRM-1234
+    applications: [devicemanagement, cockpit]   # subscribed when missing
+
+# Configure the new tenant in the same run
+targets:
+  tenants: [customer-a.eu-latest.cumulocity.com]
+
+tenantOptions:
+  - category: onboarding
+    key: crm.reference
+    value: CRM-1234
+
+userGroups:
+  - name: operators
+    roles: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]
+```
+
+```bash
+c8y tenant-sync run -f customer-a.yaml --dry-run   # preview (no API calls)
+c8y tenant-sync run -f customer-a.yaml
+```
+
+```
+  ✚ [tenants] customer-a.eu-latest.cumulocity.com (created): created: customer-a; admin password from ${generate:customer-a-admin}; subscribed: devicemanagement, cockpit
+
+🏢 Tenant: customer-a
+  ✚ [tenantOptions] customer-a: onboarding/crm.reference (created)
+  ✚ [userGroups] customer-a: operators (created): assigned roles: ROLE_INVENTORY_READ, ROLE_ALARM_READ
+
+🔐 Generated 1 value(s): customer-a-admin
+   Saved to customer-a.secrets.yaml (unencrypted, permissions 0600)
+```
+
+- **Matched by domain.** Each entry is matched (case-insensitively) against the domains of the child tenants of the current tenant. Use the full domain as the platform stores it, so the entry matches on the next run and can be used in `targets.tenants`.
+- **Created when missing.** Creating a tenant requires `company` and one admin password option: `adminPass` (supports `${VAR}` and `${generate:NAME}`), `adminPasswordFrom` (a [secret reference](#secret-references) to an environment variable or a [generated value](#generated-values)), or `sendPasswordResetEmail: true` (requires `adminEmail`). The options are mutually exclusive. The result line shows the ID of the new tenant (`created: t1234567`).
+- **Tenant ID (optional).** Without `id`, the platform generates the tenant ID. Set `id` to choose it yourself, e.g. to match a customer number, or to reference the tenant by a known ID in `targets.tenants` or scripts. It is only used when creating the tenant, since a tenant ID can never be changed: if the tenant with the domain exists with another ID, or the ID is already used by a tenant with another domain, the entry fails instead of changing anything. The platform enforces its own rules for tenant IDs; the manifest only rejects IDs with spaces, dots, colons or slashes (a value with a dot would be read as a domain in `targets.tenants`).
+- **Updated when different.** For an existing tenant only `company`, `contactName`, `contactPhone` and `customProperties` are updated, and only when they differ. Custom properties are merged: keys not in the manifest are kept. The domain and the admin credentials of an existing tenant are never changed (a password generated for an existing tenant is reported as `not applied`).
+- **Never deleted.** Tenants not in the manifest are left alone, and tenants are never deleted or suspended.
+- **Subscriptions.** `applications` are subscribed to the tenant when missing (also for existing tenants); other subscriptions are kept. Use the [`applications`](#application-subscriptions) section with `targets` to unsubscribe applications.
+- **Runs once, before the targets.** The section runs once per run with the credentials of the current tenant (not per target), before the targets are resolved. A tenant created in the run can therefore be selected by `targets` (by domain, `allChildren` or `selector`) and configured by every other section. Global hooks run per target and so after this section; `hooks.sections.tenants` runs around it.
+- **Configure tenants with their admin credentials.** With `targets.credentials.mode: tenantAdmin`, the other sections log in to each tenant as its admin, using the password from the `tenants` entry. The first run creates the tenant and configures it; later runs find the generated password in the secrets file and use it again. Keep the secrets file between runs: in CI, commit it encrypted with [sops](docs/sops.md) (remove `*.secrets.yaml` from `.gitignore` and add a `.sops.yaml` creation rule for `\.secrets\.yaml$`), and commit it back after a run which generated a value.
+
+  ```yaml
+  tenants:
+    - domain: customer-a.eu-latest.cumulocity.com
+      company: Customer A
+      adminName: admin
+      adminEmail: admin@customer-a.example.com
+      adminPasswordFrom:
+        generate: customer-a-admin
+  targets:
+    tenants: [customer-a.eu-latest.cumulocity.com]
+    credentials:
+      mode: tenantAdmin
+  ```
+- **`--only tenants`** only provisions the tenants: the targets are not resolved and no other section runs. `--only` without `tenants` skips the section.
+- Most tenants are not management or enterprise tenants: creating child tenants requires the tenant management permissions of a parent tenant. With the `sessions` [credentials mode](#target-tenants), add a go-c8y-cli session for the new tenant (matched by its domain) before the run which configures it; the default `serviceUser` mode needs no extra step.
+- `export` does not include child tenants, since they are not part of the current tenant's configuration.
 
 ### Hooks
 
@@ -1104,6 +1183,7 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
        │                   │
 ┌──────────────────────────────────┐
 │             sync.go              │  orchestrator, ordering, reporting
+│  sync_child_tenants.go           │  child tenant provisioning
 │  sync_tenant.go    (options,     │
 │                     features,    │
 │                     apps)        │

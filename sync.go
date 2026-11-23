@@ -34,6 +34,7 @@ const SyncToolFragment = "c8y_TenantSync"
 
 // Section names, used by --only filtering and in the apply order
 const (
+	SectionTenants                = "tenants"
 	SectionTenantOptions          = "tenantOptions"
 	SectionFeatures               = "features"
 	SectionRetentionRules         = "retentionRules"
@@ -62,7 +63,13 @@ const (
 // the manifest declares. Device groups are synced before user groups and
 // users so roles and permissions can later be assigned on groups created in
 // the same run.
+//
+// Child tenants come first: the section runs once with the base credentials,
+// before the targets are resolved (see Syncer.Apply), so tenants created in
+// the run can be selected by the targets section and configured by all other
+// sections in the same run.
 var SectionOrder = []string{
+	SectionTenants,
 	SectionTenantOptions,
 	SectionFeatures,
 	SectionRetentionRules,
@@ -135,6 +142,11 @@ type Syncer struct {
 	// featureOverrides caches the per-tenant feature toggle overrides by
 	// feature key (tenant ID -> active)
 	featureOverrides map[string]map[string]bool
+
+	// tenantSpecs are the child tenants of the manifest, and createdTenants
+	// the IDs of those created in this run by domain (lower case)
+	tenantSpecs    []ChildTenantSpec
+	createdTenants map[string]string
 
 	// mu guards Results and the printed output: command groups record
 	// results from concurrent goroutines
@@ -248,11 +260,28 @@ func actionFromResult(status op.Status, meta map[string]any) Action {
 	return ActionUnchanged
 }
 
-// Apply resolves the target tenants and applies the manifest to each of them
-// in turn. The applications and features sections always run with the base
-// credentials (their APIs address other tenants by ID from the parent); all
-// other sections run with the target tenant's own credentials.
+// Apply provisions the child tenants, then resolves the target tenants and
+// applies the manifest to each of them in turn. The tenants section runs once
+// with the base credentials, before the targets are resolved, so a tenant
+// created in this run can be a target of the same run. The applications and
+// features sections always run with the base credentials (their APIs address
+// other tenants by ID from the parent); all other sections run with the
+// target tenant's own credentials.
 func (s *Syncer) Apply(ctx context.Context, manifest *Manifest, only []string) error {
+	// The tenantAdmin credentials mode logs in with the admin credentials of
+	// the tenants section, also when the section itself is not applied
+	s.tenantSpecs = manifest.Tenants
+	if sectionEnabled(only, SectionTenants) {
+		if err := s.applyChildTenants(ctx, manifest); err != nil {
+			return err
+		}
+		if onlySections(only, SectionTenants) {
+			// Nothing else to apply: the targets are not resolved (which
+			// could provision credentials in the target tenants)
+			return nil
+		}
+	}
+
 	spec := s.Targets
 	if spec == nil {
 		spec = manifest.Targets
@@ -307,20 +336,9 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 	// Post hooks run even when a section fails, so cleanup-style hooks
 	// always get a chance to execute
 	defer s.runHooks(ctx, "post", manifest.Hooks.Post)
-	enabled := func(section string) bool {
-		if len(only) == 0 {
-			return true
-		}
-		for _, name := range only {
-			if strings.EqualFold(strings.TrimSpace(name), section) {
-				return true
-			}
-		}
-		return false
-	}
-
 	for _, section := range SectionOrder {
-		if !enabled(section) {
+		if section == SectionTenants || !sectionEnabled(only, section) {
+			// The tenants section runs once before the targets (see Apply)
 			continue
 		}
 
@@ -377,6 +395,49 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 		}
 	}
 	return nil
+}
+
+// applyChildTenants runs the tenants section with its section hooks. It runs
+// once per run with the base credentials (not per target).
+func (s *Syncer) applyChildTenants(ctx context.Context, manifest *Manifest) error {
+	sectionHooks := manifest.Hooks.Sections[SectionTenants]
+	if err := s.runHooks(ctx, "sections."+SectionTenants+".pre", sectionHooks.Pre); err != nil {
+		return err
+	}
+	err := s.SyncTenants(ctx, manifest.Tenants)
+	s.runHooks(ctx, "sections."+SectionTenants+".post", sectionHooks.Post)
+	if err != nil {
+		return fmt.Errorf("%s: %w", SectionTenants, err)
+	}
+	return nil
+}
+
+// sectionEnabled reports whether a section is selected by the --only filter
+// (an empty filter selects all sections)
+func sectionEnabled(only []string, section string) bool {
+	if len(only) == 0 {
+		return true
+	}
+	for _, name := range only {
+		if strings.EqualFold(strings.TrimSpace(name), section) {
+			return true
+		}
+	}
+	return false
+}
+
+// onlySections reports whether the --only filter selects nothing but the
+// given section
+func onlySections(only []string, section string) bool {
+	if len(only) == 0 {
+		return false
+	}
+	for _, name := range only {
+		if !strings.EqualFold(strings.TrimSpace(name), section) {
+			return false
+		}
+	}
+	return true
 }
 
 // Summary aggregates results per action

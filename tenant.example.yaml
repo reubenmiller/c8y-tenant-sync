@@ -253,6 +253,18 @@ software:
         assets: ["*.deb"]
         token: ${GITHUB_TOKEN} # optional, required for private repos
 
+  # The latest tedge and tedge-agent packages from the public thin-edge.io
+  # Cloudsmith repository (also thinedge/tedge-main and thinedge/community).
+  # Name, version, architecture and type come from the package metadata, and
+  # the versions link to the Cloudsmith download URLs
+  - source:
+      cloudsmith:
+        repo: https://broadcasts.cloudsmith.com/thinedge/tedge-release
+        packages: [tedge, tedge-agent]
+        formats: [deb, alpine]
+        architectures: [arm64, aarch64]
+        version: latest # or "latest-N", "all", or an exact version
+
   # Reference release assets by URL instead of uploading the binaries
   # (only works for public repositories)
   - namePrefix: "linked-"

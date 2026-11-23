@@ -33,6 +33,10 @@ type ResolvedFile struct {
 	// GitHub release tag) used as a fallback when the filename does not
 	// contain a version.
 	VersionHint string
+
+	// Package is the metadata of a package from a package repository
+	// (cloudsmith), used instead of parsing the filename
+	Package *PackageInfo
 }
 
 // SourceResolver resolves manifest sources into local files / URL references
@@ -49,6 +53,9 @@ type SourceResolver struct {
 
 	// HTTPClient used for GitHub API and asset downloads
 	HTTPClient *http.Client
+
+	// CloudsmithAPI overrides the Cloudsmith API base URL (tests)
+	CloudsmithAPI string
 }
 
 func NewSourceResolver(baseDir, workDir string, skipDownload bool) *SourceResolver {
@@ -72,6 +79,8 @@ func (r *SourceResolver) Resolve(source Source) ([]ResolvedFile, error) {
 		}}, nil
 	case source.GitHub != nil:
 		return r.resolveGitHub(source.GitHub)
+	case source.Cloudsmith != nil:
+		return r.resolveCloudsmith(source.Cloudsmith)
 	default:
 		return nil, fmt.Errorf("source is empty")
 	}

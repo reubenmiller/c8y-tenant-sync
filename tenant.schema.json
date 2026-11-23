@@ -140,6 +140,67 @@
         "domain"
       ]
     },
+    "CloudsmithSource": {
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/repository or its URL (e.g. https://broadcasts.cloudsmith.com/thinedge/tedge-release)",
+          "examples": [
+            "thinedge/tedge-release"
+          ]
+        },
+        "packages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1,
+          "description": "Package names or glob patterns (e.g. tedge or tedge-*). Exact names are faster: the repository is then only read until the selected versions are found while a glob reads every package whose name starts with the part before the first wildcard"
+        },
+        "formats": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "deb",
+              "rpm",
+              "alpine",
+              "raw"
+            ]
+          },
+          "type": "array",
+          "description": "Package formats (default: all of them)"
+        },
+        "architectures": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "arm64"
+            ]
+          },
+          "type": "array",
+          "description": "Package architectures as named by the package format (e.g. arm64 and amd64 for deb or aarch64 and x86_64 for rpm and alpine); default: all"
+        },
+        "version": {
+          "type": "string",
+          "description": "Which versions of each package and format to use: latest (default) or latest-N for the latest N versions or all or an exact version",
+          "examples": [
+            "latest",
+            "latest-3",
+            "2.1.0"
+          ]
+        },
+        "linkOnly": {
+          "type": "boolean",
+          "description": "Reference the package download URL instead of downloading and uploading the binary. Default: true (devices download the packages from Cloudsmith)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "repo",
+        "packages"
+      ]
+    },
     "CommandGroupSpec": {
       "properties": {
         "name": {
@@ -938,6 +999,11 @@
                 "required": [
                   "github"
                 ]
+              },
+              {
+                "required": [
+                  "cloudsmith"
+                ]
               }
             ]
           },
@@ -956,6 +1022,11 @@
               {
                 "required": [
                   "github"
+                ]
+              },
+              {
+                "required": [
+                  "cloudsmith"
                 ]
               }
             ]
@@ -976,11 +1047,40 @@
                 "required": [
                   "url"
                 ]
+              },
+              {
+                "required": [
+                  "cloudsmith"
+                ]
               }
             ]
           },
           "required": [
             "github"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "url"
+                ]
+              },
+              {
+                "required": [
+                  "github"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "cloudsmith"
           ]
         }
       ],
@@ -1003,6 +1103,10 @@
         "github": {
           "$ref": "#/$defs/GitHubSource",
           "description": "Pull release assets from a GitHub repository"
+        },
+        "cloudsmith": {
+          "$ref": "#/$defs/CloudsmithSource",
+          "description": "Pull packages from a Cloudsmith repository (e.g. the public thin-edge.io repositories); the name and version and architecture come from the package metadata"
         },
         "optional": {
           "type": "boolean",

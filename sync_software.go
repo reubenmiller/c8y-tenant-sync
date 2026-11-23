@@ -37,6 +37,19 @@ func (s *Syncer) SyncSoftware(ctx context.Context, specs []SoftwareSpec) error {
 
 		var infos []*SoftwareInfo
 		for _, file := range files {
+			if file.Package != nil {
+				// Package repositories (cloudsmith) provide the metadata
+				info, err := cloudsmithSoftwareInfo(file, spec)
+				if err == nil {
+					err = ValidateSoftwareInfo(info)
+				}
+				if err != nil {
+					s.record(SectionSoftware, file.Filename, ActionFailed, "validate", err)
+					continue
+				}
+				infos = append(infos, info)
+				continue
+			}
 			path := file.Path
 			if path == "" {
 				// URL-only source: parse from the asset filename

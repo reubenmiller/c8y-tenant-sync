@@ -37,6 +37,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
   - **Custom types**: any extension, with a `versionPattern` regex for custom naming schemes
 - ⚙️ **Configuration repository sync**: upload configuration files with type and device type filters
 - 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
+- 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
@@ -480,6 +481,57 @@ source:
   # 3. External URL (referenced, not uploaded)
   url: https://example.com/files/config.toml
 ```
+
+```yaml
+source:
+  # 4. Cloudsmith repository (see "Cloudsmith packages" below)
+  cloudsmith:
+    repo: thinedge/tedge-release   # or https://broadcasts.cloudsmith.com/thinedge/tedge-release
+    packages: [tedge, tedge-agent] # names or glob patterns
+```
+
+#### Cloudsmith packages
+
+thin-edge.io publishes its packages to public [Cloudsmith](https://cloudsmith.io) repositories. A `cloudsmith` source creates software versions from them, like a GitHub source does from release assets:
+
+```yaml
+software:
+  # The latest tedge and tedge-agent release, for arm64 devices with apt and apk
+  - source:
+      cloudsmith:
+        repo: https://broadcasts.cloudsmith.com/thinedge/tedge-release
+        packages: [tedge, tedge-agent]
+        formats: [deb, alpine]
+        architectures: [arm64, aarch64]
+
+  # The two newest development builds of tedge
+  - source:
+      cloudsmith:
+        repo: thinedge/tedge-main
+        packages: [tedge]
+        formats: [deb]
+        version: latest-2
+
+  # Every community plugin whose name starts with tedge-dot-
+  - source:
+      cloudsmith:
+        repo: thinedge/community
+        packages: ["tedge-dot-*"]
+```
+
+| Field | Description |
+|-------|-------------|
+| `repo` | `owner/repository`, or the URL of the repository, such as its broadcast page `https://broadcasts.cloudsmith.com/thinedge/tedge-release` |
+| `packages` | Package names or glob patterns (required) |
+| `formats` | `deb`, `rpm`, `alpine` and/or `raw` (default: all of them) |
+| `architectures` | Architectures as the package format names them, e.g. `arm64`/`amd64` for deb and `aarch64`/`x86_64` for rpm and alpine (default: all) |
+| `version` | `latest` (default), `latest-N` for the newest N versions, `all`, or an exact version such as `2.1.0` |
+| `linkOnly` | `true` (default): the software version references the Cloudsmith download URL and devices download the package from Cloudsmith. `false`: download the packages and upload them to Cumulocity |
+
+- **Metadata instead of filenames.** The name, version and architecture come from the package metadata, so every package format works, including apk files whose names have no architecture. The software type follows the format: `deb` → `apt`, `rpm` → `rpm`, `alpine` → `apk`; `raw` packages get the type from the filename (e.g. `archive`). The entry's `type`, `namePrefix` and `version` override them as for other sources.
+- **Versions as the package manager uses them.** The version is Cloudsmith's version of the package, e.g. `2.1.0` for deb, `2.1.0-1` for rpm (with the release) and `2.1.0-r0` for apk, so it can be passed to the package manager as it is.
+- **Selected per package and format.** `latest` and `latest-N` select the newest versions of each package name and format (sorted by Cloudsmith), with every architecture of those versions. Repositories with development builds such as `tedge-main` publish many versions, so for exact package names the listing stops as soon as the selected versions are complete. A glob reads every package whose name starts with the part before the first wildcard.
+- **Public repositories.** The packages are listed through the Cloudsmith API without credentials. Private repositories are not supported yet.
 
 #### Linking or uploading GitHub assets
 

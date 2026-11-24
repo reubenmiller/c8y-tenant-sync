@@ -91,6 +91,12 @@ func (s *Syncer) upsertConfiguration(ctx context.Context, spec ConfigurationSpec
 		result = s.Client.Repository.Configuration.UpsertByName(ctx, createOpts)
 	} else {
 		result = s.Client.Repository.Configuration.GetOrCreate(ctx, createOpts)
+		// An existing item is replaced when its binary source changed, e.g.
+		// github.linkOnly switched between linking and uploading
+		if result.Err == nil && existingFound(result.Meta) &&
+			binarySourceChanged(result.Data.URL(), createOpts.URL, createOpts.File.FilePath != "") {
+			result = s.Client.Repository.Configuration.UpsertByName(ctx, createOpts)
+		}
 	}
 	if result.Err != nil {
 		s.record(SectionConfiguration, item, ActionFailed, detail, result.Err)

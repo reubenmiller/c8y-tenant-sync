@@ -244,6 +244,12 @@ func (s *Syncer) uploadSoftwareVersion(ctx context.Context, info *SoftwareInfo, 
 		result = s.Client.Repository.Software.Versions.UpsertByVersion(ctx, createOpts)
 	} else {
 		result = s.Client.Repository.Software.Versions.GetOrCreateVersion(ctx, createOpts)
+		// An existing version is replaced when its binary source changed,
+		// e.g. github.linkOnly switched between linking and uploading
+		if result.Err == nil && existingFound(result.Meta) &&
+			binarySourceChanged(result.Data.URL(), createOpts.URL, createOpts.File.FilePath != "") {
+			result = s.Client.Repository.Software.Versions.UpsertByVersion(ctx, createOpts)
+		}
 	}
 	if result.Err != nil {
 		return ActionFailed, result.Err

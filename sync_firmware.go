@@ -145,6 +145,12 @@ func (s *Syncer) syncFirmwareItem(ctx context.Context, spec FirmwareSpec, name s
 			result = s.Client.Repository.Firmware.Versions.UpsertByVersion(ctx, createOpts)
 		} else {
 			result = s.Client.Repository.Firmware.Versions.GetOrCreateVersion(ctx, createOpts)
+			// An existing version is replaced when its binary source changed,
+			// e.g. github.linkOnly switched between linking and uploading
+			if result.Err == nil && existingFound(result.Meta) &&
+				binarySourceChanged(result.Data.URL(), createOpts.URL, createOpts.File.FilePath != "") {
+				result = s.Client.Repository.Firmware.Versions.UpsertByVersion(ctx, createOpts)
+			}
 		}
 		if result.Err != nil {
 			s.record(SectionFirmware, item, ActionFailed, firmwareDetail(info), result.Err)

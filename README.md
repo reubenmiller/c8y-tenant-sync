@@ -600,6 +600,8 @@ firmware:
 
 Software and configuration entries upload by default. Set `linkOnly: true` on them to link instead.
 
+Changing `linkOnly` on an entry which was already synced updates the existing versions on the next run, without `--force`: a linked version is replaced with an uploaded binary, an uploaded one is switched to the link (and its old binary removed), and a link whose URL changed is updated. An already uploaded binary is not compared by content, so replacing it still needs `--force`.
+
 Any source can be marked `optional: true`: when the local path does not exist or nothing matches (no files, no release assets), the entry is reported as `skipped` instead of failing the run — useful when a build directory only exists on some pipelines.
 
 With a GitHub source, `release: all` mirrors every release into the tenant, and `release: latest-5` keeps just the most recent five — pointing a firmware entry at an image repository is enough to populate the firmware version history:

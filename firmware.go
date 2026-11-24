@@ -109,11 +109,14 @@ func ParseFirmwareFromFilename(filePath, filename, versionPattern string) (*Firm
 		if err != nil {
 			return nil, fmt.Errorf("invalid versionPattern %q: %w", versionPattern, err)
 		}
-		if match := re.FindStringSubmatch(filename); len(match) >= 2 {
-			info.Version = match[1]
-			// Name is everything before the full pattern match
-			if idx := strings.Index(base, match[0]); idx > 0 {
-				info.Name = strings.Trim(base[:idx], "-_.")
+		if loc := re.FindStringSubmatchIndex(filename); len(loc) >= 4 && loc[2] >= 0 {
+			info.Version = filename[loc[2]:loc[3]]
+			// Name is everything before the full pattern match. The match
+			// is located in the filename (not the extension-stripped base),
+			// so patterns which include the extension, e.g. `\.app\.bin$`,
+			// also work; base is a prefix of filename, so the positions agree.
+			if start := loc[0]; start > 0 && start <= len(base) {
+				info.Name = strings.Trim(base[:start], "-_.")
 			} else {
 				info.Name = base
 			}

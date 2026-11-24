@@ -80,6 +80,27 @@ func TestParseFirmwareFromFilename(t *testing.T) {
 			expectedName:    "FW_MODEL7",
 			expectedVersion: "20240501",
 		},
+		// versionPattern matching up to the end of the filename (incl. extension)
+		{
+			filename:        "tedge-agent-nuttx-full-esp32c6-devkitc-0.17.2.app.bin",
+			versionPattern:  `-(\d+\.\d+\.\d+)\.app\.bin$`,
+			expectedName:    "tedge-agent-nuttx-full-esp32c6-devkitc",
+			expectedVersion: "0.17.2",
+		},
+		// versionPattern matching only up to the start of the extension
+		{
+			filename:        "tedge-agent-nuttx-full-esp32c6-devkitc-0.17.2.app.bin",
+			versionPattern:  `-(\d+\.\d+\.\d+)\.app`,
+			expectedName:    "tedge-agent-nuttx-full-esp32c6-devkitc",
+			expectedVersion: "0.17.2",
+		},
+		// Yocto ".rootfs" suffix is not part of the name when the pattern spans it
+		{
+			filename:        "image-raspberrypi4-BUILD42.rootfs.wic.bz2",
+			versionPattern:  `-BUILD(\d+)\.rootfs\.wic\.bz2$`,
+			expectedName:    "image-raspberrypi4",
+			expectedVersion: "42",
+		},
 	}
 
 	for _, tc := range testCases {

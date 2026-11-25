@@ -80,6 +80,12 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 	printSectionCount(SectionFirmware, len(manifest.Firmware))
 	printSectionCount(SectionConfiguration, len(manifest.Configuration))
 	printSectionCount(SectionSmartRest, len(manifest.SmartRestTemplates))
+	dtmCount := 0
+	if manifest.DigitalTwin != nil {
+		dtmCount = len(manifest.DigitalTwin.PropertyDefinitions) + len(manifest.DigitalTwin.AssetDefinitions)
+	}
+	printSectionCount(SectionDigitalTwin, dtmCount)
+	printSectionCount(SectionSmartFunctions, len(manifest.SmartFunctions))
 	printSectionCount(SectionDeviceProfiles, len(manifest.DeviceProfiles))
 
 	if !checkSources {
@@ -121,6 +127,21 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 	}
 	for i, spec := range manifest.SmartRestTemplates {
 		check(SectionSmartRest, i, spec.resolvedSource())
+	}
+	if manifest.DigitalTwin != nil {
+		for _, key := range manifest.DigitalTwin.keys() {
+			for i, entry := range key.specs {
+				if entry.Source != nil {
+					check(SectionDigitalTwin+"."+key.name, i, resolvedDigitalTwinSource(*entry.Source))
+				}
+			}
+		}
+	}
+	for i, spec := range manifest.SmartFunctions {
+		if spec.IsInline() {
+			continue // no source to resolve
+		}
+		check(SectionSmartFunctions, i, spec.resolvedSource())
 	}
 	for i, spec := range manifest.TrustedCertificates {
 		check(SectionTrustedCertificates, i, spec.resolvedSource())

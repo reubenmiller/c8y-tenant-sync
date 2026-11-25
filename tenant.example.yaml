@@ -368,6 +368,64 @@ smartrestTemplates:
       path: ./exports/custom_devmgmt.json
       optional: true
 
+# Digital Twin Manager definitions, inline or from definition files (JSON/YAML
+# as returned by the DTM API). Property definitions are applied before the
+# asset definitions using them, and definitions are only written when they
+# differ.
+digitalTwin:
+  managedBy: tenant-sync # tag added to every definition the sync writes
+  # prune: true          # delete definitions tagged managedBy which are no longer declared
+  propertyDefinitions:
+    # Definition files (JSON/YAML as returned by the DTM API)
+    - source:
+        path: ./dtm/properties
+        optional: true
+    # Or a single file by URL
+    - source:
+        url: https://raw.githubusercontent.com/thin-edge/tiny-edge/refs/heads/main/cumulocity/dtm/tiny_edge_remote_access.json
+    # Or inline
+    - identifier: maxFlow
+      contexts: [asset]
+      jsonSchema: {title: Maximum flow, type: number, minimum: 0}
+  assetDefinitions:
+    - identifier: Pump
+      jsonSchema: {title: Pump}
+      composition:
+        allowedProperties:
+          - identifier: maxFlow
+
+# Deploy Data Preparation smart functions (rules) from package folders
+# (data-prep.yaml, the smart function and tests/*.yaml) or .tar.gz archives
+# exported by the Data Preparation application. A rule is only deployed when
+# its code, configuration or tests changed.
+smartFunctions:
+  - source:
+      path: ./smartfunctions
+      optional: true
+    waitTimeout: 2m # wait for the deployment to finish (default 60s)
+
+  # Or an inline rule, declared in the manifest
+  - name: firmware-progress
+    description: Firmware download progress to c8y_FirmwareDownload events
+    input:
+      topicPattern: "te/device/*///progress/firmware"
+    code: |
+      export function onMessage(message, context) {
+        const data = JSON.parse(new TextDecoder().decode(message.payload));
+        return [{
+          cumulocityType: 'event',
+          payload: { type: 'c8y_FirmwareDownload', text: `Firmware download: ${data.percent}%`, time: message.time },
+          externalSource: [{ externalId: message.clientID, type: 'c8y_Serial' }],
+        }];
+      }
+    tests:
+      downloading:
+        inputs:
+          - topic: te/device/dev01///progress/firmware
+            clientID: dev01
+            payload: {percent: 40}
+            time: "2026-01-01T00:00:00Z"
+
 # Create device profiles referencing the items synced above.
 # Binary URLs are resolved automatically from the tenant (which is why this
 # section runs after software/firmware/configuration), or given explicitly

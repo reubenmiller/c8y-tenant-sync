@@ -105,7 +105,7 @@ func samePath(a, b string) bool {
 
 // isChange reports whether an action changes (or would change) the tenant
 func isChange(action Action) bool {
-	return action == ActionCreated || action == ActionUpdated || action == ActionPlanned
+	return action == ActionCreated || action == ActionUpdated || action == ActionDeleted || action == ActionPlanned
 }
 
 // countChanges returns the number of created, updated and planned results

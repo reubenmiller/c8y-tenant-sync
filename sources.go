@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +10,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -508,4 +512,31 @@ func (r *SourceResolver) downloadAsset(source *GitHubSource, tag string, asset g
 	}
 
 	return targetPath, nil
+}
+
+// Fetch downloads a file which only references a URL (a url source or a
+// linkOnly asset) into the work directory, for sections which need the file
+// content. Local files are returned as they are, and nothing is downloaded
+// when SkipDownload is set (dry-run).
+func (r *SourceResolver) Fetch(file ResolvedFile) (ResolvedFile, error) {
+	if file.Path != "" || file.URL == "" || r.SkipDownload {
+		return file, nil
+	}
+	name := file.Filename
+	if parsed, err := url.Parse(file.URL); err == nil {
+		if base := path.Base(parsed.Path); base != "" && base != "." && base != "/" {
+			name = base
+		}
+	}
+	// URLs with the same filename (e.g. one per branch) must not overwrite
+	// each other
+	sum := sha256.Sum256([]byte(file.URL))
+	dir := filepath.Join(r.WorkDir, "url", hex.EncodeToString(sum[:])[:12])
+	target := filepath.Join(dir, name)
+	if err := r.downloadURL(file.URL, dir, target); err != nil {
+		return file, fmt.Errorf("failed to download %s: %w", file.URL, err)
+	}
+	file.Path = target
+	file.Filename = name
+	return file, nil
 }

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,9 @@ type Manifest struct {
 	Configuration  []ConfigurationSpec `yaml:"configuration" json:"configuration,omitempty" jsonschema:"description=Configuration files to sync into the configuration repository"`
 
 	SmartRestTemplates []SmartRestTemplateSpec `yaml:"smartrestTemplates" json:"smartrestTemplates,omitempty" jsonschema:"description=SmartREST 2.0 template collections to sync from exported JSON files (one collection per file)"`
+
+	DigitalTwin    *DigitalTwinSpec    `yaml:"digitalTwin" json:"digitalTwin,omitempty" jsonschema:"description=Digital Twin Manager (DTM) property and asset definitions to create/update (matched by identifier, and contexts for property definitions); only written when they differ"`
+	SmartFunctions []SmartFunctionSpec `yaml:"smartFunctions" json:"smartFunctions,omitempty" jsonschema:"description=Data Preparation smart functions (rules) to deploy from rule package folders or exported .tar.gz archives; only deployed when the code, configuration or tests differ"`
 
 	DeviceProfiles []DeviceProfileSpec `yaml:"deviceProfiles" json:"deviceProfiles,omitempty" jsonschema:"description=Device profiles referencing firmware/software/configuration in the tenant"`
 	Commands       []CommandGroupSpec  `yaml:"commands" json:"commands,omitempty" jsonschema:"description=Named groups of shell commands run as the last section; actions within a group run in sequence and groups run concurrently"`
@@ -803,6 +807,148 @@ type SmartRestTemplateSpec struct {
 	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the exported SmartREST 2.0 collection JSON files come from (directories are scanned for *.json by default)"`
 }
 
+// SmartFunctionSpec deploys Data Preparation smart functions (rules) from
+// rule packages: folders laid out like the package archive (data-prep.yaml,
+// the bundled smart function and tests/*.yaml) or .tar.gz archives exported
+// by the Data Preparation application. A rule is only deployed when its code,
+// configuration or tests differ from the deployed rule.
+type SmartFunctionSpec struct {
+	// Name is the rule name. For sources it overrides the name, which
+	// defaults to the package folder name or the archive name without
+	// .tar.gz/.tgz; inline rules require it.
+	Name string `yaml:"name" json:"name,omitempty" jsonschema:"description=Rule name: required for an inline rule; for a source it defaults to the package folder name or the archive filename without .tar.gz/.tgz (only sensible for sources with a single package)"`
+
+	// Source provides the packages. Directories are scanned for
+	// data-prep.yaml files (each marks a package folder) and .tar.gz/.tgz
+	// archives by default.
+	Source Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the rule packages come from: a package folder with data-prep.yaml or a folder of package folders and archives or a .tar.gz archive or a url or GitHub release assets (directories are scanned for data-prep.yaml and *.tar.gz/*.tgz by default); without a source the entry declares an inline rule"`
+
+	// Inline rule (without a source)
+
+	Description string                           `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of an inline rule"`
+	Tags        []string                         `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Tags of an inline rule"`
+	Disabled    bool                             `yaml:"disabled" json:"disabled,omitempty" jsonschema:"description=Deploy an inline rule in the disabled state"`
+	Input       *SmartFunctionInputSpec          `yaml:"input" json:"input,omitempty" jsonschema:"description=Which messages an inline rule receives"`
+	Code        string                           `yaml:"code" json:"code,omitempty" jsonschema:"description=JavaScript code of an inline rule (exporting onMessage); mutually exclusive with codeFile"`
+	CodeFile    string                           `yaml:"codeFile" json:"codeFile,omitempty" jsonschema:"description=Local file with the JavaScript code of an inline rule (relative paths are resolved against the directory of the manifest file which declares it); mutually exclusive with code"`
+	Tests       map[string]SmartFunctionTestSpec `yaml:"tests" json:"tests,omitempty" jsonschema:"description=Tests of an inline rule by name: input messages and optionally the expected output"`
+
+	// WaitTimeout is how long to wait for the deployment to finish so
+	// deployment errors are reported
+	WaitTimeout string `yaml:"waitTimeout" json:"waitTimeout,omitempty" jsonschema:"description=How long to wait for each deployment to finish so engine errors are reported (Go duration; default 60s; 0 does not wait),example=2m"`
+}
+
+// IsInline reports whether the entry declares an inline rule (no source)
+func (spec SmartFunctionSpec) IsInline() bool {
+	return !spec.Source.IsSet()
+}
+
+// SmartFunctionInputSpec selects the messages an inline rule receives (the
+// input block of data-prep.yaml)
+type SmartFunctionInputSpec struct {
+	Transport       string `yaml:"transport" json:"transport,omitempty" jsonschema:"description=Transport type (default mqtt; the only supported value),example=mqtt"`
+	TopicPattern    string `yaml:"topicPattern" json:"topicPattern" jsonschema:"description=Topic filter; * matches zero or more characters (MQTT wildcards + and # are not supported),example=te/device/*///e/*"`
+	ClientIDPattern string `yaml:"clientIDPattern" json:"clientIDPattern,omitempty" jsonschema:"description=Device client ID filter; * is a wildcard"`
+	TransportID     string `yaml:"transportID" json:"transportID,omitempty" jsonschema:"description=Transport connection (defaults to the transport)"`
+}
+
+// SmartFunctionTestSpec is a test of an inline rule
+type SmartFunctionTestSpec struct {
+	Inputs         []SmartFunctionTestInputSpec `yaml:"inputs" json:"inputs" jsonschema:"description=Device messages fed to the smart function"`
+	ExpectedOutput SmartFunctionExpectedOutput  `yaml:"expectedOutput" json:"expectedOutput,omitempty"`
+}
+
+// SmartFunctionTestInputSpec is a device message of a test
+type SmartFunctionTestInputSpec struct {
+	Topic    string `yaml:"topic" json:"topic" jsonschema:"description=MQTT topic of the message,example=te/device/dev01///e/zephyr_Identify"`
+	ClientID string `yaml:"clientID" json:"clientID" jsonschema:"description=Client ID of the device,example=dev01"`
+	// Payload is a string, or a value which is sent as JSON
+	Payload       any    `yaml:"payload" json:"payload,omitempty" jsonschema:"description=Message payload: a string or an object/array/number (sent as JSON)"`
+	PayloadFormat string `yaml:"payloadFormat" json:"payloadFormat,omitempty" jsonschema:"description=Payload format (default: json when the payload is JSON or text otherwise),enum=json,enum=text,enum=base64"`
+	Time          string `yaml:"time" json:"time" jsonschema:"description=Message time as an ISO 8601 timestamp with a time zone,example=2026-01-01T00:00:00Z"`
+}
+
+// DefaultSmartFunctionWaitTimeout is how long a deployment is awaited when
+// waitTimeout is not set
+const DefaultSmartFunctionWaitTimeout = 60 * time.Second
+
+// waitTimeout returns the parsed wait timeout (validated by Manifest.Validate)
+func (spec SmartFunctionSpec) waitTimeout() time.Duration {
+	if spec.WaitTimeout == "" {
+		return DefaultSmartFunctionWaitTimeout
+	}
+	d, err := time.ParseDuration(spec.WaitTimeout)
+	if err != nil {
+		return DefaultSmartFunctionWaitTimeout
+	}
+	return d
+}
+
+// DigitalTwinSpec declares Digital Twin Manager definitions, inline and/or
+// from model files. All definitions are applied together in dependency
+// order: property definitions first, then asset definitions (a definition
+// after the asset definitions its composition allows as sub-assets).
+type DigitalTwinSpec struct {
+	// ManagedBy is a tag added to every definition the sync writes
+	ManagedBy string `yaml:"managedBy" json:"managedBy,omitempty" jsonschema:"description=Tag added to every definition written by the sync; required by prune to find the definitions the manifest owns,example=tenant-sync"`
+
+	// Prune deletes definitions tagged managedBy which the manifest no
+	// longer declares
+	Prune *bool `yaml:"prune" json:"prune,omitempty" jsonschema:"description=Delete definitions tagged managedBy which are no longer declared (requires managedBy; default false)"`
+
+	PropertyDefinitions []DigitalTwinDefinitionSpec `yaml:"propertyDefinitions" json:"propertyDefinitions,omitempty" jsonschema:"description=Property definitions (matched by identifier and contexts): each entry is an inline definition or a source of definition files"`
+	AssetDefinitions    []DigitalTwinDefinitionSpec `yaml:"assetDefinitions" json:"assetDefinitions,omitempty" jsonschema:"description=Asset definitions (matched by identifier; their structure is described by composition): each entry is an inline definition or a source of definition files"`
+}
+
+// PruneEnabled reports whether pruning is enabled
+func (spec *DigitalTwinSpec) PruneEnabled() bool {
+	return spec != nil && spec.Prune != nil && *spec.Prune
+}
+
+// DigitalTwinDefinitionSpec is a property or asset definition declared
+// inline, or a source of definition files (all other fields empty)
+type DigitalTwinDefinitionSpec struct {
+	// Source loads definitions from files instead of declaring one inline
+	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Load definitions from files instead of declaring one inline: JSON or YAML definitions as returned by the DTM API (a file can hold several: YAML documents separated by --- or a list); directories are scanned for *.json and *.yaml and *.yml by default"`
+
+	Identifier  string                      `yaml:"identifier" json:"identifier,omitempty" jsonschema:"description=Unique identifier of the definition (also the fragment name of a property),example=maxFlow"`
+	Contexts    []string                    `yaml:"contexts" json:"contexts,omitempty" jsonschema:"description=Domain entities a property definition applies to (property definitions only),example=asset"`
+	Tags        []string                    `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Tags of the definition (compared as a set)"`
+	JSONSchema  map[string]any              `yaml:"jsonSchema" json:"jsonSchema,omitempty" jsonschema:"description=JSON schema of the definition (e.g. title and type); fields generated by the server are kept"`
+	Composition *DigitalTwinCompositionSpec `yaml:"composition" json:"composition,omitempty" jsonschema:"description=Properties and sub-assets the asset definition allows (asset definitions only)"`
+	Fragments   map[string]any              `yaml:"fragments" json:"fragments,omitempty" jsonschema:"description=Additional custom fragments of the definition"`
+}
+
+// DigitalTwinCompositionSpec lists the properties and sub-assets an asset
+// definition allows
+type DigitalTwinCompositionSpec struct {
+	AllowedProperties    []DigitalTwinAllowedItem `yaml:"allowedProperties" json:"allowedProperties,omitempty" jsonschema:"description=Property definitions an asset of this type can have"`
+	AllowedSubAssets     []DigitalTwinAllowedItem `yaml:"allowedSubAssets" json:"allowedSubAssets,omitempty" jsonschema:"description=Asset definitions allowed as sub-assets"`
+	AdditionalProperties *bool                    `yaml:"additionalProperties" json:"additionalProperties,omitempty" jsonschema:"description=Allow properties which are not listed"`
+	AdditionalSubAssets  *bool                    `yaml:"additionalSubAssets" json:"additionalSubAssets,omitempty" jsonschema:"description=Allow sub-assets which are not listed"`
+}
+
+// DigitalTwinAllowedItem references a property or asset definition
+type DigitalTwinAllowedItem struct {
+	Identifier string `yaml:"identifier" json:"identifier" jsonschema:"description=Identifier of the property or asset definition"`
+	MinOccurs  string `yaml:"minOccurs" json:"minOccurs,omitempty" jsonschema:"description=Minimum occurrences (server default when empty),example=1"`
+	MaxOccurs  string `yaml:"maxOccurs" json:"maxOccurs,omitempty" jsonschema:"description=Maximum occurrences; * for unbounded (server default when empty),example=*"`
+}
+
+// Key identifies the definition within its kind: the identifier and, for
+// property definitions, the sorted contexts. Source entries have no key.
+func (d DigitalTwinDefinitionSpec) Key() string {
+	if d.Identifier == "" || d.Source != nil {
+		return ""
+	}
+	if len(d.Contexts) == 0 {
+		return d.Identifier
+	}
+	contexts := slices.Clone(d.Contexts)
+	slices.Sort(contexts)
+	return d.Identifier + "[" + strings.Join(contexts, ",") + "]"
+}
+
 // DeviceProfileSpec creates a device profile referencing firmware, software
 // and configuration already present in the tenant (typically synced by the
 // earlier sections of the same manifest).
@@ -1391,6 +1537,8 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("smartrestTemplates[%d]: url sources are not supported (the collection file content must be available locally)", i))
 		}
 	}
+	errs = append(errs, validateSmartFunctions(m.SmartFunctions)...)
+	errs = append(errs, m.DigitalTwin.validate()...)
 	for i, profile := range m.DeviceProfiles {
 		if profile.Name == "" {
 			errs = append(errs, fmt.Sprintf("deviceProfiles[%d]: name is required", i))

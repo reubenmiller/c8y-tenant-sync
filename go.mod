@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/Masterminds/semver/v3 v3.3.1
 	github.com/invopop/jsonschema v0.13.0
-	github.com/reubenmiller/go-c8y/v2 v2.0.0-20261119064753-3d2e6729d3e0
+	github.com/reubenmiller/go-c8y/v2 v2.0.0-20261124234056-c93e8ca745d4
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1

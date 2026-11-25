@@ -50,6 +50,18 @@ software:
 #   - source:
 #       path: ./smartrest # collection JSON files exported by the platform
 
+# digitalTwin:
+#   propertyDefinitions:
+#     - source:
+#         path: ./dtm/properties # definition files (JSON/YAML as returned by the DTM API)
+#     - identifier: maxFlow
+#       contexts: [asset]
+#       jsonSchema: {title: Maximum flow, type: number}
+
+# smartFunctions:
+#   - source:
+#       path: ./smartfunctions # rule package folders (data-prep.yaml) or exported *.tar.gz
+
 # tenantOptions:
 #   - category: configuration
 #     key: my.setting

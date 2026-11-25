@@ -46,6 +46,8 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
 - 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
+- 🧬 **Digital Twin Manager definitions**: create and update property and asset definitions (plus measurement, event and alarm definitions) inline or from model files, in dependency order, with optional pruning of definitions the manifest no longer declares
+- 🧪 **Smart functions**: deploy Data Preparation rules from package folders or exported `.tar.gz` archives, only when the code, configuration or tests changed, and report deployment errors
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, user groups, certificates) from per-environment or per-customer manifests
 - 🏗️ **Child tenant provisioning**: declare child tenants (domain, company, admin, contact, custom properties, subscriptions) and create them from the parent tenant, then configure them with the rest of the manifest in the same run
@@ -55,7 +57,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree and inventory roles)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, Digital Twin Manager definitions and smart functions)
 
 ## Installation
 
@@ -158,7 +160,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -352,6 +354,8 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `applications` | Applications the tenant is subscribed to but does not own, such as the built-in microservices (`--application-type MICROSERVICE,HOSTED` also exports web applications) |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
 | `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
+| `digitalTwin` | The tenant's own property and asset definitions. Library definitions and definitions shared from the enterprise tenant are not exported, and neither are fields the server generates (such as `$schema`) or maintains (such as `lastUpdated`). Other custom fields, such as an asset definition's `icon`, are exported as `fragments` |
+| `smartFunctions` | The deployed Data Preparation rules as [inline rules](#inline-rules), with their code and tests. Drafts and the AI chat history are not exported |
 
 | Flag | Description |
 |------|-------------|
@@ -361,7 +365,11 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `--application-type` | Types of subscribed applications to export (default: `MICROSERVICE`) |
 | `--force` | Overwrite the output file |
 
-`$` in exported values is written as `$$`, so values are not expanded as environment variables when the manifest is loaded. Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
+`$` in exported values is written as `$$`, so values are not expanded as environment variables when the manifest is loaded. This includes smart function code: a JavaScript template literal such as `${data.name}` appears as `$${data.name}` in the manifest and is deployed unchanged.
+
+A tenant without the Digital Twin Manager or Data Preparation skips that section with a note, so a full export also works there.
+
+Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
 
 ## The Manifest
 
@@ -973,6 +981,144 @@ A collection is stored as a managed object of type `c8y_SmartRest2Template` and 
 
 Since the file content must be read, `url` sources are not supported for this section (GitHub release assets work — they are downloaded first).
 
+### Digital Twin Manager definitions
+
+The `digitalTwin` section creates and updates [Digital Twin Manager](https://cumulocity.com/docs/digital-twin-manager/) property and asset definitions. Each entry of `propertyDefinitions` and `assetDefinitions` is either a definition declared inline, or a `source` of definition files:
+
+```yaml
+digitalTwin:
+  managedBy: tenant-sync # optional: tag added to every definition the sync writes
+  prune: false           # true deletes definitions tagged managedBy which are no longer declared
+
+  propertyDefinitions:
+    # Definition files: directories are scanned for *.json, *.yaml and *.yml
+    - source:
+        path: ./dtm/properties
+
+    # A single file by URL (downloaded on each run)
+    - source:
+        url: https://raw.githubusercontent.com/thin-edge/tiny-edge/refs/heads/main/cumulocity/dtm/tiny_edge_remote_access.json
+
+    # Inline
+    - identifier: maxFlow
+      contexts: [asset]
+      jsonSchema: {title: Maximum flow, type: number, minimum: 0}
+
+  assetDefinitions:
+    - source:
+        path: ./dtm/assets
+
+    - identifier: Pump
+      jsonSchema: {title: Pump}
+      composition:
+        allowedProperties:
+          - identifier: maxFlow
+            minOccurs: "1"
+        allowedSubAssets:
+          - identifier: Valve
+      fragments: # additional custom fragments
+        icon: {category: devicesAndSensors, name: pump}
+```
+
+A definition file holds definitions in the format of the DTM API, as JSON or YAML: the body you would `POST` to `/service/dtm/definitions/properties` or `/assets`. Several definitions can share a file, as a list or as YAML documents separated by `---`:
+
+```yaml
+identifier: maxFlow
+contexts: [asset]
+jsonSchema: {title: Maximum flow, type: number}
+---
+identifier: minFlow
+contexts: [asset]
+jsonSchema: {title: Minimum flow, type: number}
+```
+
+The key decides the kind: files under `propertyDefinitions` hold property definitions, and files under `assetDefinitions` hold asset definitions. A `kind` field in a document is optional, but a file whose `kind` belongs to the other key fails.
+
+How the sync behaves:
+
+- **Matching**: property definitions are matched by `identifier` and `contexts` (in any order), asset definitions by `identifier`.
+- **Order**: property definitions are applied first, then asset definitions. An asset definition is applied after the asset definitions its composition allows as sub-assets.
+- **Idempotency**: a definition is only written when a declared field differs. Fields the server generates (such as `$schema` or the default `minOccurs`) do not count as changes, and tags and contexts are compared as sets.
+- **Removed schema fields**: when a field is removed from a declared `jsonSchema` (for example `minimum`), it is also removed from the definition. Other top-level fields the manifest does not set (such as `tags` or `composition`) are left as they are. Asset definitions only accept `title` and `description` in their `jsonSchema`; the server builds the rest from the composition.
+- **Read-only definitions**: a definition shared from the enterprise tenant or the definition library which differs from the manifest fails without a write.
+- **URLs**: a `url` source is downloaded on each run, so it always applies the current content of that URL. Pin it to a tag or commit (instead of a branch) to control when definitions change.
+- **Pruning**: with `prune: true`, definitions tagged `managedBy` which no manifest entry declares are deleted (asset definitions first). Without `prune`, definitions are never deleted. When a source fails to load or download, the whole section is skipped, so a missing file never deletes definitions.
+
+With includes, inline definitions with the same key replace earlier ones, source entries are all kept, and `managedBy` and `prune` of a later file win when set.
+
+### Smart functions (Data Preparation rules)
+
+The `smartFunctions` section deploys [Data Preparation](https://cumulocity.com/docs/data-preparation/) smart functions (rules). A rule is deployed from a package: a folder laid out like the package archive (`data-prep.yaml`, the bundled smart function and `tests/*.yaml`), or a `.tar.gz` archive exported by the Data Preparation application.
+
+```yaml
+smartFunctions:
+  # A folder of packages: every folder with a data-prep.yaml and every
+  # *.tar.gz/*.tgz archive is a rule
+  - source:
+      path: ./smartfunctions
+
+  # A single exported archive, with an explicit rule name
+  - name: tiny-edge-events
+    source:
+      path: ./exports/tiny-edge-events.tar.gz
+    waitTimeout: 2m # default 60s; 0 does not wait
+
+  # Rule packages published as GitHub release assets
+  - source:
+      github:
+        repo: my-org/my-smart-functions
+        release: latest
+        assets: ["*.tar.gz"]
+```
+
+The rule name defaults to the package folder name, or the archive filename without `.tar.gz`/`.tgz`. Packages are read and validated locally first (also in dry-run mode), so format errors such as MQTT wildcards in `input.topicPattern` show up before anything is uploaded.
+
+A rule is only deployed when its smart function code, configuration (description, tags, disabled, input) or tests differ from the deployed rule, or when its last deployment failed. `--force` deploys every rule. After the upload, the sync waits for the deployment to finish (`waitTimeout`) and reports errors from the engine as failures.
+
+A `url` source (for example a release asset or any other download link to a `.tar.gz`) is downloaded before the package is read. Dry-run mode does not download it, so the package is only validated in a real run.
+
+#### Inline rules
+
+An entry without a `source` declares the rule in the manifest. It takes the fields of `data-prep.yaml`, the code (inline with `code`, or from a local file with `codeFile`) and optional tests:
+
+```yaml
+smartFunctions:
+  - name: tiny-edge-events
+    description: tiny-edge events to Cumulocity events
+    tags: [tiny-edge, event]
+    disabled: false
+    input:
+      topicPattern: "te/device/*///e/*" # transport defaults to mqtt
+    codeFile: ./smartfunctions/events.js # or code: |
+    tests:
+      identify:
+        inputs:
+          - topic: te/device/dev01///e/zephyr_Identify
+            clientID: dev01
+            payload: {text: Identify pressed} # objects are sent as JSON
+            time: "2026-10-06T08:15:00Z"
+        expectedOutput:
+          - cumulocityType: event
+            payload: {type: zephyr_Identify, text: Identify pressed, time: "2026-10-06T08:15:00.000Z"}
+            externalSource: [{externalId: dev01, type: c8y_Serial}]
+```
+
+- `name`, `input.topicPattern` and one of `code` or `codeFile` are required. A relative `codeFile` is resolved against the directory of the manifest file that declares it.
+- A test input `payload` can be a string, which is sent as it is, with `payloadFormat` defaulting to `json` when the string holds JSON and `text` otherwise. It can also be an object, list or number, which is sent as JSON. Set `payloadFormat: base64` for binary payloads.
+- `time` is required on every test input. It is stored in UTC with milliseconds, the format the server returns, so a rule whose tests use another format or time zone still counts as unchanged on the next run.
+- `expectedOutput` is a list of objects, a single object, or a string holding a JSON array or object. The string form lets you paste JSON with any indentation, for example from a test run:
+
+  ```yaml
+          expectedOutput: |
+            [{"cumulocityType": "event", "payload": {"type": "zephyr_Identify", "text": "Identify pressed"}}]
+  ```
+
+  The string may also use what is common when copying from JavaScript: trailing commas, unquoted keys and single quotes.
+
+  JSON written directly (without `|`) also works, since YAML reads JSON as it is, but then every line must be indented further than `expectedOutput:`.
+
+For rules with several tests, a package folder is usually easier to maintain: it is the format the Data Preparation application exports, and each test is its own file.
+
 ### Target tenants
 
 By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead — run once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):
@@ -1297,6 +1443,8 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
 │  sync_firmware.go  + firmware.go │  OS image filename parsing
 │  sync_configuration.go           │
 │  sync_smartrest.go               │  exported collection JSON files
+│  sync_digitaltwin.go             │  DTM property/asset definitions
+│  sync_smartfunctions.go          │  Data Preparation rule packages
 │  sync_certificates.go            │  trust store + revocation lists
 │  sync_profiles.go                │  resolves references to binary URLs
 └──────────────┬───────────────────┘

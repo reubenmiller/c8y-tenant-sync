@@ -308,6 +308,24 @@ func (m *Manifest) rebase(dir, rootDir string) {
 	for i := range m.SmartRestTemplates {
 		rebasePath(&m.SmartRestTemplates[i].Source)
 	}
+	for i := range m.SmartFunctions {
+		rebasePath(&m.SmartFunctions[i].Source)
+		if file := m.SmartFunctions[i].CodeFile; file != "" && !filepath.IsAbs(file) {
+			// Same as a source path: relative to the main manifest directory
+			code := Source{Path: file}
+			rebasePath(&code)
+			m.SmartFunctions[i].CodeFile = code.Path
+		}
+	}
+	if m.DigitalTwin != nil {
+		for _, defs := range [][]DigitalTwinDefinitionSpec{m.DigitalTwin.PropertyDefinitions, m.DigitalTwin.AssetDefinitions} {
+			for i := range defs {
+				if defs[i].Source != nil {
+					rebasePath(defs[i].Source)
+				}
+			}
+		}
+	}
 
 	setDir := func(hooks []HookSpec) {
 		for i := range hooks {
@@ -377,6 +395,8 @@ func mergeManifests(base, over *Manifest) *Manifest {
 	out.Firmware = concat(base.Firmware, over.Firmware)
 	out.Configuration = concat(base.Configuration, over.Configuration)
 	out.SmartRestTemplates = concat(base.SmartRestTemplates, over.SmartRestTemplates)
+	out.SmartFunctions = concat(base.SmartFunctions, over.SmartFunctions)
+	out.DigitalTwin = mergeDigitalTwin(base.DigitalTwin, over.DigitalTwin)
 
 	out.Hooks.Pre = concat(base.Hooks.Pre, over.Hooks.Pre)
 	out.Hooks.Post = concat(base.Hooks.Post, over.Hooks.Post)
@@ -427,5 +447,30 @@ func mergeByKey[T any](base, over []T, key func(T) string) []T {
 		}
 		out = append(out, item)
 	}
+	return out
+}
+
+// mergeDigitalTwin merges the digitalTwin sections: inline definitions with
+// the same key are replaced, source entries are all kept, and managedBy and
+// prune of over win when set
+func mergeDigitalTwin(base, over *DigitalTwinSpec) *DigitalTwinSpec {
+	if base == nil {
+		return over
+	}
+	if over == nil {
+		return base
+	}
+	out := &DigitalTwinSpec{
+		ManagedBy: base.ManagedBy,
+		Prune:     base.Prune,
+	}
+	if over.ManagedBy != "" {
+		out.ManagedBy = over.ManagedBy
+	}
+	if over.Prune != nil {
+		out.Prune = over.Prune
+	}
+	out.PropertyDefinitions = mergeByKey(base.PropertyDefinitions, over.PropertyDefinitions, DigitalTwinDefinitionSpec.Key)
+	out.AssetDefinitions = mergeByKey(base.AssetDefinitions, over.AssetDefinitions, DigitalTwinDefinitionSpec.Key)
 	return out
 }

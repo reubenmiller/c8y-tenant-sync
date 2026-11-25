@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -25,6 +26,7 @@ const (
 	ActionSkipped   Action = "skipped"  // nothing to do here, e.g. an optional source without files or a subscription only the owner tenant can change
 	ActionExecuted  Action = "executed" // hook commands
 	ActionPlanned   Action = "planned"  // dry-run
+	ActionDeleted   Action = "deleted"  // only where the manifest opts in to pruning (digitalTwin.prune)
 	ActionFailed    Action = "failed"
 )
 
@@ -50,6 +52,8 @@ const (
 	SectionFirmware               = "firmware"
 	SectionConfiguration          = "configuration"
 	SectionSmartRest              = "smartrestTemplates"
+	SectionDigitalTwin            = "digitalTwin"
+	SectionSmartFunctions         = "smartFunctions"
 	SectionDeviceProfiles         = "deviceProfiles"
 	SectionCommands               = "commands"
 )
@@ -85,6 +89,8 @@ var SectionOrder = []string{
 	SectionFirmware,
 	SectionConfiguration,
 	SectionSmartRest,
+	SectionDigitalTwin,
+	SectionSmartFunctions,
 	SectionDeviceProfiles,
 	SectionCommands,
 }
@@ -184,6 +190,7 @@ func (s *Syncer) recordLocked(section, item string, action Action, detail string
 		ActionSkipped:   "⏭",
 		ActionExecuted:  "▸",
 		ActionPlanned:   "→",
+		ActionDeleted:   "−",
 		ActionFailed:    "✗",
 	}[action]
 
@@ -223,6 +230,41 @@ func (s *Syncer) resolveSource(section, item string, source Source) (files []Res
 		return nil, false
 	}
 	return files, true
+}
+
+// fetchFiles downloads the files which only reference a URL, for sections
+// which read the file content. A failed download is recorded and the file
+// left out; ok is false when any download failed.
+func (s *Syncer) fetchFiles(section string, files []ResolvedFile) (fetched []ResolvedFile, ok bool) {
+	ok = true
+	fetched = make([]ResolvedFile, 0, len(files))
+	for _, file := range files {
+		if s.DryRun {
+			fetched = append(fetched, file)
+			continue
+		}
+		local, err := s.Resolver.Fetch(file)
+		if err != nil {
+			s.record(section, file.Filename, ActionFailed, "", err)
+			ok = false
+			continue
+		}
+		fetched = append(fetched, local)
+	}
+	return fetched, ok
+}
+
+// notDownloaded reports whether a resolved file is a remote asset which
+// dry-run mode lists without downloading (so its content cannot be read)
+func (s *Syncer) notDownloaded(file ResolvedFile) bool {
+	if !s.DryRun {
+		return false
+	}
+	if file.Path == "" {
+		return true
+	}
+	_, err := os.Stat(file.Path)
+	return err != nil
 }
 
 // jsonEqual compares a desired Go value with an existing JSON fragment by
@@ -382,6 +424,10 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncConfiguration(ctx, manifest.Configuration)
 		case SectionSmartRest:
 			err = s.SyncSmartRestTemplates(ctx, manifest.SmartRestTemplates)
+		case SectionDigitalTwin:
+			err = s.SyncDigitalTwin(ctx, manifest.DigitalTwin)
+		case SectionSmartFunctions:
+			err = s.SyncSmartFunctions(ctx, manifest.SmartFunctions)
 		case SectionDeviceProfiles:
 			err = s.SyncDeviceProfiles(ctx, manifest.DeviceProfiles)
 		case SectionCommands:

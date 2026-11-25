@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,8 @@ var ExportSections = []string{
 	SectionApplications,
 	SectionDeviceGroups,
 	SectionInventoryRoles,
+	SectionDigitalTwin,
+	SectionSmartFunctions,
 }
 
 // exportOptions holds the flags of the export command
@@ -65,6 +68,10 @@ Exported sections: ` + strings.Join(ExportSections, ", ") + `.
   and the devices in the groups are not exported)
 - inventoryRoles: all inventory roles with their permissions (users' inventory assignments
   are not exported)
+- digitalTwin: the tenant's own property and asset definitions (library definitions and
+  definitions shared from the enterprise tenant are not exported)
+- smartFunctions: the deployed Data Preparation rules as inline rules with their code and
+  tests (drafts and the AI chat history are not exported)
 
 Review the manifest before applying it to other tenants.`,
 		Example: formatExamples(
@@ -204,6 +211,8 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 			return
 		}},
 		{SectionInventoryRoles, func() (err error) { manifest.InventoryRoles, err = e.inventoryRoles(ctx); return }},
+		{SectionDigitalTwin, func() (err error) { manifest.DigitalTwin, err = e.digitalTwin(ctx); return }},
+		{SectionSmartFunctions, func() (err error) { manifest.SmartFunctions, err = e.smartFunctions(ctx); return }},
 	}
 	for _, step := range steps {
 		if !e.enabled(step.section) {
@@ -394,22 +403,38 @@ func MarshalManifest(manifest *Manifest, header string) ([]byte, error) {
 // mappings and sequences, and escapes "$" in values so they are not expanded
 // as environment variables when the manifest is loaded
 func pruneYAMLNode(node *yaml.Node) {
+	pruneYAMLNodeKeep(node, false)
+}
+
+// keepEmptyValuesUnder are keys whose values are data compared with the
+// tenant (JSON schemas, custom fragments, expected test output), where an
+// empty object or list is meaningful and must be kept
+var keepEmptyValuesUnder = []string{"jsonSchema", "fragments", "expectedOutput"}
+
+func pruneYAMLNodeKeep(node *yaml.Node, keepEmpty bool) {
 	node.Style = 0
 	switch node.Kind {
 	case yaml.ScalarNode:
 		node.Value = escapeEnv(node.Value)
 	case yaml.DocumentNode, yaml.SequenceNode:
 		for _, child := range node.Content {
-			pruneYAMLNode(child)
+			pruneYAMLNodeKeep(child, keepEmpty)
 		}
 	case yaml.MappingNode:
 		content := node.Content[:0]
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key, value := node.Content[i], node.Content[i+1]
-			pruneYAMLNode(key)
-			pruneYAMLNode(value)
-			if (value.Kind == yaml.MappingNode || value.Kind == yaml.SequenceNode) && len(value.Content) == 0 {
+			keepChild := keepEmpty || slices.Contains(keepEmptyValuesUnder, key.Value)
+			pruneYAMLNodeKeep(key, keepEmpty)
+			pruneYAMLNodeKeep(value, keepChild)
+			if !keepEmpty && (value.Kind == yaml.MappingNode || value.Kind == yaml.SequenceNode) && len(value.Content) == 0 {
 				continue
+			}
+			if keepChild && len(value.Content) == 0 {
+				// An empty value must stay an empty value, not null
+				if value.Kind == yaml.MappingNode || value.Kind == yaml.SequenceNode {
+					value.Style = yaml.FlowStyle
+				}
 			}
 			content = append(content, key, value)
 		}

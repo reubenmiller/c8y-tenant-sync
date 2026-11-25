@@ -1100,6 +1100,14 @@ smartFunctions:
 - `name`, `input.topicPattern` and one of `code` or `codeFile` are required. A relative `codeFile` is resolved against the directory of the manifest file that declares it.
 - A test input `payload` can be a string, which is sent as it is, with `payloadFormat` defaulting to `json` when the string holds JSON and `text` otherwise. It can also be an object, list or number, which is sent as JSON. Set `payloadFormat: base64` for binary payloads.
 - `time` is required on every test input. It is stored in UTC with milliseconds, the format the server returns, so a rule whose tests use another format or time zone still counts as unchanged on the next run.
+- `expectedOutput` is a list of objects, a single object, or a string holding a JSON array or object. The string form lets you paste JSON with any indentation, for example from a test run:
+
+  ```yaml
+          expectedOutput: |
+            [{"cumulocityType": "event", "payload": {"type": "zephyr_Identify", "text": "Identify pressed"}}]
+  ```
+
+  JSON written directly (without `|`) also works, since YAML reads JSON as it is, but then every line must be indented further than `expectedOutput:`.
 
 For rules with several tests, a package folder is usually easier to maintain: it is the format the Data Preparation application exports, and each test is its own file.
 

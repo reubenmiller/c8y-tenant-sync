@@ -10,6 +10,7 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/dataprep"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 const testSmartFunctionCode = "export function onMessage(msg, ctx) { return []; }\n"
@@ -308,4 +309,34 @@ func TestValidateInlineSmartFunctions(t *testing.T) {
 		"smartFunctions[3].tests.t.inputs[0]: time is required",
 		"smartFunctions[4]: description, tags, disabled, input, code, codeFile and tests only apply to inline rules (without a source)",
 	}, errs)
+}
+
+func TestSmartFunctionExpectedOutputForms(t *testing.T) {
+	want := SmartFunctionExpectedOutput{{"cumulocityType": "event", "payload": map[string]any{"text": "hi"}}}
+	for name, doc := range map[string]string{
+		"yaml list":   "expectedOutput:\n  - cumulocityType: event\n    payload: {text: hi}\n",
+		"json flow":   "expectedOutput: [\n    {\"cumulocityType\": \"event\", \"payload\": {\"text\": \"hi\"}}\n  ]\n",
+		"json string": "expectedOutput: |\n  [\n      {\"cumulocityType\": \"event\",\n  \"payload\": {\"text\": \"hi\"}}\n  ]\n",
+		"quoted":      "expectedOutput: '[{\"cumulocityType\": \"event\", \"payload\": {\"text\": \"hi\"}}]'\n",
+		"object":      "expectedOutput:\n  cumulocityType: event\n  payload: {text: hi}\n",
+		"json object": "expectedOutput: '{\"cumulocityType\": \"event\", \"payload\": {\"text\": \"hi\"}}'\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var test SmartFunctionTestSpec
+			require.NoError(t, yaml.Unmarshal([]byte(doc), &test))
+			assert.Equal(t, want, test.ExpectedOutput)
+		})
+	}
+
+	var test SmartFunctionTestSpec
+	require.NoError(t, yaml.Unmarshal([]byte("expectedOutput: null\n"), &test))
+	assert.Nil(t, test.ExpectedOutput)
+
+	err := yaml.Unmarshal([]byte("inputs: []\nexpectedOutput: |\n  [{\"cumulocityType\": }]\n"), &test)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "line 2: expectedOutput: invalid JSON")
+
+	err = yaml.Unmarshal([]byte("expectedOutput: '[1, 2]'\n"), &test)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "item 0 is not an object")
 }

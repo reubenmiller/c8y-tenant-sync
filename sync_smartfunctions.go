@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/invopop/jsonschema"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/core"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/dataprep"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/op"
+	"gopkg.in/yaml.v3"
 )
 
 // smartFunctionDefaultPatterns select the rule packages in a directory:
@@ -187,6 +189,79 @@ func (s *Syncer) deploySmartFunction(ctx context.Context, spec SmartFunctionSpec
 		detail += " (changed: " + strings.Join(changed, ", ") + ")"
 	}
 	s.record(SectionSmartFunctions, name, actionFromResult(result.Status, nil), detail, smartFunctionErrorHint(result.Err))
+}
+
+// SmartFunctionExpectedOutput is the expected output of a test: the
+// Cumulocity objects of all inputs in order. In the manifest it is a list,
+// a single object, or a string holding a JSON array or object (e.g. pasted
+// from a test run).
+type SmartFunctionExpectedOutput []map[string]any
+
+// UnmarshalYAML accepts a list, an object or a JSON string
+func (o *SmartFunctionExpectedOutput) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.SequenceNode:
+		var items []map[string]any
+		if err := node.Decode(&items); err != nil {
+			return err
+		}
+		*o = items
+		return nil
+	case yaml.MappingNode:
+		var item map[string]any
+		if err := node.Decode(&item); err != nil {
+			return err
+		}
+		*o = SmartFunctionExpectedOutput{item}
+		return nil
+	case yaml.ScalarNode:
+		if node.Tag == "!!null" {
+			*o = nil
+			return nil
+		}
+		items, err := parseExpectedOutputJSON(node.Value)
+		if err != nil {
+			return fmt.Errorf("line %d: expectedOutput: %w", node.Line, err)
+		}
+		*o = items
+		return nil
+	}
+	return fmt.Errorf("line %d: expectedOutput must be a list, an object or a JSON string", node.Line)
+}
+
+// parseExpectedOutputJSON parses a JSON array of objects, or a single object
+func parseExpectedOutputJSON(text string) (SmartFunctionExpectedOutput, error) {
+	var value any
+	if err := json.Unmarshal([]byte(text), &value); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		return SmartFunctionExpectedOutput{v}, nil
+	case []any:
+		items := make(SmartFunctionExpectedOutput, 0, len(v))
+		for i, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("item %d is not an object", i)
+			}
+			items = append(items, obj)
+		}
+		return items, nil
+	}
+	return nil, fmt.Errorf("the JSON must be an array of objects or an object")
+}
+
+// JSONSchema describes the expected output as a list, an object or a string
+func (SmartFunctionExpectedOutput) JSONSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Description: "Expected Cumulocity objects of all inputs in order (stored with the rule): a list, a single object, or a string holding a JSON array or object",
+		OneOf: []*jsonschema.Schema{
+			{Type: "array", Items: &jsonschema.Schema{Type: "object"}},
+			{Type: "object"},
+			{Type: "string", Description: "JSON array or object, e.g. pasted from a test run"},
+		},
+	}
 }
 
 // testTimeLayout is how the server returns test input times; manifest times

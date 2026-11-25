@@ -1054,6 +1054,24 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "SmartFunctionExpectedOutput": {
+      "oneOf": [
+        {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "object"
+        },
+        {
+          "type": "string",
+          "description": "JSON array or object, e.g. pasted from a test run"
+        }
+      ],
+      "description": "Expected Cumulocity objects of all inputs in order (stored with the rule): a list, a single object, or a string holding a JSON array or object"
+    },
     "SmartFunctionInputSpec": {
       "properties": {
         "transport": {
@@ -1194,11 +1212,7 @@
           "description": "Device messages fed to the smart function"
         },
         "expectedOutput": {
-          "items": {
-            "type": "object"
-          },
-          "type": "array",
-          "description": "Expected Cumulocity objects of all inputs in order (stored with the rule)"
+          "$ref": "#/$defs/SmartFunctionExpectedOutput"
         }
       },
       "additionalProperties": false,

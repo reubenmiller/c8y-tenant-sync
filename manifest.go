@@ -855,7 +855,7 @@ type SmartFunctionInputSpec struct {
 // SmartFunctionTestSpec is a test of an inline rule
 type SmartFunctionTestSpec struct {
 	Inputs         []SmartFunctionTestInputSpec `yaml:"inputs" json:"inputs" jsonschema:"description=Device messages fed to the smart function"`
-	ExpectedOutput []map[string]any             `yaml:"expectedOutput" json:"expectedOutput,omitempty" jsonschema:"description=Expected Cumulocity objects of all inputs in order (stored with the rule)"`
+	ExpectedOutput SmartFunctionExpectedOutput  `yaml:"expectedOutput" json:"expectedOutput,omitempty"`
 }
 
 // SmartFunctionTestInputSpec is a device message of a test

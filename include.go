@@ -564,6 +564,12 @@ func (m *Manifest) rebase(dir, rootDir string) {
 	for i := range m.CertificateRevocationLists {
 		rebasePath(&m.CertificateRevocationLists[i].Source)
 	}
+	for i := range m.Microservices {
+		rebasePath(m.Microservices[i].Source)
+	}
+	for i := range m.Extensions {
+		rebasePath(&m.Extensions[i].Source)
+	}
 	for i := range m.Applications {
 		rebasePath(m.Applications[i].Source)
 	}
@@ -652,6 +658,8 @@ func mergeManifests(base, over *Manifest) *Manifest {
 	})
 	out.Features = mergeByKey(base.Features, over.Features, func(f FeatureSpec) string { return f.Key })
 	out.RetentionRules = mergeByKey(base.RetentionRules, over.RetentionRules, RetentionRuleSpec.Selector)
+	out.Microservices = mergeByKey(base.Microservices, over.Microservices, func(a MicroserviceSpec) string { return a.Name })
+	out.Extensions = mergeByKey(base.Extensions, over.Extensions, func(e ExtensionSpec) string { return e.Name })
 	out.Applications = mergeByKey(base.Applications, over.Applications, func(a ApplicationSpec) string { return a.Name })
 	out.DeviceGroups = mergeByKey(base.DeviceGroups, over.DeviceGroups, func(g DeviceGroupSpec) string { return g.Name })
 	out.UserGroups = mergeByKey(base.UserGroups, over.UserGroups, func(g UserGroupSpec) string { return g.Name })

@@ -189,3 +189,21 @@ func runSchema(output string) error {
 	fmt.Printf("✓ Wrote schema to %s\n", output)
 	return nil
 }
+
+// JSONSchema describes an extension of a web application as
+// "<name>[@<version or tag>]" or an object
+func (ApplicationExtensionSpec) JSONSchema() *jsonschema.Schema {
+	props := jsonschema.NewProperties()
+	props.Set("name", &jsonschema.Schema{Type: "string", MinLength: ptrUint64(1), Description: "Extension name (or context path)"})
+	props.Set("version", &jsonschema.Schema{Type: "string", Description: "Version or tag to install (defaults to latest)", Examples: []any{"latest", "1.2.0"}})
+	props.Set("installed", &jsonschema.Schema{Type: "boolean", Description: "Desired state (defaults to true); false removes the extension from the application"})
+	return &jsonschema.Schema{
+		Description: "UI extension installed into the web application: \"<name>[@<version or tag>]\" or an object",
+		OneOf: []*jsonschema.Schema{
+			{Type: "string", Pattern: "^[^@]*[^@\\s][^@]*(@[^@\\s]+)?$", Examples: []any{"my-widget-plugin", "my-widget-plugin@1.2.0", "Cloud HTTP proxy"}},
+			{Type: "object", Properties: props, Required: []string{"name"}, AdditionalProperties: jsonschema.FalseSchema},
+		},
+	}
+}
+
+func ptrUint64(v uint64) *uint64 { return &v }

@@ -97,10 +97,8 @@ func TestApplicationsAlreadySubscribedAreNotSubscribedAgain(t *testing.T) {
 	f := fakeApplicationTenant(t, builtinApps(), "smartrule", "web-app")
 	s := newFakeSyncer(t, f)
 
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{
-		{Name: "smartrule"},
-		{Name: "web-app", Type: "HOSTED"},
-	}))
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{{Name: "smartrule"}}))
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{{Name: "web-app"}}))
 
 	results := resultsByItem(s)
 	assert.Equal(t, ActionUnchanged, results["smartrule"].Action)
@@ -110,21 +108,22 @@ func TestApplicationsAlreadySubscribedAreNotSubscribedAgain(t *testing.T) {
 	assert.Len(t, f.Requests(http.MethodGet, "/tenant/currentTenant"), 1, "the subscriptions are listed once")
 }
 
-func TestApplicationTypeMustMatchSubscription(t *testing.T) {
+func TestMicroserviceMustMatchSubscriptionType(t *testing.T) {
 	f := fakeApplicationTenant(t, builtinApps(), "web-app")
 	f.JSON("POST /tenant/tenants/t123/applications", http.StatusCreated, map[string]any{})
 	s := newFakeSyncer(t, f)
 
-	// web-app is subscribed as HOSTED: a MICROSERVICE web-app is not, so it is
+	// web-app is subscribed as HOSTED: a microservice web-app is not, so it is
 	// looked up (and fails, since there is no such microservice)
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{{Name: "web-app", Type: "MICROSERVICE"}}))
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{{Name: "web-app"}}))
 	r := resultsByItem(s)["web-app"]
+	assert.Equal(t, SectionMicroservices, r.Section)
 	assert.Equal(t, ActionFailed, r.Action)
 	assert.Equal(t, "lookup", r.Detail)
 
-	// With the matching type it is already subscribed
+	// As a web application it is already subscribed
 	s = newFakeSyncer(t, f)
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{{Name: "web-app", Type: "hosted"}}))
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{{Name: "web-app"}}))
 	assert.Equal(t, ActionUnchanged, resultsByItem(s)["web-app"].Action)
 	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants/t123/applications"))
 }
@@ -134,8 +133,9 @@ func TestApplicationSubscribe(t *testing.T) {
 	f.JSON("POST /tenant/tenants/t123/applications", http.StatusCreated, map[string]any{})
 	s := newFakeSyncer(t, f)
 
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{{Name: "smartrule"}}))
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{{Name: "smartrule"}}))
 	r := resultsByItem(s)["smartrule"]
+	assert.Equal(t, SectionMicroservices, r.Section)
 	assert.Equal(t, ActionUpdated, r.Action)
 	assert.Equal(t, "subscribed", r.Detail)
 }
@@ -145,7 +145,7 @@ func TestApplicationSubscribeDeniedForForeignOwnerIsSkipped(t *testing.T) {
 	f.JSON("POST /tenant/tenants/t123/applications", http.StatusForbidden, forbidden)
 	s := newFakeSyncer(t, f)
 
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{
 		{Name: "smartrule"},   // owned by management
 		{Name: "own-service"}, // owned by the tenant itself
 		{Name: "no-owner"},    // owner unknown
@@ -171,9 +171,11 @@ func TestApplicationUnsubscribe(t *testing.T) {
 	s := newFakeSyncer(t, f)
 
 	notSubscribed := false
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{
 		{Name: "smartrule", Subscribed: &notSubscribed},
 		{Name: "own-service", Subscribed: &notSubscribed},
+	}))
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{
 		{Name: "web-app", Subscribed: &notSubscribed},
 	}))
 
@@ -195,7 +197,7 @@ func TestApplicationSubscriptionsUnknownFallsBack(t *testing.T) {
 	s := newFakeSyncer(t, f)
 	s.activeTarget = &Target{TenantID: "t123", Current: true}
 
-	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{{Name: "smartrule"}}))
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{{Name: "smartrule"}}))
 	assert.Equal(t, ActionUnchanged, resultsByItem(s)["smartrule"].Action)
 	assert.Len(t, f.Requests(http.MethodPost, "/tenant/tenants/t123/applications"), 1)
 }
@@ -209,7 +211,9 @@ func TestApplicationsOtherTargetTenant(t *testing.T) {
 	s.activeTarget = &Target{TenantID: "t456"}
 
 	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{
-		{Name: "web-app"},     // already subscribed
+		{Name: "web-app"}, // already subscribed
+	}))
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{
 		{Name: "smartrule"},   // owned by management (neither the target nor the parent)
 		{Name: "own-service"}, // owned by the parent t123: a real permission problem
 	}))

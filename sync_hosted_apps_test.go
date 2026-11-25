@@ -101,7 +101,6 @@ func putsWith(f *fakeC8y, id, field string) []recordedRequest {
 func hostedSpec() ApplicationSpec {
 	return ApplicationSpec{
 		Name: "devicemanagement",
-		Type: "HOSTED",
 		Source: &Source{GitHub: &GitHubSource{
 			Repo:   "acme/devicemanagement",
 			Assets: []string{"devicemanagement-*.zip"},
@@ -268,9 +267,9 @@ func TestKeepBinariesValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "keepBinaries must not be negative")
 
-	err = (&Manifest{Applications: []ApplicationSpec{{Name: "svc", Type: "MICROSERVICE", KeepBinaries: 2}}}).Validate()
+	err = (&Manifest{Applications: []ApplicationSpec{{Name: "svc", KeepBinaries: 2}}}).Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keepBinaries requires type HOSTED and a source")
+	assert.Contains(t, err.Error(), "keepBinaries requires a source")
 
 	spec.KeepBinaries = 3
 	assert.NoError(t, (&Manifest{Applications: []ApplicationSpec{spec}}).Validate())
@@ -323,10 +322,10 @@ func TestHostedApplicationExplicitDescription(t *testing.T) {
 	assert.Equal(t, "Device Management (ACME build)", descriptions[0].Body["description"])
 }
 
-func TestDescriptionRequiresHostedWithSource(t *testing.T) {
+func TestDescriptionRequiresSource(t *testing.T) {
 	err := (&Manifest{Applications: []ApplicationSpec{{Name: "svc", Description: "x"}}}).Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "description requires type HOSTED and a source")
+	assert.Contains(t, err.Error(), "description requires a source")
 }
 
 // fakeBinaries serves the binaries of application 42 and accepts deleting any

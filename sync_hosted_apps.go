@@ -13,13 +13,6 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/op"
 )
 
-// isHostedWithSource reports whether the application is a web application
-// (HOSTED) whose binary comes from a source. Such applications are owned by
-// the tenant running the sync and kept at the version of the source.
-func (a ApplicationSpec) isHostedWithSource() bool {
-	return a.Source != nil && strings.EqualFold(a.Type, "HOSTED")
-}
-
 // archiveVersionPattern matches the version in a web application archive
 // name, e.g. devicemanagement-1025.15.3.zip
 var archiveVersionPattern = regexp.MustCompile(`(\d+(?:\.\d+)+(?:-[0-9A-Za-z.]+)?)\.zip$`)

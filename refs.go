@@ -81,6 +81,14 @@ func (m *Manifest) allSources() []*Source {
 	for i := range m.SmartRestTemplates {
 		sources = append(sources, &m.SmartRestTemplates[i].Source)
 	}
+	for i := range m.Microservices {
+		if m.Microservices[i].Source != nil {
+			sources = append(sources, m.Microservices[i].Source)
+		}
+	}
+	for i := range m.Extensions {
+		sources = append(sources, &m.Extensions[i].Source)
+	}
 	for i := range m.Applications {
 		if m.Applications[i].Source != nil {
 			sources = append(sources, m.Applications[i].Source)

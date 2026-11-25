@@ -85,20 +85,20 @@ certificateRevocationLists:
       path: ./certificates/revoked.csv
       optional: true
 
-# Subscribe applications to the target tenant (idempotent)
-applications:
+# Subscribe microservices to the target tenant (idempotent)
+microservices:
   - name: advanced-software-mgmt
 
-  # subscribed: false unsubscribes the application. (Un)subscribing an
-  # application not owned by the current tenant requires running from the
+  # subscribed: false unsubscribes the microservice. (Un)subscribing a
+  # microservice not owned by the current tenant requires running from the
   # owner (parent) tenant, e.g. with a targets section.
   - name: cloud-remote-access
     subscribed: true
 
-  # With a source, the application is created if missing and its binary (zip)
-  # uploaded on creation (or on every run with --force)
+  # With a source, the microservice is created if missing and its binary
+  # (zip) uploaded when it has none or the source version differs (or with
+  # --force)
   - name: my-microservice
-    type: MICROSERVICE
     source:
       path: ./build/my-microservice.zip
       optional: true # skip instead of failing when the file does not exist

@@ -39,7 +39,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
 - 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata; versions are installed by the device's package manager, or link or upload the package
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
-- 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe applications
+- 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe microservices and web applications, upload UI extensions and install them into web applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
@@ -162,7 +162,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file (also accepted as a positional argument), see [Remote manifests](#remote-manifests) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -179,7 +179,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
 
-Sections are applied in a fixed order — child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+Sections are applied in a fixed order — child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, microservices, extensions, web applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
 
 ### Run reports
 
@@ -353,7 +353,8 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `features` | Feature toggles set for the tenant (`--all-features` exports all toggles with their current state) |
 | `retentionRules` | All retention rules |
 | `certificateAuthority` | Whether the Cumulocity CA is enabled, if the tenant has one |
-| `applications` | Applications the tenant is subscribed to but does not own, such as the built-in microservices (`--application-type MICROSERVICE,HOSTED` also exports web applications) |
+| `microservices` | Microservices the tenant is subscribed to but does not own, such as the built-in microservices |
+| `applications` | Web applications the tenant is subscribed to but does not own, such as the built-in Cockpit and Device Management applications |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
 | `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
 | `digitalTwin` | The tenant's own property and asset definitions. Library definitions and definitions shared from the enterprise tenant are not exported, and neither are fields the server generates (such as `$schema`) or maintains (such as `lastUpdated`). Other custom fields, such as an asset definition's `icon`, are exported as `fragments` |
@@ -364,7 +365,6 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `-o`, `--output` | Write the manifest to a file instead of stdout |
 | `--sections` | Comma-separated sections to export (default: all of the above) |
 | `--all-features` | Export all feature toggles, not only the ones set for the tenant |
-| `--application-type` | Types of subscribed applications to export (default: `MICROSERVICE`) |
 | `--force` | Overwrite the output file |
 
 `$` in exported values is written as `$$`, so values are not expanded as environment variables when the manifest is loaded. This includes smart function code: a JavaScript template literal such as `${data.name}` appears as `$${data.name}` in the manifest and is deployed unchanged.
@@ -437,7 +437,7 @@ Rules:
 - **Relative paths**: relative `source.path` values in an included file are resolved against the directory of that file, not the main manifest. Hooks and commands declared in an included file run from that file's directory.
 - **Merge order**: the included files are merged first, in the listed order, then the content of the including file.
   - List sections are concatenated.
-  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), applications, user groups, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a user group redefined in `prod.yaml` must list all its roles.
+  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), microservices, extensions, applications, user groups, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a user group redefined in `prod.yaml` must list all its roles.
   - Entries without an identity (trusted certificates, certificate revocation lists, software, firmware, configuration and SmartREST templates, which are matched by their files at run time) are all kept and applied in order.
   - `targets` and `certificateAuthority` of a later file replace those of earlier files.
   - `hooks.pre` and `hooks.post` are concatenated, and so are the `pre` and `post` hooks of each section in `hooks.sections`.
@@ -891,45 +891,76 @@ SERIALNO,DATE
 
 Since the file content must be read, `url` sources are not supported for these sections (GitHub release assets work — they are downloaded first).
 
-### Application subscriptions
+### Microservices, web applications and extensions
 
-Application entries normally just subscribe an existing application to the target tenant. `subscribed: false` declares the opposite — the application is unsubscribed (a missing application or subscription counts as the desired state, so the entry stays idempotent):
+Applications are split into three sections, like the Ecosystem pages of the Administration application:
+
+| Section | Administration page | What it does |
+|---------|--------------------|--------------|
+| `microservices` | Microservices | Subscribes microservices to the target tenant; with a `source`, creates the microservice and uploads its binary |
+| `extensions` | Extensions | Uploads UI extensions (plugin packages) into the tenant running the sync |
+| `applications` | Applications | Subscribes web applications to the target tenant; with a `source`, keeps a tenant-owned copy at the version of the source; installs `extensions` into the application |
+
+The sections run in this order, so a web application can install an extension uploaded in the same run.
+
+> **Migrating from the combined `applications` section:** move the microservices (entries with `type: MICROSERVICE`, and entries without `type` which name a microservice) to `microservices`, and remove `type: HOSTED` from the web application entries which stay in `applications`. An entry with `type` in `applications` fails validation with a message which says what to change.
+
+#### Subscriptions
+
+An entry normally just subscribes an existing microservice or web application to the target tenant. `subscribed: false` declares the opposite: the application is unsubscribed. A missing application or subscription counts as the desired state, so the entry stays idempotent:
 
 ```yaml
-applications:
+microservices:
   - name: advanced-software-mgmt
   - name: cloud-remote-access
     subscribed: false
+
+applications:
+  - name: cockpit
 ```
 
-The current subscriptions of the target tenant are read first (for the current tenant with the same request as `c8y currenttenant listApplications`), so applications which are already subscribed (or already unsubscribed) are reported as `unchanged` without calling the (un)subscribe API. If `type` is set, it must match the subscribed application.
+The current subscriptions of the target tenant are read first (for the current tenant with the same request as `c8y currenttenant listApplications`), so applications which are already subscribed (or already unsubscribed) are reported as `unchanged` without calling the (un)subscribe API. A `microservices` entry only matches a subscribed microservice.
 
 Subscriptions to applications which the tenant does not own, such as the built-in microservices owned by the `management` tenant, can generally only be changed by the owner tenant. When an (un)subscribe request is denied (`403`) and the application is owned by a tenant which is neither the target tenant nor the tenant running the sync, the entry is reported as `skipped` with the owner tenant, instead of failing the run:
 
 ```
-  ⏭ [applications] smartrule (skipped): subscribe denied: the application is owned by tenant management; subscribe it from tenant management (e.g. with a targets section selecting t12345)
+  ⏭ [microservices] smartrule (skipped): subscribe denied: the application is owned by tenant management; subscribe it from tenant management (e.g. with a targets section selecting t12345)
 ```
 
 To change such subscriptions, run `c8y tenant-sync` from the owner tenant with a [targets section](#target-tenants) selecting the tenants to maintain. A denied request for an application which the target tenant or the running tenant owns is still a failure, since it points to missing permissions.
 
-With a `source`, the application is also created when missing (type defaults to `MICROSERVICE`, `contextPath` to the name) and its binary (a single zip) uploaded. Since binary content cannot be compared, the upload only happens on creation — or on every run with `--force`:
+#### Microservices from a source
+
+With a `source`, the microservice is also created when missing (`contextPath` defaults to the name, `key` to `<name>-application-key`) and its binary (a single zip) uploaded. The source is listed without downloading first, and the binary is uploaded when:
+
+- the microservice is new, or has no binary yet (for example after a failed upload),
+- the source version differs from the `manifest.version` of the microservice. The version comes from the filename (`my-microservice-1.2.0.zip`) or the GitHub release tag, so a scheduled run picks up new releases,
+- or `--force` is given. Without a version in the source, an existing binary is only replaced with `--force`.
+
+The source is downloaded before the microservice is created, so a failed download does not leave a microservice without a binary behind.
+
+Hosting your own microservices requires the tenant running the sync to be subscribed to the `feature-microservice-hosting` application, which its parent tenant (or your Cumulocity provider) controls. Before uploading, the subscriptions of the tenant are checked. Without the feature application, the entry fails before anything is downloaded or created:
+
+```
+  ✗ [microservices] cloud-http-proxy (failed): the tenant t12345 is not subscribed to feature-microservice-hosting, so it can't host microservices: ask its parent tenant (or your Cumulocity provider) to subscribe it, or use --force to try the upload anyway
+```
+
+The check only applies when an upload is needed, and is skipped when the subscriptions can't be read. A parent tenant can enable hosting for its child tenants with tenant-sync, for example with `tenants[].applications: [feature-microservice-hosting]`.
 
 ```yaml
-applications:
+microservices:
   - name: my-microservice
-    type: MICROSERVICE
     source:
       path: ./build/my-microservice.zip
 ```
 
 #### Web applications from releases (cloning built-in applications)
 
-A `type: HOSTED` entry with a `source` keeps a web application, owned by the tenant running the sync, at the version of its source. This is how a tenant clones a built-in application such as Device Management and keeps the clone up to date with the releases published at [Cumulocity-IoT/devicemanagement](https://github.com/Cumulocity-IoT/devicemanagement/releases):
+An `applications` entry with a `source` keeps a web application, owned by the tenant running the sync, at the version of its source. This is how a tenant clones a built-in application such as Device Management and keeps the clone up to date with the releases published at [Cumulocity-IoT/devicemanagement](https://github.com/Cumulocity-IoT/devicemanagement/releases):
 
 ```yaml
 applications:
   - name: devicemanagement
-    type: HOSTED
     source:
       github:
         repo: Cumulocity-IoT/devicemanagement
@@ -953,9 +984,77 @@ On each run:
 - With `keepBinaries: N`, the oldest binaries (application versions) beyond N are deleted after each upload; the active binary and the one just uploaded are never deleted. Without it all binaries are kept, so every release adds another archive to the application. The cleanup also runs when the version is already active, so lowering N or binaries left over from earlier deployments are cleaned up on the next run.
 - `--force` re-uploads the archive even when the version is already active. When no version can be read from the source, an existing application is only re-uploaded with `--force`.
 
-Uploading a new archive replaces the application binary only. The plugins installed into the application through the Administration application are stored in the application `config` and are kept.
+Uploading a new archive replaces the application binary only. The extensions installed into the application (through the Administration application or the `extensions` of the entry) are stored in the application `config` and are kept.
 
 The source must resolve to exactly one zip file; narrow it down with `github.assets` and `github.tags` (the repository publishes several release lines, such as `v1023.*` and `v1025.*`). The copy is owned by the tenant running the sync, so with a [targets section](#target-tenants) it is created once in that tenant and only the subscription is applied to the target tenants.
+
+#### UI extensions
+
+The `extensions` section uploads UI extensions (plugin packages) into the tenant running the sync. The extension is created when missing, and a version is uploaded only when it is not on the extension yet:
+
+```yaml
+extensions:
+  - name: my-widget-plugin
+    source:
+      github:
+        repo: acme/my-widget-plugin
+        assets: ["my-widget-plugin-*.zip"]
+    tags: [latest]            # tags of a newly uploaded version (default: [latest])
+```
+
+- The version is read from the archive filename (`my-widget-plugin-1.2.0.zip`) or the release tag without downloading. When the version is already on the extension, nothing is downloaded. Otherwise the archive is downloaded and the version in its `cumulocity.json` is used.
+- The `name` must match the name in the `cumulocity.json` of the archive (ignoring case). The key and context path of a new extension are also taken from it. `validate --check-sources` downloads the archive and reports a wrong name with the right one:
+
+  ```
+    ✗ extensions[0]: cloud-http-proxy-ui.zip contains the extension "Cloud HTTP proxy", not "cloud-http-proxy-ui": set name to "Cloud HTTP proxy"
+    ✓ extensions[0]: Cloud HTTP proxy 2.13.1 (context path sag-pkg-remote-access-cloud-http-proxy)
+  ```
+- A version uploaded with the `latest` tag becomes the active version of the extension, as when you upload it in the Administration application. An extension without an active version gets its `latest` version activated on the next run.
+- Versions are never deleted, and `--force` does not upload a version which is already on the extension.
+
+Install extensions into a web application with its `extensions` list. Each entry is `<name>[@<version or tag>]` (default: `latest`), or an object with `name`, `version` and `installed`:
+
+```yaml
+applications:
+  - name: devicemanagement
+    source:
+      github:
+        repo: Cumulocity-IoT/devicemanagement
+        tags: ["v1025.*"]
+        includePrereleases: true
+        assets: ["devicemanagement-*.zip"]
+    extensions:
+      - my-widget-plugin            # latest version
+      - other-plugin@1.2.0          # a version or a tag
+      - name: old-plugin
+        installed: false            # removed from the application
+```
+
+- This is the manifest version of opening the application in the Administration application and selecting the extension under **Plugins > Install plugin**. Both write the extension into the application's `config.remotes` as `"<contextPath>@<version>": [<modules>]`. The modules are the `exports` of the `cumulocity.json` of that version. The application loads the extension the next time it is opened.
+- An entry references the extension by its name or its context path, ignoring case.
+- Installing is additive: extensions installed through the Administration application which are not listed are kept. `installed: false` removes one.
+- Names are easy to get wrong, so they are checked twice:
+  - `validate` warns about an entry which is not uploaded by the `extensions` section, and suggests the closest declared names. It is only a warning, since the extension may already be on the tenant (for example a shared one). With `--check-sources` the context paths and names in the archives count too.
+
+    ```
+      ⚠ applications[0].extensions[0]: "Cloud HTTP Proxi" is not uploaded by the extensions section, so it must already be on the tenant (matched by name or context path); did you mean "Cloud HTTP proxy"?
+    ```
+
+  - At run time, an extension which the tenant can't install fails with the closest names and context paths of the extensions on the tenant:
+
+    ```
+      ✗ [applications] devicemanagement/Cloud HTTP Proxi (failed): extension "Cloud HTTP Proxi" not found; did you mean "Cloud HTTP proxy"?
+    ```
+
+- The `extensions` section runs before `applications`, so an extension uploaded in a run can be installed in the same run. With `--only applications`, the extension must already be on the tenant.
+- An extension is only changed when the version (or the version the tag points to) or its modules differ from the installed ones, so `latest` follows new uploads on the next run:
+
+  ```
+    ↻ [applications] devicemanagement/my-widget-plugin (updated): version 1.0.0 -> 1.2.0
+  ```
+
+- The extensions are stored in the application `config`, which only the owner of the application can change. The application must therefore be owned by the tenant running the sync: give a built-in application such as `devicemanagement` a `source` to replace it with a tenant-owned copy. Without a source, the entry fails when the tenant owns no web application of that name.
+- The extensions are installed once per run in the tenant running the sync, also with a [targets section](#target-tenants).
 
 ### Device groups
 
@@ -1022,7 +1121,7 @@ users:
     enabled: false # keep the account but disable it
 ```
 
-User groups are synced before users, so `users[].groups` can reference groups declared in the same manifest (or groups that already exist in the tenant). Roles referenced by `userGroups[].roles` must exist in the tenant — note that some roles only appear after subscribing the microservice that provides them, which the `applications` section (applied earlier) can take care of.
+User groups are synced before users, so `users[].groups` can reference groups declared in the same manifest (or groups that already exist in the tenant). Roles referenced by `userGroups[].roles` must exist in the tenant — note that some roles only appear after subscribing the microservice that provides them, which the `microservices` section (applied earlier) can take care of.
 
 A user needs a `userName` or an `email`, and each defaults to the other:
 
@@ -1270,7 +1369,7 @@ targets:
 ```
 
 - **`serviceUser`** (default) uses the [microservice service user](https://goc8ycli.netlify.app/docs/tutorials/microservice-serviceuser/) pattern: a placeholder `MICROSERVICE` application (default name `tenant-sync`, no binary, no deployment) is created in the current tenant, subscribed to every target tenant, and its per-tenant service users are fetched via the application bootstrap user. The application and subscriptions are idempotent and left in place between runs. Service users for freshly subscribed tenants can take a few seconds to appear; the tool retries briefly.
-  - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (user groups, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
+  - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (user groups, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `microservices`, `extensions`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
   - **Existing subscriptions.** A tenant's service user gets its roles when the tenant is subscribed. When the service user of a target lacks a required role (e.g. the tenant was subscribed by an older version), the tool subscribes the application to that tenant again, which creates a new service user with the current roles.
 - **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported — the run fails with a clear error listing tenants without a matching session.
 - **`tenantAdmin`** logs in to each target with the admin credentials of its entry in the [`tenants`](#provision-child-tenants) section: `adminName` and the admin password (`adminPass`, an `env` reference, or a generated value from the secrets file). It needs no placeholder microservice and no session files, so it suits tenants which this tool creates and manages, e.g. from a CI runner. Targets are matched to `tenants` entries by ID and then by domain. The credentials are checked before any section runs; the run fails for a target without a matching entry, with `sendPasswordResetEmail` (the password is not known), with a password generated in this run for a tenant which already existed (the secrets file was lost), or whose admin login is rejected (the password was changed or two-factor authentication was enabled).
@@ -1279,7 +1378,7 @@ In multi-tenant runs every result line and the hook environment (`C8Y_TENANT`, `
 
 ```
 🏢 Tenant: t12345
-  ✓ [applications] t12345: cloud-remote-access (unchanged): not subscribed
+  ✓ [microservices] t12345: cloud-remote-access (unchanged): not subscribed
   ↻ [features] t12345: mqtt-service.smartrest (updated): enabled
 ```
 
@@ -1338,7 +1437,7 @@ c8y tenant-sync run -f customer-a.yaml
 - **Tenant ID (optional).** Without `id`, the platform generates the tenant ID. Set `id` to choose it yourself, e.g. to match a customer number, or to reference the tenant by a known ID in `targets.tenants` or scripts. It is only used when creating the tenant, since a tenant ID can never be changed: if the tenant with the domain exists with another ID, or the ID is already used by a tenant with another domain, the entry fails instead of changing anything. The platform enforces its own rules for tenant IDs; the manifest only rejects IDs with spaces, dots, colons or slashes (a value with a dot would be read as a domain in `targets.tenants`).
 - **Updated when different.** For an existing tenant only `company`, `contactName`, `contactPhone` and `customProperties` are updated, and only when they differ. Custom properties are merged: keys not in the manifest are kept. The domain and the admin credentials of an existing tenant are never changed (a password generated for an existing tenant is reported as `not applied`).
 - **Never deleted.** Tenants not in the manifest are left alone, and tenants are never deleted or suspended.
-- **Subscriptions.** `applications` are subscribed to the tenant when missing (also for existing tenants); other subscriptions are kept. Use the [`applications`](#application-subscriptions) section with `targets` to unsubscribe applications.
+- **Subscriptions.** `applications` are subscribed to the tenant when missing (also for existing tenants); other subscriptions are kept. Use the [`microservices` and `applications`](#subscriptions) sections with `targets` to unsubscribe applications.
 - **Runs once, before the targets.** The section runs once per run with the credentials of the current tenant (not per target), before the targets are resolved. A tenant created in the run can therefore be selected by `targets` (by domain, `allChildren` or `selector`) and configured by every other section. Global hooks run per target and so after this section; `hooks.sections.tenants` runs around it.
 - **Configure tenants with their admin credentials.** With `targets.credentials.mode: tenantAdmin`, the other sections log in to each tenant as its admin, using the password from the `tenants` entry. The first run creates the tenant and configures it; later runs find the generated password in the secrets file and use it again. Keep the secrets file between runs: in CI, commit it encrypted with [sops](docs/sops.md) (remove `*.secrets.yaml` from `.gitignore` and add a `.sops.yaml` creation rule for `\.secrets\.yaml$`), and commit it back after a run which generated a value.
 
@@ -1474,7 +1573,7 @@ deviceProfiles:
 
   ✓ [tenantOptions] configuration/device.bootstrap.enabled (unchanged)
   ↻ [features] feature-branding (updated): enabled
-  ✓ [applications] advanced-software-mgmt (unchanged): already subscribed
+  ✓ [microservices] advanced-software-mgmt (unchanged): already subscribed
   ✚ [software] tedge [arm64/apt] (created)
   ✚ [software] tedge [arm64/apt] 1.6.2~584+gd629c53 (created): tedge_1.6.2~584+gd629c53_arm64.deb
   ✓ [firmware] core-image-tedge-rpi4 (unchanged)
@@ -1567,7 +1666,7 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
                │
         ┌────────────┐
         │  go-c8y SDK│  Repository.{Software,Firmware,Configuration},
-        └────────────┘  Tenants.Options, Features, Applications,
+        └────────────┘  Tenants.Options, Features, Applications, UIPlugins,
                         Users, UserGroups, UserRoles,
                         InventoryRoles, DevicePermissions,
                         SmartRestTemplates, TrustedCertificates,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
 	"os"
 	"reflect"
 	"sort"
@@ -43,6 +44,8 @@ const (
 	SectionCertificateAuthority   = "certificateAuthority"
 	SectionTrustedCertificates    = "trustedCertificates"
 	SectionCertificateRevocations = "certificateRevocationLists"
+	SectionMicroservices          = "microservices"
+	SectionExtensions             = "extensions"
 	SectionApplications           = "applications"
 	SectionDeviceGroups           = "deviceGroups"
 	SectionUserGroups             = "userGroups"
@@ -66,7 +69,8 @@ const (
 // the synced items; custom commands run last so they can build on everything
 // the manifest declares. Device groups are synced before user groups and
 // users so roles and permissions can later be assigned on groups created in
-// the same run.
+// the same run. UI extensions are uploaded before the web applications so
+// the applications can install extensions uploaded in the same run.
 //
 // Child tenants come first: the section runs once with the base credentials,
 // before the targets are resolved (see Syncer.Apply), so tenants created in
@@ -80,6 +84,8 @@ var SectionOrder = []string{
 	SectionCertificateAuthority,
 	SectionTrustedCertificates,
 	SectionCertificateRevocations,
+	SectionMicroservices,
+	SectionExtensions,
 	SectionApplications,
 	SectionDeviceGroups,
 	SectionUserGroups,
@@ -141,6 +147,14 @@ type Syncer struct {
 	appSelfLinks map[string]string
 	// appOwners caches the owner tenant of applications by name
 	appOwners map[string]string
+	// extensionsDone and appExtensionsDone hold the extensions uploaded and
+	// the applications whose extensions were installed, which happens once
+	// per run in the tenant running the sync (not once per target)
+	extensionsDone    map[string]bool
+	appExtensionsDone map[string]bool
+	// extensionCache is the catalog of the extensions the tenant can install
+	// (nil: not read yet, or changed since)
+	extensionCache []jsonmodels.UIPlugin
 	// subscriptionCache caches the subscribed applications by tenant ID
 	subscriptionCache map[string]subscriptions
 	// baseTenantID is the tenant of the credentials running the sync
@@ -406,6 +420,10 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncTrustedCertificates(ctx, manifest.TrustedCertificates)
 		case SectionCertificateRevocations:
 			err = s.SyncCertificateRevocationLists(ctx, manifest.CertificateRevocationLists)
+		case SectionMicroservices:
+			err = s.SyncMicroservices(baseCtx, manifest.Microservices)
+		case SectionExtensions:
+			err = s.SyncExtensions(baseCtx, manifest.Extensions)
 		case SectionApplications:
 			err = s.SyncApplications(baseCtx, manifest.Applications)
 		case SectionDeviceGroups:

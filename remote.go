@@ -179,6 +179,14 @@ func (m *Manifest) forEachSource(fn func(label string, source *Source)) {
 	for i := range m.CertificateRevocationLists {
 		fn(fmt.Sprintf("certificateRevocationLists[%d]", i), &m.CertificateRevocationLists[i].Source)
 	}
+	for i := range m.Microservices {
+		if m.Microservices[i].Source != nil {
+			fn(fmt.Sprintf("microservices[%d]", i), m.Microservices[i].Source)
+		}
+	}
+	for i := range m.Extensions {
+		fn(fmt.Sprintf("extensions[%d]", i), &m.Extensions[i].Source)
+	}
 	for i := range m.Applications {
 		if m.Applications[i].Source != nil {
 			fn(fmt.Sprintf("applications[%d]", i), m.Applications[i].Source)

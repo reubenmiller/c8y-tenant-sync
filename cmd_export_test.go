@@ -42,12 +42,19 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 		"statistics": stats(),
 	})
 	f.JSON("GET /tenant/tenants/t123/trusted-certificates", http.StatusOK, caCollection("ENABLED", true))
-	f.JSON("GET /application/applications", http.StatusOK, map[string]any{
-		"applications": []map[string]any{
-			{"id": "11", "name": "smartrule", "type": "MICROSERVICE"},
-			{"id": "10", "name": "devicesimulator", "type": "MICROSERVICE"},
-		},
-		"statistics": stats(),
+	f.Handle("GET /application/applications", func(w http.ResponseWriter, r *http.Request) {
+		apps := []map[string]any{}
+		if strings.Contains(r.URL.Query().Get("type"), "MICROSERVICE") {
+			apps = append(apps,
+				map[string]any{"id": "11", "name": "smartrule", "type": "MICROSERVICE"},
+				map[string]any{"id": "10", "name": "devicesimulator", "type": "MICROSERVICE"})
+		}
+		if strings.Contains(r.URL.Query().Get("type"), "HOSTED") {
+			apps = append(apps,
+				map[string]any{"id": "21", "name": "devicemanagement", "type": "HOSTED"},
+				map[string]any{"id": "20", "name": "cockpit", "type": "HOSTED"})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"applications": apps, "statistics": stats()})
 	})
 	f.JSON("GET /inventory/managedObjects", http.StatusOK, map[string]any{
 		"managedObjects": []map[string]any{
@@ -103,21 +110,22 @@ func TestExportAllSections(t *testing.T) {
 
 	assert.Equal(t, &CertificateAuthoritySpec{Enabled: boolPtr(true), AutoRegistrationEnabled: boolPtr(true)}, manifest.CertificateAuthority)
 
-	assert.Equal(t, []ApplicationSpec{
-		{Name: "devicesimulator", Type: "MICROSERVICE"},
-		{Name: "smartrule", Type: "MICROSERVICE"},
-	}, manifest.Applications)
+	assert.Equal(t, []MicroserviceSpec{{Name: "devicesimulator"}, {Name: "smartrule"}}, manifest.Microservices)
+	assert.Equal(t, []ApplicationSpec{{Name: "cockpit"}, {Name: "devicemanagement"}}, manifest.Applications)
 
 	// The device group tree without bookkeeping fragments
 	assert.Equal(t, []DeviceGroupSpec{
 		{Name: "Europe", Description: "European sites", Groups: []DeviceGroupSpec{{Name: "Plant Berlin"}}},
 	}, manifest.DeviceGroups)
 
-	// Subscribed (not owned) microservices of the current tenant
+	// Subscribed (not owned) microservices and web applications of the
+	// current tenant
 	apps := f.Requests(http.MethodGet, "/application/applications")
-	require.Len(t, apps, 1)
+	require.Len(t, apps, 2)
 	assert.Contains(t, apps[0].Query, "providedFor=t123")
 	assert.Contains(t, apps[0].Query, "type=MICROSERVICE")
+	assert.Contains(t, apps[1].Query, "providedFor=t123")
+	assert.Contains(t, apps[1].Query, "type=HOSTED%2CEXTERNAL")
 
 	// Inventory roles sorted by name, permissions sorted, type "*" left out
 	assert.Equal(t, []InventoryRoleSpec{
@@ -131,24 +139,24 @@ func TestExportAllSections(t *testing.T) {
 	}, manifest.InventoryRoles)
 }
 
-func TestExportAllFeaturesAndApplicationTypes(t *testing.T) {
+func TestExportAllFeaturesAndSelectedSections(t *testing.T) {
 	f := fakeExportTenant(t)
 	exporter := &Exporter{
-		Client:           f.Client(),
-		Sections:         []string{SectionFeatures, SectionApplications},
-		AllFeatures:      true,
-		ApplicationTypes: []string{"microservice", "HOSTED"},
+		Client:      f.Client(),
+		Sections:    []string{SectionFeatures, SectionApplications},
+		AllFeatures: true,
 	}
 	manifest, _, err := exporter.Export(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, manifest.Features, 3)
 	assert.Empty(t, manifest.TenantOptions, "sections not selected must not be exported")
 	assert.Nil(t, manifest.CertificateAuthority)
+	assert.Empty(t, manifest.Microservices)
 	assert.Empty(t, f.Requests(http.MethodGet, "/tenant/options"))
 
 	apps := f.Requests(http.MethodGet, "/application/applications")
 	require.Len(t, apps, 1)
-	assert.Contains(t, apps[0].Query, "type=MICROSERVICE%2CHOSTED")
+	assert.Contains(t, apps[0].Query, "type=HOSTED%2CEXTERNAL")
 }
 
 func TestExportWithoutCertificateAuthority(t *testing.T) {

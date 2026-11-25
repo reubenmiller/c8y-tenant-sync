@@ -20,6 +20,11 @@
 #   - path: "customers/*.yaml"            # glob matches are merged sorted by name
 #   - path: local-overrides.yaml
 #     optional: true                      # skip when missing / nothing matches
+#   - https://example.com/repo/base.yaml   # a manifest from a URL
+#   - github:                             # a bundle (manifest + files) from a
+#       repo: org/tenant-blueprints       # GitHub release asset, see
+#       release: v1.2.0                   # "c8y tenant-sync bundle"
+#       assets: ["blueprint-*.tar.gz"]
 
 # Apply the manifest to other tenants than the current one. Selection modes
 # are additive (union of all matches) and overridable on the command line

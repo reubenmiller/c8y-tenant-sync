@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/mail"
 	"net/url"
 	"os"
@@ -59,6 +60,9 @@ type Manifest struct {
 	// IncludedFiles are the files merged via include, relative to the
 	// manifest directory where possible (set by LoadManifestWith)
 	IncludedFiles []string `yaml:"-" json:"-"`
+
+	// tempDirs are removed by Cleanup
+	tempDirs []string
 }
 
 // ChildTenantSpec declares a child tenant of the current tenant. It is matched
@@ -1106,6 +1110,22 @@ type LoadOptions struct {
 	// Secrets provides the values of ${generate:NAME} references. Without
 	// it, the references are only checked and left in place
 	Secrets *SecretStore
+
+	// AllowRemoteCommands lets manifests fetched from a URL or a GitHub
+	// release declare hooks and commands (shell commands run on this machine)
+	AllowRemoteCommands bool
+
+	// WorkDir is where bundles are downloaded and extracted. It must exist
+	// until the manifest is no longer used. Empty: a temp directory which
+	// Manifest.Cleanup removes.
+	WorkDir string
+
+	// GitHubAPI overrides the GitHub API base URL for bundles (tests)
+	GitHubAPI string
+
+	// HTTPClient downloads bundles from GitHub (default: a client with a
+	// timeout)
+	HTTPClient *http.Client
 }
 
 // escapeEnv escapes "$" as "$$", so the value is not expanded when the
@@ -1284,25 +1304,56 @@ func LoadManifestWith(path string, opts LoadOptions) (*Manifest, error) {
 // like files included in that order (later files win). Relative paths are
 // resolved against the directory of the first manifest.
 func LoadManifestsWith(paths []string, opts LoadOptions) (*Manifest, error) {
+	manifest, _, err := loadManifests(paths, opts)
+	return manifest, err
+}
+
+// loadManifests loads manifests like LoadManifestsWith and also returns the
+// loader (with the local files which were loaded)
+func loadManifests(paths []string, opts LoadOptions) (*Manifest, *manifestLoader, error) {
 	if len(paths) == 0 {
-		return nil, errors.New("no manifest file given")
+		return nil, nil, errors.New("no manifest file given")
 	}
-	abs, err := filepath.Abs(paths[0])
+	abs, err := manifestKey(paths[0])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	// Relative local paths of a remote main manifest are based on the
+	// current directory
+	rootDir := filepath.Dir(abs)
+	if isRemoteManifest(abs) {
+		if rootDir, err = filepath.Abs("."); err != nil {
+			return nil, nil, err
+		}
 	}
 	loader := &manifestLoader{
-		opts:     opts,
-		rootDir:  filepath.Dir(abs),
-		rootFile: abs,
-		loaded:   map[string]bool{},
+		opts:        opts,
+		rootDir:     rootDir,
+		rootFile:    abs,
+		loaded:      map[string]bool{},
+		bundles:     map[string]*extractedBundle{},
+		bundleRoots: map[string]string{},
 	}
 	manifest, err := loader.loadAll(paths)
 	if err != nil {
-		return nil, err
+		for _, dir := range loader.tempDirs {
+			_ = os.RemoveAll(dir)
+		}
+		return nil, nil, err
 	}
 	manifest.IncludedFiles = loader.files
-	return manifest, nil
+	manifest.tempDirs = loader.tempDirs
+	return manifest, loader, nil
+}
+
+// Cleanup removes the temp directory of the bundles which were extracted
+// while loading the manifest (when LoadOptions.WorkDir was not set). The
+// local source paths of the bundles are no longer valid afterwards.
+func (m *Manifest) Cleanup() {
+	for _, dir := range m.tempDirs {
+		_ = os.RemoveAll(dir)
+	}
+	m.tempDirs = nil
 }
 
 // Validate checks the manifest for structural errors before any API calls

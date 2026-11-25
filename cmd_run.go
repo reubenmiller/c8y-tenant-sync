@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,6 +34,8 @@ type runOptions struct {
 	reportFormat      string
 	failOnChange      bool
 	githubSummary     bool
+
+	allowRemoteCommands bool
 }
 
 func newRunCmd() *cobra.Command {
@@ -49,12 +50,16 @@ Every operation is idempotent, so the same manifest can be applied repeatedly. U
 --dry-run (or "c8y --dry tenant-sync run") to preview the changes.
 
 Several manifests (repeated -f flags or several arguments) are merged in order,
-like files included in that order: later files win.`,
+like files included in that order: later files win.
+
+A manifest can also be an http(s) URL. Hooks and commands of remote manifests
+only run with --allow-remote-commands.`,
 		Example: formatExamples(
 			example{"run -f tenant.yaml --dry-run", "Preview the changes without applying them"},
 			example{"run -f tenant.yaml", "Apply the manifest to the tenant of the active session"},
 			example{"run -f base.yaml -f prod.yaml --dry-run", "Merge two manifests (prod.yaml wins) and preview the changes"},
 			example{"run base.yaml customer-a.yaml", "Apply the merge of two manifests given as arguments"},
+			example{"run https://example.com/tenant.yaml --dry-run", "Preview a manifest fetched from a URL"},
 			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
 			example{"run -f tenant.yaml --force", "Replace existing version binaries and configuration files"},
 			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
@@ -89,6 +94,7 @@ like files included in that order: later files win.`,
 	flags.StringVar(&opts.reportFormat, "report-format", "", "Format of the --report files: "+strings.Join(ReportFormats, " or ")+" (default: from the file extension)")
 	flags.BoolVar(&opts.githubSummary, "github-summary", true, "Inside GitHub Actions, append the Markdown report to $"+EnvGitHubStepSummary+" (no effect elsewhere)")
 	flags.BoolVar(&opts.failOnChange, "fail-on-change", false, "Exit with an error when any item was created, updated or planned (drift check)")
+	flags.BoolVar(&opts.allowRemoteCommands, "allow-remote-commands", false, "Run the hooks and commands of manifests fetched from a URL")
 	flags.StringArrayVar(&opts.targets, "target", nil, "Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest targets section)")
 
 	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFileList)
@@ -132,7 +138,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 		return err
 	}
 	// Relative paths and the default secrets file are based on the first
-	// manifest
+	// manifest (the current directory for a URL)
 	manifestPath := manifestPaths[0]
 
 	reportOutputs, err := parseReportOutputs(opts.reports, opts.reportFormat)
@@ -159,7 +165,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 	secrets.Host = authentication.HostFromEnvironment()
 	secrets.Tenant = authentication.FromEnvironment().Tenant
 
-	manifest, err := LoadManifestsWith(manifestPaths, LoadOptions{Secrets: secrets})
+	manifest, err := LoadManifestsWith(manifestPaths, LoadOptions{Secrets: secrets, AllowRemoteCommands: opts.allowRemoteCommands})
 	// Values generated while loading are saved even when the run fails later,
 	// since they may already have been used (e.g. as a user's password)
 	defer func() {
@@ -170,6 +176,8 @@ func runSync(opts *runOptions, args []string) (err error) {
 	if err != nil {
 		return err
 	}
+	// Extracted bundles are used until the run ends
+	defer manifest.Cleanup()
 	// env and generate references (valueFrom, passwordFrom, tokenFrom)
 	refValues, err := manifest.ResolveSecretRefs(secrets)
 	if err != nil {
@@ -240,7 +248,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 
 	syncer := &Syncer{
 		Client:      client,
-		Resolver:    NewSourceResolver(filepath.Dir(manifestPath), workDir, dryRun),
+		Resolver:    NewSourceResolver(manifestBaseDir(manifestPath), workDir, dryRun),
 		DryRun:      dryRun,
 		Force:       opts.force,
 		Concurrency: opts.concurrency,

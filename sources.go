@@ -161,6 +161,9 @@ type githubAsset struct {
 	Size               int64  `json:"size"`
 	URL                string `json:"url"` // API URL, download with Accept: application/octet-stream
 	BrowserDownloadURL string `json:"browser_download_url"`
+	// Digest is the checksum GitHub computed for the asset, e.g.
+	// "sha256:<hex>" (empty for assets uploaded before GitHub added it)
+	Digest string `json:"digest"`
 }
 
 func (r *SourceResolver) resolveGitHub(source *GitHubSource) ([]ResolvedFile, error) {
@@ -506,9 +509,18 @@ func (r *SourceResolver) downloadAsset(source *GitHubSource, tag string, asset g
 	}
 	defer out.Close()
 
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, hash), resp.Body); err != nil {
 		os.Remove(targetPath)
 		return "", err
+	}
+
+	// Verify the download against the checksum GitHub published
+	if want, ok := strings.CutPrefix(asset.Digest, "sha256:"); ok {
+		if got := hex.EncodeToString(hash.Sum(nil)); !strings.EqualFold(got, want) {
+			os.Remove(targetPath)
+			return "", fmt.Errorf("checksum mismatch: expected sha256 %s, got %s", want, got)
+		}
 	}
 
 	return targetPath, nil

@@ -87,7 +87,7 @@ c8y tenant-sync validate tenant.yaml
 c8y tenant-sync validate tenant.yaml --check-sources
 
 # 3. Preview, then apply
-c8y tenant-sync run -f tenant.yaml --dry-run
+c8y tenant-sync run -f tenant.yaml --dry
 c8y tenant-sync run -f tenant.yaml
 ```
 
@@ -107,7 +107,7 @@ More examples:
 c8y tenant-sync run -f tenant.yaml --only firmware,deviceProfiles
 
 # Merge several manifests in order (later files win; see "Composing manifests")
-c8y tenant-sync run -f base.yaml -f prod.yaml --dry-run
+c8y tenant-sync run -f base.yaml -f prod.yaml --dry
 
 # Replace existing version binaries (instead of skipping existing versions)
 c8y tenant-sync run -f tenant.yaml --force
@@ -162,7 +162,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file (also accepted as a positional argument), see [Remote manifests](#remote-manifests) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
-| `--dry-run`, `--dry` | | Preview changes without applying them |
+| `--dry` | | Preview changes without applying them |
 | `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
@@ -195,7 +195,7 @@ c8y tenant-sync run -f tenant.yaml --report report.json --report report.md
 - Missing parent directories are created. A report which cannot be written is reported and makes a successful run fail; it never replaces the error of a failed run.
 - Inside GitHub Actions (`GITHUB_ACTIONS=true` and `GITHUB_STEP_SUMMARY` set), the Markdown report is appended to the job's step summary automatically, also in dry-run and when the run fails. Turn it off with `--github-summary=false`. The step summary is a file owned by the runner, so the report is only ever appended, and a failure to write it prints a warning without failing an otherwise successful run.
 - `--report github` requests the step summary explicitly (also with `--github-summary=false`). Then a write failure fails the run like any other `--report` file. The summary is written at most once per run, also when both apply. Outside GitHub Actions, where `GITHUB_STEP_SUMMARY` is not set, `--report github` is skipped with a notice.
-- `--fail-on-change` exits with `changes detected: N item(s) created, updated or planned` when the run changed (or, in dry-run, would change) anything. Combined with `--dry-run` it is a drift check: the job fails when the tenant no longer matches the manifest. Executed hook commands do not count as changes.
+- `--fail-on-change` exits with `changes detected: N item(s) created, updated or planned` when the run changed (or, in dry-run, would change) anything. Combined with `--dry` it is a drift check: the job fails when the tenant no longer matches the manifest. Executed hook commands do not count as changes.
 
 The JSON report:
 
@@ -346,7 +346,7 @@ tenantOptions:
 
 ```bash
 c8y tenant-sync export -o tenant.yaml
-c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same tenant
+c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenant
 ```
 
 | Section | What is exported |
@@ -366,7 +366,7 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Write the manifest to a file instead of stdout |
-| `--sections` | Comma-separated sections to export (default: all of the above) |
+| `--only` | Comma-separated sections to export (default: all of the above). |
 | `--all-features` | Export all feature toggles, not only the ones set for the tenant |
 | `--force` | Overwrite the output file |
 
@@ -430,7 +430,7 @@ tenantOptions:
 
 ```bash
 c8y tenant-sync validate prod.yaml   # lists the included files
-c8y tenant-sync run -f prod.yaml --dry-run
+c8y tenant-sync run -f prod.yaml --dry
 ```
 
 Rules:
@@ -452,7 +452,7 @@ Duplicates within a single file are still validation errors, so a duplicate is o
 `run` and `validate` also accept several manifests, as repeated `-f` flags or as arguments (not both in one call):
 
 ```bash
-c8y tenant-sync run -f base.yaml -f prod.yaml --dry-run
+c8y tenant-sync run -f base.yaml -f prod.yaml --dry
 c8y tenant-sync validate base.yaml customer-a.yaml
 ```
 
@@ -468,7 +468,7 @@ When to use which:
 A manifest can be an http(s) URL, on the command line or in an `include` list. Repository owners can then publish a manifest which users apply directly, without downloading it first:
 
 ```bash
-c8y tenant-sync run https://raw.githubusercontent.com/org/repo/main/tenant.yaml --dry-run
+c8y tenant-sync run https://raw.githubusercontent.com/org/repo/main/tenant.yaml --dry
 ```
 
 ```yaml
@@ -529,8 +529,8 @@ include:
 A bundle can also be applied directly:
 
 ```bash
-c8y tenant-sync run blueprint.tar.gz --dry-run
-c8y tenant-sync run https://example.com/releases/blueprint.tar.gz --dry-run
+c8y tenant-sync run blueprint.tar.gz --dry
+c8y tenant-sync run https://example.com/releases/blueprint.tar.gz --dry
 ```
 
 Rules:
@@ -1259,7 +1259,7 @@ A broken login configuration can lock everyone out of the tenant, so the section
 - **The preferred mode is switched last**, after the other login options are configured. The option of the new mode is made visible before the others are hidden, the result is read back, and if it does not match, the previous visibility is restored.
 - **`validate` refuses** an unknown mode, `preferred: sso` without an `sso` section or without any access mapping rule, `preferred: basic` with `forbiddenClients: [WEB_BROWSERS]`, and OAI-Secure sessions shorter than 15 minutes.
 - **The run refuses** to forbid basic authentication for web browsers while basic is the preferred mode, to make basic preferred while web browsers are forbidden from it, to hide the SSO button while SSO is the preferred mode, and to add a forbidden user agent which matches this tool's own `User-Agent`. Restrictions which are lifted are applied before the preferred mode changes, and new restrictions after it.
-- **`--dry-run` shows the change**: unlike the other sections, a dry run reads the tenant's login options (and the groups and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
+- **`--dry` shows the change**: unlike the other sections, a dry run reads the tenant's login options (and the groups and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
 
 If the SSO provider stops working while `sso` is the preferred mode, users can still reach the tenant with basic authentication through the API (unless it is restricted), for example to set `preferred: oaiSecure` again with this tool.
 
@@ -1503,7 +1503,7 @@ userGroups:
 ```
 
 ```bash
-c8y tenant-sync run -f customer-a.yaml --dry-run   # preview (no API calls)
+c8y tenant-sync run -f customer-a.yaml --dry   # preview (no API calls)
 c8y tenant-sync run -f customer-a.yaml
 ```
 

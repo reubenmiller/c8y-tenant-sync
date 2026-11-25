@@ -924,7 +924,7 @@ func TestRunDryRunComparesLoginOptions(t *testing.T) {
 
 	var runErr error
 	stdout, stderr := captureStdio(t, func() {
-		runErr = runRoot(t, "run", "-f", manifest, "--dry-run")
+		runErr = runRoot(t, "run", "-f", manifest, "--dry")
 	})
 	require.NoError(t, runErr, "stdout: %s\nstderr: %s", stdout, stderr)
 	assert.Contains(t, stdout, "[loginOptions] preferred (unchanged): oaiSecure")

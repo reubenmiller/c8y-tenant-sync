@@ -43,7 +43,7 @@ var ExportSections = []string{
 // exportOptions holds the flags of the export command
 type exportOptions struct {
 	output      string
-	sections    []string
+	only        []string
 	allFeatures bool
 	force       bool
 	verbose     bool
@@ -83,8 +83,8 @@ Review the manifest before applying it to other tenants.`,
 		Example: formatExamples(
 			example{"export", "Print a manifest of the current tenant"},
 			example{"export -o tenant.yaml", "Write the manifest of the current tenant to a file"},
-			example{"export --sections tenantOptions,features", "Export only the tenant options and feature toggles"},
-			example{"export --sections microservices,applications", "Export only the subscribed microservices and web applications"},
+			example{"export --only tenantOptions,features", "Export only the tenant options and feature toggles"},
+			example{"export --only microservices,applications", "Export only the subscribed microservices and web applications"},
 		),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -94,13 +94,13 @@ Review the manifest before applying it to other tenants.`,
 
 	flags := cmd.Flags()
 	flags.StringVarP(&opts.output, "output", "o", "", "Write the manifest to a file instead of stdout")
-	flags.StringSliceVar(&opts.sections, "sections", nil, "Comma-separated list of sections to export (default: all). Sections: "+strings.Join(ExportSections, ", "))
+	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to export (default: all). Sections: "+strings.Join(ExportSections, ", "))
 	flags.BoolVar(&opts.allFeatures, "all-features", false, "Export all feature toggles, not only the ones set for the tenant")
 	flags.BoolVar(&opts.force, "force", false, "Overwrite the output file if it already exists")
 	flags.BoolVar(&opts.verbose, "verbose", false, "Enable detailed logging")
 	flags.BoolVar(&opts.debug, "debug", false, "Enable debug mode (verbose logging + HTTP debug)")
 
-	_ = cmd.RegisterFlagCompletionFunc("sections", cobra.FixedCompletions(ExportSections, cobra.ShellCompDirectiveNoFileComp))
+	_ = cmd.RegisterFlagCompletionFunc("only", cobra.FixedCompletions(ExportSections, cobra.ShellCompDirectiveNoFileComp))
 	_ = cmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"yaml", "yml"}, cobra.ShellCompDirectiveFilterFileExt
 	})
@@ -113,7 +113,7 @@ func runExport(ctx context.Context, opts *exportOptions, stdout io.Writer) error
 	}
 	configureLogging(opts.verbose, opts.debug)
 
-	for _, section := range opts.sections {
+	for _, section := range opts.only {
 		if !isExportSection(section) {
 			return fmt.Errorf("unknown section %q. Valid sections: %s", strings.TrimSpace(section), strings.Join(ExportSections, ", "))
 		}
@@ -131,7 +131,7 @@ func runExport(ctx context.Context, opts *exportOptions, stdout io.Writer) error
 
 	exporter := &Exporter{
 		Client:      client,
-		Sections:    opts.sections,
+		Sections:    opts.only,
 		AllFeatures: opts.allFeatures,
 	}
 	manifest, tenantID, err := exporter.Export(ctx)
@@ -399,7 +399,7 @@ func MarshalManifest(manifest *Manifest, header string) ([]byte, error) {
 	for _, line := range strings.Split(header, "\n") {
 		fmt.Fprintf(&buf, "# %s\n", line)
 	}
-	fmt.Fprintf(&buf, "#\n# Review it before applying it, e.g.: %s run -f <file> --dry-run\n\n", commandPrefix)
+	fmt.Fprintf(&buf, "#\n# Review it before applying it, e.g.: %s run -f <file> --dry\n\n", commandPrefix)
 
 	if len(node.Content) == 0 || len(node.Content[0].Content) == 0 {
 		buf.WriteString("{}\n")

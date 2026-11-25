@@ -3,7 +3,7 @@
 # Example tenant-sync manifest
 #
 # Validate with: c8y tenant-sync validate tenant.yaml
-# Preview with:  c8y tenant-sync run -f tenant.yaml --dry-run
+# Preview with:  c8y tenant-sync run -f tenant.yaml --dry
 # Apply with:    c8y tenant-sync run -f tenant.yaml
 #
 # Environment variables are expanded with ${VAR} syntax before parsing,

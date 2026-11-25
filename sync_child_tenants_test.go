@@ -454,7 +454,7 @@ func TestRunChildTenantsDryRun(t *testing.T) {
 
 	var runErr error
 	stdout, _ := captureStdio(t, func() {
-		runErr = runRoot(t, "run", "-f", manifest, "--dry-run")
+		runErr = runRoot(t, "run", "-f", manifest, "--dry")
 	})
 	require.NoError(t, runErr, stdout)
 	assert.Contains(t, stdout, "[tenants] "+customerDomain+" (planned)")

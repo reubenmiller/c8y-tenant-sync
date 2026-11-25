@@ -306,7 +306,7 @@ func TestExportCommandWritesFile(t *testing.T) {
 	t.Setenv("C8Y_TOKEN", "")
 
 	output := filepath.Join(t.TempDir(), "exported.yaml")
-	require.NoError(t, runRoot(t, "export", "-o", output, "--sections", "tenantOptions"))
+	require.NoError(t, runRoot(t, "export", "-o", output, "--only", "tenantOptions"))
 	loaded, err := LoadManifest(output)
 	require.NoError(t, err)
 	assert.Len(t, loaded.TenantOptions, 3)
@@ -314,9 +314,9 @@ func TestExportCommandWritesFile(t *testing.T) {
 
 	// The file is not overwritten without --force
 	assert.ErrorContains(t, runRoot(t, "export", "-o", output), "already exists")
-	assert.NoError(t, runRoot(t, "export", "-o", output, "--force", "--sections", "features"))
+	assert.NoError(t, runRoot(t, "export", "-o", output, "--force", "--only", "features"))
 }
 
 func TestExportCommandRejectsUnknownSection(t *testing.T) {
-	assert.ErrorContains(t, runRoot(t, "export", "--sections", "software"), "unknown section")
+	assert.ErrorContains(t, runRoot(t, "export", "--only", "software"), "unknown section")
 }

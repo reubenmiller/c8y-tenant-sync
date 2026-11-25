@@ -47,7 +47,7 @@ func newRunCmd() *cobra.Command {
 		Long: `Apply a manifest to the tenant of the active go-c8y-cli session.
 
 Every operation is idempotent, so the same manifest can be applied repeatedly. Use
---dry-run (or "c8y --dry tenant-sync run") to preview the changes.
+--dry (or "c8y --dry tenant-sync run") to preview the changes.
 
 Several manifests (repeated -f flags or several arguments) are merged in order,
 like files included in that order: later files win.
@@ -55,18 +55,18 @@ like files included in that order: later files win.
 A manifest can also be an http(s) URL. Hooks and commands of remote manifests
 only run with --allow-remote-commands.`,
 		Example: formatExamples(
-			example{"run -f tenant.yaml --dry-run", "Preview the changes without applying them"},
+			example{"run -f tenant.yaml --dry", "Preview the changes without applying them"},
 			example{"run -f tenant.yaml", "Apply the manifest to the tenant of the active session"},
-			example{"run -f base.yaml -f prod.yaml --dry-run", "Merge two manifests (prod.yaml wins) and preview the changes"},
+			example{"run -f base.yaml -f prod.yaml --dry", "Merge two manifests (prod.yaml wins) and preview the changes"},
 			example{"run base.yaml customer-a.yaml", "Apply the merge of two manifests given as arguments"},
-			example{"run https://example.com/tenant.yaml --dry-run", "Preview a manifest fetched from a URL"},
+			example{"run https://example.com/tenant.yaml --dry", "Preview a manifest fetched from a URL"},
 			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
 			example{"run -f tenant.yaml --force", "Replace existing version binaries and configuration files"},
 			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
 			example{"run -f tenant.yaml --target-selector \"domain=*.example.com\" --include-current", "Apply the manifest to matching tenants and the current tenant"},
 			example{"run -f tenant.yaml --report report.json --report report.md", "Write a JSON and a Markdown report of the run"},
 			example{"run -f tenant.yaml --github-summary=false", "Do not append the report to the GitHub Actions step summary"},
-			example{"run -f tenant.yaml --dry-run --fail-on-change", "Exit with an error when the tenant differs from the manifest (drift check)"},
+			example{"run -f tenant.yaml --dry --fail-on-change", "Exit with an error when the tenant differs from the manifest (drift check)"},
 		),
 		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeManifestFileList,
@@ -78,8 +78,7 @@ only run with --allow-remote-commands.`,
 	flags := cmd.Flags()
 	flags.StringArrayVarP(&opts.manifests, "manifest", "f", nil, "Path to the tenant manifest file (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
 	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to apply (default: all). Sections: "+strings.Join(SectionOrder, ", "))
-	flags.BoolVar(&opts.dryRun, "dry-run", false, "Preview the changes without applying them")
-	flags.BoolVar(&opts.dryRun, "dry", false, "Alias for --dry-run")
+	flags.BoolVar(&opts.dryRun, "dry", false, "Preview the changes without applying them")
 	flags.BoolVar(&opts.force, "force", false, "Replace existing version binaries and configuration files")
 	flags.IntVar(&opts.concurrency, "concurrency", 5, "Number of concurrent software version uploads (1-20)")
 	flags.BoolVar(&opts.verbose, "verbose", false, "Enable detailed logging")

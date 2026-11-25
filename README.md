@@ -1157,9 +1157,36 @@ deviceGroups:
 - A missing group is created and linked to its parent as a child asset. A nested group which exists without any parent (type `c8y_DeviceSubgroup`, e.g. left behind by an interrupted run) is linked instead of creating a second one. A root group is never moved below another group.
 - `description` and `fragments` are only updated when they differ. A fragment counts as unchanged when the existing value contains all values of the manifest, so values added by other tools are kept. An omitted `description` is left alone.
 - If several groups match a name (e.g. two root groups called `Europe`), the item fails with the IDs of the matches and its child groups are skipped. Rename or remove the duplicates; tenant-sync does not guess.
-- Groups are never deleted or unlinked, and devices in the groups are not changed.
+- Groups are never unlinked, and devices in the groups are not changed. A group is only deleted when it has `state: absent` and is empty (see [Deleting device groups](#deleting-device-groups)).
 - Names must not be empty and must be unique among siblings. The fragments `name`, `type`, `description`, `c8y_IsDeviceGroup`, `c8y_TenantSync` and the platform properties (`id`, `owner`, `childAssets`, ...) can not be set.
 - Device groups are synced before global roles, inventory roles and users.
+
+#### Deleting device groups
+
+```yaml
+deviceGroups:
+  - name: Europe
+    groups:
+      - name: Plant Paris          # closed: delete the group and its lines
+        state: absent
+        groups:
+          - {name: Line 1, state: absent}
+          - {name: Line 2, state: absent}
+```
+
+```
+  ✓ [deviceGroups] Europe (unchanged)
+  − [deviceGroups] Europe/Plant Paris/Line 1 (deleted)
+  − [deviceGroups] Europe/Plant Paris/Line 2 (deleted)
+  − [deviceGroups] Europe/Plant Paris (deleted)
+```
+
+- `state: absent` (the default is `present`) deletes the group if it exists. A group which does not exist is reported as `unchanged: absent`. The group is found the same way as a present group: by name within its parent.
+- Child groups are deleted before their parent. The child groups of an absent group must be absent too (or left out of the manifest): validation fails for a present group below an absent one.
+- Only an **empty** group is deleted. A group which still has child assets or child devices fails with what is inside, for example `cannot delete device group: it still has 2 child assets (Sensor 1, Sensor 2); move or delete them first`. Its parent then fails as well, since it is not empty either. Devices and other content are never deleted with a group (no cascade).
+- An absent group may only have `name` and `groups`: `description` and `fragments` fail validation. Validation also fails when a user's `inventoryRoles` refers to an absent group, by path or by name.
+- The deletes run **after the `users` section**, together with the deletes of the other sections, see [Removing what a manifest created](#removing-what-a-manifest-created).
+- A dry run (`--dry`) reads the groups and reports `delete after the users section (fails if not empty)` for each group to delete. When it checks whether a group is empty, it leaves out the child groups which the same run would delete.
 
 ### Users and global roles
 
@@ -1241,6 +1268,20 @@ users:
 - The user running the sync is never deleted: such an entry fails with `refusing to delete the user running the sync`. When that user cannot be looked up, no user is deleted.
 - A user that cannot be read (for example because of missing permissions) fails with `read user`. Only a user that does not exist is created, skipped or failed as `ifMissing` says.
 - `enabled` stays a separate field: it is the account state in Cumulocity, while `state` and `ifMissing` say what tenant-sync does with the entry.
+
+#### Deleting global roles
+
+```yaml
+globalRoles:
+  - name: Site staff
+    state: absent
+```
+
+- `state: absent` (the default is `present`) deletes the global role if it exists. A global role which does not exist is reported as `unchanged: absent`. Cumulocity removes the role from the users who still have it.
+- An absent global role may only have `name`. Validation fails when a user's `globalRoles` or a rule of `loginOptions.sso.accessMappings` refers to it.
+- The built-in global roles (`admins`, `business`, `Cockpit User`, `devices`, `Devicemanagement User`, `Global Manager`, `Global Reader`, `Global User Manager`, `readers`, `Shared User Manager` and `Tenant Manager`) are never deleted: validation fails for them. The Cumulocity API does not mark them, so they are matched by name.
+- A global role of the user running the sync is never deleted, so the sync cannot remove its own permissions. Such an entry fails with `refusing to delete a global role of the user running the sync`.
+- The delete runs **after the `users` section**, see [Removing what a manifest created](#removing-what-a-manifest-created). A dry run shows `delete after the users section`.
 
 To start from the users of an existing tenant, `export --only users` writes them with `ifMissing: skip` and their global and inventory roles, see [Exporting users](#exporting-users).
 
@@ -1359,6 +1400,36 @@ A dry run (`--dry`) reads the inventory roles, device groups and assignments of 
 - A user with `inventoryRolesMode: exact` also lists the roles they would lose (`-`), see [Exact inventory roles](#exact-inventory-roles).
 
 A real run reports the same details. Without an active session, and for tenants other than the current one in a dry run with `targets`, the dry run lists the desired roles and assignments without comparing them.
+
+### Removing what a manifest created
+
+The `users`, `inventoryRoles`, `globalRoles` and `deviceGroups` sections accept `state: absent`, so the objects an applied manifest created can be removed with a manifest as well. Change each entry to its name and `state: absent`:
+
+```yaml
+users:
+  - {userName: demo-berlin-ops, state: absent}
+  - {userName: demo-contractor, state: absent}
+inventoryRoles:
+  - {name: Demo site operator, state: absent}
+globalRoles:
+  - {name: Demo site staff, state: absent}
+deviceGroups:
+  - name: Demo Europe
+    state: absent
+    groups:
+      - {name: Demo Plant Berlin, state: absent}
+```
+
+The deletes run in one run, in an order where nothing is deleted while it is still in use:
+
+1. users, in the `users` section;
+2. inventory roles, once the users who had them are gone (Cumulocity refuses to delete an inventory role which is still assigned);
+3. global roles;
+4. device groups, children first.
+
+Steps 2 to 4 run after the `users` section. With `--only`, they run after the last of these four sections which `--only` selects, for example right after `deviceGroups` with `--only deviceGroups`. A second run of the same manifest reports every entry as `unchanged: absent`.
+
+Only empty device groups are deleted, so devices assigned to a group must be moved or deleted first.
 
 ### Login options
 

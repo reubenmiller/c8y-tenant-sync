@@ -2448,14 +2448,14 @@
         "$ref": "#/$defs/DeviceGroupSpec"
       },
       "type": "array",
-      "description": "Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"
+      "description": "Tree of device groups to create/update or delete with state absent (a group is identified by its name within its parent; groups are never unlinked and only empty groups are deleted)"
     },
     "globalRoles": {
       "items": {
         "$ref": "#/$defs/GlobalRoleSpec"
       },
       "type": "array",
-      "description": "Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed)"
+      "description": "Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed) or delete with state absent"
     },
     "inventoryRoles": {
       "items": {

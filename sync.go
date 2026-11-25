@@ -27,7 +27,7 @@ const (
 	ActionSkipped   Action = "skipped"  // nothing to do here, e.g. an optional source without files or a subscription only the owner tenant can change
 	ActionExecuted  Action = "executed" // hook commands
 	ActionPlanned   Action = "planned"  // dry-run
-	ActionDeleted   Action = "deleted"  // only where the manifest opts in to pruning (digitalTwin.prune)
+	ActionDeleted   Action = "deleted"  // only where the manifest opts in (state: absent, digitalTwin.prune)
 	ActionFailed    Action = "failed"
 )
 

@@ -408,13 +408,29 @@ type ApplicationSpec struct {
 	// tenant (and never created/uploaded, even when a source is given).
 	Subscribed *bool `yaml:"subscribed" json:"subscribed,omitempty" jsonschema:"description=Desired subscription state (defaults to true when omitted); false unsubscribes the application from the target tenant"`
 
+	// Key used when creating the application (defaults to
+	// <name>-application-key, prefixed with the tenant ID when a HOSTED
+	// application of the same name owned by another tenant exists)
+	Key string `yaml:"key" json:"key,omitempty" jsonschema:"description=Application key used when creating the application (defaults to <name>-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"`
+
 	// ContextPath used when creating the application (defaults to the name)
 	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=Context path used when creating the application (defaults to the name)"`
 
+	// Description of a HOSTED application with a source. Defaults to the
+	// description of the application it replaces
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=For type HOSTED with a source: the application description (kept in sync when set). Defaults to the description of the application of the same name owned by another tenant (e.g. the built-in application which the tenant-owned copy replaces); an inherited description only fills in a missing one"`
+
+	// KeepBinaries limits the number of binaries (versions) kept by a HOSTED
+	// application with a source
+	KeepBinaries int `yaml:"keepBinaries" json:"keepBinaries,omitempty" jsonschema:"description=For type HOSTED with a source: the number of binaries (application versions) to keep after an upload; the oldest binaries beyond this number are deleted but the active and the uploaded binary are always kept. 0 or omitted keeps all binaries,minimum=0,example=3"`
+
 	// Source provides the application binary (a single zip file). The
 	// application is created if missing and the binary uploaded on creation
-	// (or on every run with --force).
-	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the application binary (zip) comes from; must resolve to a single file"`
+	// (or on every run with --force). For HOSTED applications, only an
+	// application owned by the tenant running the sync counts (a built-in
+	// application of the same name is replaced by a tenant-owned copy) and the
+	// binary is uploaded whenever its version differs from manifest.version.
+	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the application binary (zip) comes from; must resolve to a single file. For type HOSTED the application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"`
 }
 
 func (a ApplicationSpec) IsSubscribed() bool {
@@ -1441,6 +1457,14 @@ func (m *Manifest) Validate() error {
 			if err := app.Source.Validate(); err != nil {
 				errs = append(errs, fmt.Sprintf("applications[%d]: %v", i, err))
 			}
+		}
+		if app.Description != "" && !app.isHostedWithSource() {
+			errs = append(errs, fmt.Sprintf("applications[%d]: description requires type HOSTED and a source", i))
+		}
+		if app.KeepBinaries < 0 {
+			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries must not be negative", i))
+		} else if app.KeepBinaries > 0 && !app.isHostedWithSource() {
+			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries requires type HOSTED and a source", i))
 		}
 	}
 	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)

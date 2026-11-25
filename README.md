@@ -922,6 +922,41 @@ applications:
       path: ./build/my-microservice.zip
 ```
 
+#### Web applications from releases (cloning built-in applications)
+
+A `type: HOSTED` entry with a `source` keeps a web application, owned by the tenant running the sync, at the version of its source. This is how a tenant clones a built-in application such as Device Management and keeps the clone up to date with the releases published at [Cumulocity-IoT/devicemanagement](https://github.com/Cumulocity-IoT/devicemanagement/releases):
+
+```yaml
+applications:
+  - name: devicemanagement
+    type: HOSTED
+    source:
+      github:
+        repo: Cumulocity-IoT/devicemanagement
+        tags: ["v1025.*"]          # stay on the 1025 release line
+        includePrereleases: true   # the releases are published as prereleases
+        assets: ["devicemanagement-*.zip"]
+    keepBinaries: 3                # keep the active version and the two before it
+```
+
+On each run:
+
+- Only an application owned by the tenant running the sync counts as existing. The built-in `devicemanagement` application owned by the `management` tenant is left alone, and a tenant-owned copy with the same name and context path is created. That copy then replaces the subscribed application for the tenant. Its key defaults to `<tenant>-<name>-application-key`, since the built-in application already uses `<name>-application-key`; set `key` to choose another. The key is only used when the copy is created. Like any manifest value it can use environment variables, for example `key: ${C8Y_TENANT}-dm-key` (c8y passes `C8Y_TENANT` to the extension; set it yourself when running the binary directly, otherwise the reference is left as written).
+- The copy inherits the `description` of the application it replaces. The inherited description is set when the copy is created, or filled in when the copy has none, but never overwrites a description changed afterwards (for example in the UI). Set `description` in the entry to use your own; an explicit description is kept in sync on every run.
+- The release is listed without downloading it and its version (from the asset filename such as `devicemanagement-1025.15.3.zip`, otherwise the release tag) is compared with the `manifest.version` of the application. The archive is only downloaded and uploaded when the versions differ, so a scheduled run picks up new releases without `--force`:
+
+  ```
+    ↻ [applications] devicemanagement (updated): version 1025.14.0 -> 1025.15.3 (uploaded devicemanagement-1025.15.3.zip)
+  ```
+
+- The uploaded archive is activated (`activeVersionId`) and the tenant is subscribed to its copy; a subscription to the built-in application of the same name does not count.
+- With `keepBinaries: N`, the oldest binaries (application versions) beyond N are deleted after each upload; the active binary and the one just uploaded are never deleted. Without it all binaries are kept, so every release adds another archive to the application. The cleanup also runs when the version is already active, so lowering N or binaries left over from earlier deployments are cleaned up on the next run.
+- `--force` re-uploads the archive even when the version is already active. When no version can be read from the source, an existing application is only re-uploaded with `--force`.
+
+Uploading a new archive replaces the application binary only. The plugins installed into the application through the Administration application are stored in the application `config` and are kept.
+
+The source must resolve to exactly one zip file; narrow it down with `github.assets` and `github.tags` (the repository publishes several release lines, such as `v1023.*` and `v1025.*`). The copy is owned by the tenant running the sync, so with a [targets section](#target-tenants) it is created once in that tenant and only the subscription is applied to the target tenants.
+
 ### Device groups
 
 The `deviceGroups` section creates a tree of device groups, so every tenant has the same structure (regions, sites, production lines, customers) and dashboards, inventory roles and bulk operations can target the groups consistently.

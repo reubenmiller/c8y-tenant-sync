@@ -155,6 +155,22 @@ applications:
       path: ./build/my-microservice.zip
       optional: true # skip instead of failing when the file does not exist
 
+  # A tenant-owned copy of a built-in web application, kept at the latest
+  # release: created when missing (in place of the application owned by the
+  # management tenant) and re-uploaded whenever the release version differs
+  # from the application manifest.version
+  - name: devicemanagement
+    type: HOSTED
+    source:
+      github:
+        repo: Cumulocity-IoT/devicemanagement
+        tags: ["v1025.*"]
+        includePrereleases: true
+        assets: ["devicemanagement-*.zip"]
+    # Delete the oldest binaries after an upload so only the latest 3 remain
+    # (the active binary is always kept)
+    keepBinaries: 3
+
 # Create a tree of device groups (regions, sites, production lines, ...). A
 # group is identified by its name within its parent; missing groups are created
 # and linked to their parent as child assets. description and fragments are

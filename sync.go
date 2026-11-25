@@ -25,6 +25,7 @@ const (
 	ActionSkipped   Action = "skipped"  // nothing to do here, e.g. an optional source without files or a subscription only the owner tenant can change
 	ActionExecuted  Action = "executed" // hook commands
 	ActionPlanned   Action = "planned"  // dry-run
+	ActionDeleted   Action = "deleted"  // only where the manifest opts in to pruning (digitalTwin.prune)
 	ActionFailed    Action = "failed"
 )
 
@@ -50,6 +51,8 @@ const (
 	SectionFirmware               = "firmware"
 	SectionConfiguration          = "configuration"
 	SectionSmartRest              = "smartrestTemplates"
+	SectionDigitalTwin            = "digitalTwin"
+	SectionSmartFunctions         = "smartFunctions"
 	SectionDeviceProfiles         = "deviceProfiles"
 	SectionCommands               = "commands"
 )
@@ -85,6 +88,8 @@ var SectionOrder = []string{
 	SectionFirmware,
 	SectionConfiguration,
 	SectionSmartRest,
+	SectionDigitalTwin,
+	SectionSmartFunctions,
 	SectionDeviceProfiles,
 	SectionCommands,
 }
@@ -184,6 +189,7 @@ func (s *Syncer) recordLocked(section, item string, action Action, detail string
 		ActionSkipped:   "⏭",
 		ActionExecuted:  "▸",
 		ActionPlanned:   "→",
+		ActionDeleted:   "−",
 		ActionFailed:    "✗",
 	}[action]
 
@@ -382,6 +388,10 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncConfiguration(ctx, manifest.Configuration)
 		case SectionSmartRest:
 			err = s.SyncSmartRestTemplates(ctx, manifest.SmartRestTemplates)
+		case SectionDigitalTwin:
+			err = s.SyncDigitalTwin(ctx, manifest.DigitalTwin)
+		case SectionSmartFunctions:
+			err = s.SyncSmartFunctions(ctx, manifest.SmartFunctions)
 		case SectionDeviceProfiles:
 			err = s.SyncDeviceProfiles(ctx, manifest.DeviceProfiles)
 		case SectionCommands:

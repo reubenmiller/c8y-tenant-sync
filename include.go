@@ -308,6 +308,14 @@ func (m *Manifest) rebase(dir, rootDir string) {
 	for i := range m.SmartRestTemplates {
 		rebasePath(&m.SmartRestTemplates[i].Source)
 	}
+	for i := range m.SmartFunctions {
+		rebasePath(&m.SmartFunctions[i].Source)
+	}
+	if m.DigitalTwin != nil {
+		for i := range m.DigitalTwin.Sources {
+			rebasePath(&m.DigitalTwin.Sources[i])
+		}
+	}
 
 	setDir := func(hooks []HookSpec) {
 		for i := range hooks {
@@ -377,6 +385,8 @@ func mergeManifests(base, over *Manifest) *Manifest {
 	out.Firmware = concat(base.Firmware, over.Firmware)
 	out.Configuration = concat(base.Configuration, over.Configuration)
 	out.SmartRestTemplates = concat(base.SmartRestTemplates, over.SmartRestTemplates)
+	out.SmartFunctions = concat(base.SmartFunctions, over.SmartFunctions)
+	out.DigitalTwin = mergeDigitalTwin(base.DigitalTwin, over.DigitalTwin)
 
 	out.Hooks.Pre = concat(base.Hooks.Pre, over.Hooks.Pre)
 	out.Hooks.Post = concat(base.Hooks.Post, over.Hooks.Post)
@@ -427,5 +437,31 @@ func mergeByKey[T any](base, over []T, key func(T) string) []T {
 		}
 		out = append(out, item)
 	}
+	return out
+}
+
+// mergeDigitalTwin merges the digitalTwin sections: sources are
+// concatenated, definitions with the same key are replaced, and managedBy
+// and prune of over win when set
+func mergeDigitalTwin(base, over *DigitalTwinSpec) *DigitalTwinSpec {
+	if base == nil {
+		return over
+	}
+	if over == nil {
+		return base
+	}
+	out := &DigitalTwinSpec{
+		ManagedBy: base.ManagedBy,
+		Prune:     base.Prune,
+		Sources:   concat(base.Sources, over.Sources),
+	}
+	if over.ManagedBy != "" {
+		out.ManagedBy = over.ManagedBy
+	}
+	if over.Prune != nil {
+		out.Prune = over.Prune
+	}
+	out.PropertyDefinitions = mergeByKey(base.PropertyDefinitions, over.PropertyDefinitions, DigitalTwinDefinitionSpec.Key)
+	out.AssetDefinitions = mergeByKey(base.AssetDefinitions, over.AssetDefinitions, DigitalTwinDefinitionSpec.Key)
 	return out
 }

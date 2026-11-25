@@ -368,6 +368,37 @@ smartrestTemplates:
       path: ./exports/custom_devmgmt.json
       optional: true
 
+# Digital Twin Manager definitions, inline and from model files (YAML/JSON
+# documents with a kind field). Property definitions are applied before the
+# asset definitions using them, and definitions are only written when they
+# differ.
+digitalTwin:
+  managedBy: tenant-sync # tag added to every definition the sync writes
+  # prune: true          # delete definitions tagged managedBy which are no longer declared
+  sources:
+    - path: ./dtm
+      optional: true
+  propertyDefinitions:
+    - identifier: maxFlow
+      contexts: [asset]
+      jsonSchema: {title: Maximum flow, type: number, minimum: 0}
+  assetDefinitions:
+    - identifier: Pump
+      jsonSchema: {title: Pump}
+      composition:
+        allowedProperties:
+          - identifier: maxFlow
+
+# Deploy Data Preparation smart functions (rules) from package folders
+# (data-prep.yaml, the smart function and tests/*.yaml) or .tar.gz archives
+# exported by the Data Preparation application. A rule is only deployed when
+# its code, configuration or tests changed.
+smartFunctions:
+  - source:
+      path: ./smartfunctions
+      optional: true
+    waitTimeout: 2m # wait for the deployment to finish (default 60s)
+
 # Create device profiles referencing the items synced above.
 # Binary URLs are resolved automatically from the tenant (which is why this
 # section runs after software/firmware/configuration), or given explicitly

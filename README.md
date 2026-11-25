@@ -46,6 +46,8 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
 - 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
+- 🧬 **Digital Twin Manager definitions**: create and update property and asset definitions (plus measurement, event and alarm definitions) inline or from model files, in dependency order, with optional pruning of definitions the manifest no longer declares
+- 🧪 **Smart functions**: deploy Data Preparation rules from package folders or exported `.tar.gz` archives, only when the code, configuration or tests changed, and report deployment errors
 - 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
 - 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, user groups, certificates) from per-environment or per-customer manifests
 - 🏗️ **Child tenant provisioning**: declare child tenants (domain, company, admin, contact, custom properties, subscriptions) and create them from the parent tenant, then configure them with the rest of the manifest in the same run
@@ -158,7 +160,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 |------|---------|-------------|
 | `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -973,6 +975,96 @@ A collection is stored as a managed object of type `c8y_SmartRest2Template` and 
 
 Since the file content must be read, `url` sources are not supported for this section (GitHub release assets work — they are downloaded first).
 
+### Digital Twin Manager definitions
+
+The `digitalTwin` section creates and updates [Digital Twin Manager](https://cumulocity.com/docs/digital-twin-manager/) definitions. Declare property and asset definitions inline, or point `sources` at model files (or both):
+
+```yaml
+digitalTwin:
+  managedBy: tenant-sync # optional: tag added to every definition the sync writes
+  prune: false           # true deletes definitions tagged managedBy which are no longer declared
+
+  # Model files: YAML/JSON documents with a kind field
+  # (directories are scanned for *.yaml, *.yml and *.json)
+  sources:
+    - path: ./dtm
+
+  propertyDefinitions:
+    - identifier: maxFlow
+      contexts: [asset]
+      jsonSchema: {title: Maximum flow, type: number, minimum: 0}
+
+  assetDefinitions:
+    - identifier: Pump
+      jsonSchema: {title: Pump}
+      composition:
+        allowedProperties:
+          - identifier: maxFlow
+            minOccurs: "1"
+        allowedSubAssets:
+          - identifier: Valve
+      fragments: # additional custom fragments
+        icon: {category: devicesAndSensors, name: pump}
+```
+
+A model file holds one or more definitions, separated by `---` or as a list:
+
+```yaml
+kind: PropertyDefinition
+identifier: maxFlow
+contexts: [asset]
+jsonSchema: {title: Maximum flow, type: number}
+---
+kind: AssetDefinition
+identifier: Pump
+jsonSchema: {title: Pump}
+composition:
+  allowedProperties: [{identifier: maxFlow}]
+```
+
+Model files accept the kinds `PropertyDefinition`, `AssetDefinition`, `MeasurementDefinition`, `EventDefinition` and `AlarmDefinition`. Assets (`kind: Asset`) are not synced, and a file containing them fails.
+
+How the sync behaves:
+
+- **Matching**: property definitions are matched by `identifier` and `contexts` (in any order), all other kinds by `identifier`.
+- **Order**: property, measurement, event and alarm definitions are applied first, then asset definitions. An asset definition is applied after the asset definitions its composition allows as sub-assets.
+- **Idempotency**: a definition is only written when a declared field differs. Fields the manifest does not set, and fields the server generates (such as `$schema` or the default `minOccurs`), do not count as changes. Tags and contexts are compared as sets.
+- **Read-only definitions**: a definition shared from the enterprise tenant or the definition library which differs from the manifest fails without a write.
+- **Pruning**: with `prune: true`, definitions tagged `managedBy` which no manifest entry declares are deleted (asset definitions first). Without `prune`, definitions are never deleted. The sync skips pruning when a model source fails to load, so a missing file never deletes definitions.
+
+With includes, `sources` are concatenated, definitions with the same key replace earlier ones, and `managedBy` and `prune` of a later file win when set.
+
+### Smart functions (Data Preparation rules)
+
+The `smartFunctions` section deploys [Data Preparation](https://cumulocity.com/docs/data-preparation/) smart functions (rules). A rule is deployed from a package: a folder laid out like the package archive (`data-prep.yaml`, the bundled smart function and `tests/*.yaml`), or a `.tar.gz` archive exported by the Data Preparation application.
+
+```yaml
+smartFunctions:
+  # A folder of packages: every folder with a data-prep.yaml and every
+  # *.tar.gz/*.tgz archive is a rule
+  - source:
+      path: ./smartfunctions
+
+  # A single exported archive, with an explicit rule name
+  - name: tiny-edge-events
+    source:
+      path: ./exports/tiny-edge-events.tar.gz
+    waitTimeout: 2m # default 60s; 0 does not wait
+
+  # Rule packages published as GitHub release assets
+  - source:
+      github:
+        repo: my-org/my-smart-functions
+        release: latest
+        assets: ["*.tar.gz"]
+```
+
+The rule name defaults to the package folder name, or the archive filename without `.tar.gz`/`.tgz`. Packages are read and validated locally first (also in dry-run mode), so format errors such as MQTT wildcards in `input.topicPattern` show up before anything is uploaded.
+
+A rule is only deployed when its smart function code, configuration (description, tags, disabled, input) or tests differ from the deployed rule, or when its last deployment failed. `--force` deploys every rule. After the upload, the sync waits for the deployment to finish (`waitTimeout`) and reports errors from the engine as failures.
+
+Since the package content must be read, `url` sources are not supported for this section.
+
 ### Target tenants
 
 By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead — run once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):
@@ -1297,6 +1389,8 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
 │  sync_firmware.go  + firmware.go │  OS image filename parsing
 │  sync_configuration.go           │
 │  sync_smartrest.go               │  exported collection JSON files
+│  sync_digitaltwin.go             │  DTM property/asset definitions
+│  sync_smartfunctions.go          │  Data Preparation rule packages
 │  sync_certificates.go            │  trust store + revocation lists
 │  sync_profiles.go                │  resolves references to binary URLs
 └──────────────┬───────────────────┘

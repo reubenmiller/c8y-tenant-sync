@@ -213,11 +213,16 @@ func TestSyncInventoryRoleDelete(t *testing.T) {
 	s := newFakeSyncer(t, f)
 
 	require.NoError(t, s.SyncInventoryRoles(context.Background(), []InventoryRoleSpec{{Name: "Legacy viewer", State: "absent"}}))
+	assert.Empty(t, s.Results, "the delete waits for the users section")
+	assert.Empty(t, f.Requests(http.MethodDelete, "/user/inventoryroles/12"))
+
+	s.DeleteInventoryRoles(context.Background())
 
 	r := resultFor(t, s, SectionInventoryRoles)
 	require.NoError(t, r.Err)
 	assert.Equal(t, ActionDeleted, r.Action)
 	assert.Len(t, f.Requests(http.MethodDelete, "/user/inventoryroles/12"), 1)
+	assert.Empty(t, s.roleDeletes)
 }
 
 func TestSyncInventoryRoleDeleteAlreadyAbsent(t *testing.T) {
@@ -241,13 +246,104 @@ func TestSyncInventoryRoleDeleteRefused(t *testing.T) {
 	s := newFakeSyncer(t, f)
 
 	require.NoError(t, s.SyncInventoryRoles(context.Background(), []InventoryRoleSpec{{Name: "Legacy viewer", State: "absent"}}))
+	s.DeleteInventoryRoles(context.Background())
 
 	r := resultFor(t, s, SectionInventoryRoles)
 	assert.Equal(t, ActionFailed, r.Action)
 	assert.Equal(t, "delete inventory role", r.Detail)
 	require.Error(t, r.Err)
 	assert.Contains(t, r.Err.Error(), "role is still assigned", "the role fails with the error of the API")
+	assert.Empty(t, f.Requests(http.MethodGet, "/user/t123/users"), "holders are only looked up when the role is in use (422)")
 	assert.Empty(t, f.Requests(http.MethodPut, "/user/t123/users"), "assignments of users are not revoked")
+}
+
+// fakeRoleInUse answers the delete of an inventory role like Cumulocity does
+// for a role which is still assigned
+func fakeRoleInUse(f *fakeC8y, id string) {
+	f.JSON("DELETE /user/inventoryroles/"+id, http.StatusUnprocessableEntity, map[string]any{
+		"error": "undefined/validationError", "message": "Cannot remove used InventoryRole",
+	})
+}
+
+func TestSyncInventoryRoleDeleteInUseNamesHolders(t *testing.T) {
+	f := newFakeC8y(t)
+	fakeInventoryRoles(f, legacyViewerRole())
+	fakeRoleInUse(f, "12")
+	f.JSON("GET /user/t123/users", http.StatusOK, map[string]any{
+		"users": []map[string]any{
+			existingUser,
+			{"id": "u2", "userName": "jdoe", "self": "http://example/user/t123/users/u2"},
+		},
+		"statistics": stats(),
+	})
+	fakeAssignments(f,
+		map[string]any{"id": 31, "managedObject": "100", "roles": []map[string]any{{"id": 7}, {"id": 12}}},
+		map[string]any{"id": 32, "managedObject": "200", "roles": []map[string]any{{"id": 7}}},
+	)
+	f.JSON("GET /user/t123/users/u2/roles/inventory", http.StatusOK, map[string]any{
+		"inventoryAssignments": []map[string]any{{"id": 40, "managedObject": "300", "roles": []map[string]any{{"id": 12}}}},
+		"statistics":           stats(),
+	})
+	fakeManagedObject(f, "100", "Plant Berlin")
+	fakeManagedObject(f, "300", "Plant Paris")
+	s := newFakeSyncer(t, f)
+
+	require.NoError(t, s.SyncInventoryRoles(context.Background(), []InventoryRoleSpec{{Name: "Legacy viewer", State: "absent"}}))
+	s.DeleteInventoryRoles(context.Background())
+
+	r := resultFor(t, s, SectionInventoryRoles)
+	assert.Equal(t, ActionFailed, r.Action)
+	assert.EqualError(t, r.Err, "cannot delete inventory role: still assigned to berlin-ops@example.com on Plant Berlin, jdoe on Plant Paris; revoke it there or declare those users with the role removed")
+	assert.Empty(t, f.Requests(http.MethodPut, "/user/t123/users/u1/roles/inventory/31"), "assignments are never revoked to delete a role")
+	assert.Empty(t, f.Requests(http.MethodGet, "/inventory/managedObjects/200"), "groups without the role are not read")
+}
+
+func TestSyncInventoryRoleDeletedAfterUsersRevokeIt(t *testing.T) {
+	// The exact user loses the role in the users section, so the role can
+	// be deleted in the same run
+	f := fakeUsers(t, existingUser)
+	fakeCurrentUser(f, "tenant-sync")
+	fakeInventoryRoles(f, siteOperatorRole(), legacyViewerRole())
+	fakeDeviceGroups(f, fakeGroup{ID: "100", Name: "Plant Berlin"})
+	fakeAssignments(f, map[string]any{"id": 31, "managedObject": "100", "roles": []map[string]any{{"id": 7}, {"id": 12}}})
+	f.Handle("DELETE /user/inventoryroles/12", func(w http.ResponseWriter, r *http.Request) {
+		if len(f.Requests(http.MethodPut, "/user/t123/users/u1/roles/inventory/31")) == 0 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "undefined/validationError", "message": "Cannot remove used InventoryRole"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	s := newFakeSyncer(t, f)
+
+	manifest := &Manifest{
+		InventoryRoles: []InventoryRoleSpec{{Name: "Legacy viewer", State: InventoryRoleStateAbsent}},
+		Users: []UserSpec{{
+			Username:           "berlin-ops@example.com",
+			InventoryRolesMode: UserInventoryRolesExact,
+			InventoryRoles:     []InventoryAssignmentSpec{{Group: "Plant Berlin", Roles: []string{"Site operator"}}},
+		}},
+	}
+	require.NoError(t, s.applyTarget(context.Background(), context.Background(), manifest, nil))
+
+	results := resultsFor(s, SectionInventoryRoles)
+	require.NoError(t, results["Legacy viewer"].Err)
+	assert.Equal(t, ActionDeleted, results["Legacy viewer"].Action)
+	user := resultFor(t, s, SectionUsers)
+	require.NoError(t, user.Err)
+	assert.Contains(t, user.Detail, "-Legacy viewer")
+}
+
+func TestSyncInventoryRoleDeletedWithoutUsersSection(t *testing.T) {
+	// With --only inventoryRoles the delete runs right after the section
+	f := newFakeC8y(t)
+	fakeInventoryRoles(f, legacyViewerRole())
+	fakeDeleteInventoryRole(f, "12", http.StatusNoContent)
+	s := newFakeSyncer(t, f)
+
+	manifest := &Manifest{InventoryRoles: []InventoryRoleSpec{{Name: "Legacy viewer", State: InventoryRoleStateAbsent}}}
+	require.NoError(t, s.applyTarget(context.Background(), context.Background(), manifest, []string{SectionInventoryRoles}))
+
+	assert.Equal(t, ActionDeleted, resultFor(t, s, SectionInventoryRoles).Action)
 }
 
 func TestSyncInventoryRoleDeleteAmbiguous(t *testing.T) {
@@ -286,7 +382,7 @@ func TestSyncInventoryRolesDryRunRenameAndDelete(t *testing.T) {
 	assert.Equal(t, ActionPlanned, results["Site operator"].Action)
 	assert.Equal(t, `name: "Site operators" → "Site operator"; permissions: +OPERATION:*:ADMIN`, results["Site operator"].Detail)
 	assert.Equal(t, ActionPlanned, results["Legacy viewer"].Action)
-	assert.Equal(t, "delete", results["Legacy viewer"].Detail)
+	assert.Equal(t, "delete after the users section (fails if still assigned)", results["Legacy viewer"].Detail)
 	assert.Equal(t, ActionUnchanged, results["Gone already"].Action)
 	assert.Equal(t, "absent", results["Gone already"].Detail)
 
@@ -304,7 +400,7 @@ func TestSyncInventoryRolesDryRunWithoutSessionAbsent(t *testing.T) {
 
 	r := resultFor(t, s, SectionInventoryRoles)
 	assert.Equal(t, ActionPlanned, r.Action)
-	assert.Equal(t, "delete if it exists", r.Detail)
+	assert.Equal(t, "delete if it exists, after the users section", r.Detail)
 }
 
 func TestSyncUsersDryRunRenamedRole(t *testing.T) {

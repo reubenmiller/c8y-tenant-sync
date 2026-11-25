@@ -110,7 +110,7 @@ Edge cases to keep (and test):
 - **A role that failed to create.** The user referencing it fails with "inventory role not found"; the user's other fields and assignments are still applied.
 - **`--only users`.** The `inventoryRoles` section is skipped, so referenced roles must already exist in the tenant. (A warning when `--only` leaves out a section the selected ones depend on is not implemented.)
 - **Renamed roles.** Users reference the new name. Because the rename runs first, the new name resolves to the existing role ID and its assignments are kept.
-- **Deleted roles.** `state: absent` is applied in the `inventoryRoles` section, before `users`. Validation fails if any user still references a role marked absent, so a run never deletes a role and then tries to assign it.
+- **Deleted roles.** Cumulocity refuses to delete an inventory role which is still assigned (`422 Cannot remove used InventoryRole`). A role with `state: absent` is therefore deleted after the `users` section, so revocations of the same run (`inventoryRolesMode: exact`) count. If the role is still assigned, it fails with the users and groups which still have it. Validation fails if any user still references a role marked absent.
 - **Dry run.** Nothing is created, so a role declared in the manifest but missing in the tenant is marked `(new role)` for the user, not "not found".
 
 ### 3. `exact` mode for a user's assignments
@@ -235,7 +235,7 @@ CLI commands in go-c8y-cli can be done in parallel.
 
 The open questions of the draft were settled as follows:
 
-- **Deleting a role that is still assigned.** `state: absent` only calls delete. Assignments of other users are not revoked first; if Cumulocity refuses the delete, the role fails with the error of the API.
+- **Deleting a role that is still assigned.** Cumulocity refuses it (checked on a real tenant). The delete runs after the `users` section; if the role is still assigned, it fails and names the users and groups which still have it. Assignments of other users are never revoked only to delete a role.
 - **One mode or two.** A separate `inventoryRolesMode` (`additive` or `exact`) on users. Global roles have no mode and stay additive. There is no ownership tracking of roles or assignments.
 - **Export.** Opt-in only: `users` is exported when it is named in `--only`. Exported users get `ifMissing: skip`, their `globalRoles` and `inventoryRoles`, and no personal fields beyond `userName`, `email`, `firstName` and `lastName`.
 - **Targets other than device groups.** `group` stays limited to device groups (by name or path), as in the UI. Devices and raw managed object IDs are not accepted.

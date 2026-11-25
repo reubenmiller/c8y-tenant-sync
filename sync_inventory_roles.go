@@ -21,7 +21,8 @@ import (
 // owns the definition of the role); a role without permissions in the
 // manifest keeps its permissions. A role found only under one of its
 // previous names (renamedFrom) is renamed, and a role with state absent is
-// deleted. Roles not in the manifest are never touched.
+// deleted after the users section (see DeleteInventoryRoles). Roles not in
+// the manifest are never touched.
 //
 // A dry run reads the roles of the tenant (when it can) and reports the same
 // changes as a real run, without writing them.
@@ -35,7 +36,7 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 		// comparing them
 		for _, spec := range specs {
 			if spec.Absent() {
-				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, "delete if it exists", nil)
+				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, "delete if it exists, after the users section", nil)
 				continue
 			}
 			detail := "ensure inventory role"
@@ -77,8 +78,7 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
 			case ActionDeleted:
 				s.pending().removedRoles[spec.Name] = true
-				s.pending().deletedRoleIDs[plan.roleID] = true
-				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
+				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe()+" after the users section (fails if still assigned)", nil)
 			default:
 				s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, plan.describe(), nil)
 			}
@@ -101,14 +101,10 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 			}
 			s.record(SectionInventoryRoles, spec.Name, ActionUpdated, plan.describe(), nil)
 		case ActionDeleted:
-			// A role still assigned to users may be refused by the API:
-			// the role fails with the error of the API
-			result := s.Client.InventoryRoles.Delete(ctx, plan.roleID)
-			if result.Err != nil {
-				s.record(SectionInventoryRoles, spec.Name, ActionFailed, "delete inventory role", result.Err)
-				continue
-			}
-			s.record(SectionInventoryRoles, spec.Name, ActionDeleted, "", nil)
+			// Cumulocity refuses to delete a role which is still assigned.
+			// The delete waits until the users section has revoked the
+			// roles the manifest no longer gives (DeleteInventoryRoles).
+			s.roleDeletes = append(s.roleDeletes, roleDelete{name: spec.Name, id: plan.roleID})
 		default:
 			s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, plan.describe(), nil)
 		}
@@ -278,8 +274,6 @@ type dryRunPending struct {
 	// removedRoles are the names which would no longer exist: the old names
 	// of renamed roles and the roles which would be deleted
 	removedRoles map[string]bool
-	// deletedRoleIDs are the IDs of the roles which would be deleted
-	deletedRoleIDs map[int64]bool
 	// deviceGroups by path and by name
 	deviceGroups map[string]bool
 }
@@ -291,7 +285,6 @@ func (s *Syncer) pending() *dryRunPending {
 			inventoryRoles: map[string]bool{},
 			renamedRoles:   map[string]int64{},
 			removedRoles:   map[string]bool{},
-			deletedRoleIDs: map[int64]bool{},
 			deviceGroups:   map[string]bool{},
 		}
 	}
@@ -501,11 +494,11 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 			}
 			if current, ok := existing[item.ManagedObjectID()]; ok {
 				// Several assignments for one group: extend the first one
-				current.roles = appendUnique(current.roles, s.currentRoleIDs(item.RoleIDs())...)
+				current.roles = appendUnique(current.roles, item.RoleIDs()...)
 				current.duplicates = append(current.duplicates, item.ID())
 				continue
 			}
-			current := &existingAssignment{groupID: item.ManagedObjectID(), id: item.ID(), roles: appendUnique(nil, s.currentRoleIDs(item.RoleIDs())...)}
+			current := &existingAssignment{groupID: item.ManagedObjectID(), id: item.ID(), roles: appendUnique(nil, item.RoleIDs()...)}
 			existing[item.ManagedObjectID()] = current
 			existingOrder = append(existingOrder, current)
 		}
@@ -639,16 +632,6 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 		}
 	}
 	return changes, errors.Join(errs...)
-}
-
-// currentRoleIDs returns the role IDs of an existing assignment. In a dry
-// run the roles which the inventoryRoles section would delete are left out,
-// since a real run deletes them (with their assignments) first.
-func (s *Syncer) currentRoleIDs(ids []int64) []int64 {
-	if !s.DryRun || s.dryRunPending == nil || len(s.dryRunPending.deletedRoleIDs) == 0 {
-		return ids
-	}
-	return slices.DeleteFunc(slices.Clone(ids), func(id int64) bool { return s.dryRunPending.deletedRoleIDs[id] })
 }
 
 // roleName returns the name of an existing inventory role for the output (in

@@ -309,9 +309,10 @@ func TestSyncUsersExactNewUser(t *testing.T) {
 	assert.Empty(t, f.Requests(http.MethodGet, "/user/currentUser"))
 }
 
-func TestSyncUsersExactDryRunIgnoresDeletedRoles(t *testing.T) {
+func TestSyncUsersExactDryRunRevokesDeletedRoles(t *testing.T) {
 	// A role which the inventoryRoles section deletes in the same run is
-	// not listed as a revocation (deleting the role removes it)
+	// still listed as a revocation: Cumulocity refuses to delete an assigned
+	// role, so the users section revokes it before the role is deleted
 	f := fakeUsers(t, existingUser)
 	fakeCurrentUser(f, "tenant-sync")
 	fakeInventoryRoles(f, siteOperatorRole(), map[string]any{"id": 9, "name": "Legacy viewer"})
@@ -327,7 +328,8 @@ func TestSyncUsersExactDryRunIgnoresDeletedRoles(t *testing.T) {
 	}}))
 
 	r := resultFor(t, s, SectionUsers)
-	assert.Equal(t, ActionUnchanged, r.Action)
+	assert.Equal(t, ActionPlanned, r.Action)
+	assert.Contains(t, r.Detail, "-Legacy viewer")
 	assertOnlyReads(t, f)
 }
 

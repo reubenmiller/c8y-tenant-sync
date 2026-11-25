@@ -152,6 +152,10 @@ type Syncer struct {
 	// dryRunPending holds the objects a dry run would create in the active
 	// target, so later sections can refer to them (reset per target)
 	dryRunPending *dryRunPending
+	// roleDeletes are the inventory roles with state absent which the
+	// inventoryRoles section found; they are deleted after the users section
+	// (reset per target)
+	roleDeletes []roleDelete
 	// multiTarget is set when the run covers tenants other than the current
 	// one, enabling per-tenant labels in the output
 	multiTarget bool
@@ -400,6 +404,7 @@ func (s *Syncer) Apply(ctx context.Context, manifest *Manifest, only []string) e
 // by ID from the parent).
 func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, only []string) error {
 	s.dryRunPending = nil
+	s.roleDeletes = nil
 	if err := s.runHooks(ctx, "pre", manifest.Hooks.Pre); err != nil {
 		return err
 	}
@@ -466,6 +471,14 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncDeviceProfiles(ctx, manifest.DeviceProfiles)
 		case SectionCommands:
 			err = s.SyncCommands(ctx, manifest.Commands)
+		}
+
+		// Inventory roles with state absent are deleted once the users
+		// section has revoked them (or right after inventoryRoles when the
+		// users section does not run), since Cumulocity refuses to delete
+		// a role which is still assigned
+		if err == nil && (section == SectionUsers || (section == SectionInventoryRoles && !sectionEnabled(only, SectionUsers))) {
+			s.DeleteInventoryRoles(ctx)
 		}
 
 		s.runHooks(ctx, "sections."+section+".post", sectionHooks.Post)

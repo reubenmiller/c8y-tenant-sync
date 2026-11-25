@@ -1298,7 +1298,7 @@ inventoryRoles:
 ```
 
 - `renamedFrom` lists previous names of a role. When no role has `name` but exactly one role has one of the previous names, that role is renamed (and its description and permissions are updated as usual) instead of creating a new role. Users keep the role, because their assignments refer to the role ID. If roles with both the new name and a previous name exist, or several roles have previous names, the role fails as ambiguous and nothing is changed. Once no role has a previous name, `renamedFrom` has no effect and can be removed.
-- `state: absent` (the default is `present`) deletes the role if it exists; a role which does not exist is reported as unchanged. Assignments of the role to users are not revoked first: if Cumulocity refuses to delete a role which is still assigned, the role fails with the error of the API.
+- `state: absent` (the default is `present`) deletes the role if it exists; a role which does not exist is reported as unchanged. Cumulocity refuses to delete a role which is still assigned to a user, so the delete runs **after the `users` section**: users with `inventoryRolesMode: exact` lose the role first, in the same run. If the role is still assigned after that, it fails with the users and device groups which still have it, for example `cannot delete inventory role: still assigned to berlin-ops@example.com on Plant Paris`. Declare those users with the role removed, or revoke it by hand, and run again. tenant-sync never revokes a role from users only to delete it. To name the holders, tenant-sync reads the inventory roles of every user, which only happens when the delete is refused. With `--only inventoryRoles` (no `users` section), the delete runs right after the inventory roles.
 - A role with `state: absent` must not have `permissions` or `renamedFrom`. Validation fails when a user's `inventoryRoles` refers to a role with `state: absent` or to a previous name in `renamedFrom` (refer to the new name instead).
 - There is no option to delete every role which is not in the manifest: inventory roles have no field to mark who manages them, so this would also delete roles created by other teams in the UI.
 
@@ -1347,13 +1347,13 @@ A dry run (`--dry`) reads the inventory roles, device groups and assignments of 
 → [inventoryRoles] Site operator (planned): permissions: +OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ
 → [inventoryRoles] Reader (planned): create with permissions: *:*:READ
 → [inventoryRoles] Plant operator (planned): name: "Plant operators" → "Plant operator"
-→ [inventoryRoles] Legacy viewer (planned): delete
+→ [inventoryRoles] Legacy viewer (planned): delete after the users section (fails if still assigned)
 ✓ [inventoryRoles] Restart only (unchanged)
 → [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: +Site operator, +Reader (new role)
 ```
 
-- A role to update lists the permissions it gains (`+`) and loses (`-`), and the old and new description. A role to rename shows its old and new name, and a role to delete shows `delete`.
-- Users of the same dry run already refer to a renamed role by its new name, and no longer by its old name or the name of a deleted role.
+- A role to update lists the permissions it gains (`+`) and loses (`-`), and the old and new description. A role to rename shows its old and new name, and a role to delete shows `delete after the users section`. The dry run does not check whether the role would still be assigned then.
+- Users of the same dry run already refer to a renamed role by its new name, and no longer by its old name or the name of a deleted role. A user with `inventoryRolesMode: exact` lists a role to delete as a role they lose, since the users section revokes it before the delete.
 - A role or device group which the same dry run would create (declared in `inventoryRoles` or `deviceGroups` but not in the tenant yet) is marked `(new role)` or `(new group)` instead of failing with "not found".
 - A user who does not exist yet shows the inventory roles they would get when created.
 - A user with `inventoryRolesMode: exact` also lists the roles they would lose (`-`), see [Exact inventory roles](#exact-inventory-roles).

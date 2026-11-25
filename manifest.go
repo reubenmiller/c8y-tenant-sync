@@ -633,7 +633,7 @@ type InventoryRoleSpec struct {
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the inventory role (only updated when set)"`
 
 	// State is present (the default) or absent
-	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the role; absent deletes the role if it exists (the role must not be referenced in users[].inventoryRoles),enum=present,enum=absent"`
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the role; absent deletes the role if it exists, after the users section; fails while users still have the role (the role must not be referenced in users[].inventoryRoles),enum=present,enum=absent"`
 
 	// RenamedFrom are previous names of the role
 	RenamedFrom []string `yaml:"renamedFrom" json:"renamedFrom,omitempty" jsonschema:"description=Previous names of the role: when no role has the name but exactly one role has a previous name that role is renamed (keeping its assignments) instead of creating a new role; fails as ambiguous when both the name and a previous name exist,example=Site operators"`

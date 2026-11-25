@@ -225,7 +225,8 @@ globalRoles:
 # AUDIT, EVENT, MANAGED_OBJECT, MEASUREMENT, OPERATION or *; type defaults to
 # *; permission: READ, ADMIN or * (ALL). renamedFrom renames a role found
 # under a previous name (instead of creating a new one); state: absent deletes
-# a role. Roles not in the manifest are never deleted.
+# a role after the users section, and fails while users still have it. Roles
+# not in the manifest are never deleted.
 inventoryRoles:
   - name: Site operator
     renamedFrom: [Site operators]

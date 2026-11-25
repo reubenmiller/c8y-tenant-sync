@@ -640,3 +640,102 @@ func TestSSOOverridesAreMerged(t *testing.T) {
 	assert.Equal(t, "application/x-www-form-urlencoded", headers["Content-Type"], "generated fields are kept")
 	assert.Equal(t, "api://cumulocity", option.body["audience"])
 }
+
+// newDryRunLoginSyncer returns a dry-run syncer which reads the fake tenant
+// through its dry-run reader (and has no client to write with)
+func newDryRunLoginSyncer(t *testing.T, f *fakeC8y) *Syncer {
+	t.Helper()
+	return &Syncer{DryRun: true, DryRunReader: f.Client()}
+}
+
+func TestSyncLoginOptionsDryRunComparesWithTenant(t *testing.T) {
+	t.Run("unchanged", func(t *testing.T) {
+		f := newFakeC8y(t)
+		newFakeLoginOptions(f, defaultLoginOptions()...)
+		s := newDryRunLoginSyncer(t, f)
+
+		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{
+			Preferred: LoginModeOAISecure,
+			OAISecure: &OAISecureLoginSpec{Session: &OAISecureSessionSpec{AbsoluteTimeout: "336h"}},
+		}))
+		results := loginResults(s)
+		assert.Equal(t, ActionUnchanged, results[loginItemPreferred].Action)
+		assert.Equal(t, ActionUnchanged, results[LoginTypeOAISecure].Action)
+		assert.Empty(t, writes(f))
+	})
+
+	t.Run("changes are listed field by field", func(t *testing.T) {
+		f := newFakeC8y(t)
+		newFakeLoginOptions(f, defaultLoginOptions()...)
+		s := newDryRunLoginSyncer(t, f)
+
+		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{
+			Preferred: LoginModeBasic,
+			OAISecure: &OAISecureLoginSpec{Session: &OAISecureSessionSpec{RenewalTimeout: "2h"}},
+		}))
+		results := loginResults(s)
+		assert.Equal(t, ActionPlanned, results[LoginTypeOAISecure].Action)
+		assert.Equal(t, "sessionConfiguration.renewalTimeoutMillis: 86400000 → 7200000", results[LoginTypeOAISecure].Detail)
+		assert.Equal(t, ActionPlanned, results[loginItemPreferred].Action, results[loginItemPreferred].Err)
+		assert.Equal(t, "login mode oaiSecure → basic (BASIC visibleOnLoginPage=true, OAUTH2_INTERNAL visibleOnLoginPage=false)", results[loginItemPreferred].Detail)
+		assert.Empty(t, writes(f), "a dry run never writes")
+	})
+
+	t.Run("sso is created and resolved", func(t *testing.T) {
+		p := newFakeOIDC(t)
+		f := newFakeC8y(t)
+		fakeSSOGroupsAndApps(f)
+		newFakeLoginOptions(f, defaultLoginOptions()...)
+		s := newDryRunLoginSyncer(t, f)
+
+		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{Preferred: LoginModeSSO, SSO: ssoSpec(p)}))
+		results := loginResults(s)
+		sso := results[LoginTypeSSO]
+		assert.Equal(t, ActionPlanned, sso.Action, sso.Err)
+		assert.True(t, strings.HasPrefix(sso.Detail, "create: "), sso.Detail)
+		assert.Contains(t, sso.Detail, "tokenRequest.body=***")
+		assert.Contains(t, sso.Detail, "thenGroups\":[3]")
+		assert.NotContains(t, sso.Detail, "s3cr3t")
+		assert.Equal(t, "login mode oaiSecure → sso (OAUTH2_INTERNAL visibleOnLoginPage=false)", results[loginItemPreferred].Detail)
+		assert.Empty(t, writes(f))
+	})
+
+	t.Run("an unknown group fails like in a real run", func(t *testing.T) {
+		p := newFakeOIDC(t)
+		f := newFakeC8y(t)
+		newFakeLoginOptions(f, defaultLoginOptions()...)
+		s := newDryRunLoginSyncer(t, f)
+
+		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{Preferred: LoginModeSSO, SSO: ssoSpec(p)}))
+		results := loginResults(s)
+		assert.ErrorContains(t, results[LoginTypeSSO].Err, `user group "admins"`)
+		assert.ErrorContains(t, results[loginItemPreferred].Err, "kept login mode oaiSecure")
+	})
+
+	t.Run("refusals are shown", func(t *testing.T) {
+		f := newFakeC8y(t)
+		initial := defaultLoginOptions()
+		initial[0]["visibleOnLoginPage"] = true
+		initial[1]["visibleOnLoginPage"] = false
+		newFakeLoginOptions(f, initial...)
+		s := newDryRunLoginSyncer(t, f)
+
+		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{
+			Basic: &BasicLoginOptionSpec{ForbiddenClients: []string{"WEB_BROWSERS"}},
+		}))
+		assert.ErrorContains(t, loginResults(s)[LoginTypeBasic].Err, "while basic is the preferred login mode")
+	})
+
+	t.Run("other tenants are not compared", func(t *testing.T) {
+		f := newFakeC8y(t)
+		newFakeLoginOptions(f, defaultLoginOptions()...)
+		s := newDryRunLoginSyncer(t, f)
+		s.activeTarget = &Target{TenantID: "t456"}
+
+		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{Preferred: LoginModeOAISecure}))
+		result := loginResults(s)[loginItemPreferred]
+		assert.Equal(t, ActionPlanned, result.Action)
+		assert.Contains(t, result.Detail, "not compared with the tenant")
+		assert.Empty(t, f.Requests(http.MethodGet, "/tenant/loginOptions"))
+	})
+}

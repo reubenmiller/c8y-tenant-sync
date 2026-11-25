@@ -246,14 +246,25 @@ func runSync(opts *runOptions, args []string) (err error) {
 	}
 	defer os.RemoveAll(workDir)
 
+	// In dry-run mode the login options are still read (never written), so
+	// the preview shows what would change. Without a session the dry run
+	// lists the desired settings only.
+	var dryRunReader *api.Client
+	if dryRun && manifest.LoginOptions != nil && sectionEnabled(onlySections, SectionLoginOptions) {
+		if reader, err := runtime.NewClient(opts.debug); err == nil {
+			dryRunReader = reader
+		}
+	}
+
 	syncer := &Syncer{
-		Client:      client,
-		Resolver:    NewSourceResolver(manifestBaseDir(manifestPath), workDir, dryRun),
-		DryRun:      dryRun,
-		Force:       opts.force,
-		Concurrency: opts.concurrency,
-		Targets:     targets,
-		Secrets:     secrets,
+		Client:       client,
+		DryRunReader: dryRunReader,
+		Resolver:     NewSourceResolver(manifestBaseDir(manifestPath), workDir, dryRun),
+		DryRun:       dryRun,
+		Force:        opts.force,
+		Concurrency:  opts.concurrency,
+		Targets:      targets,
+		Secrets:      secrets,
 	}
 
 	startTime := time.Now()

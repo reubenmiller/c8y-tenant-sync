@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/loginoptions"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/usergroups"
 )
@@ -138,7 +139,10 @@ func (s *Syncer) SyncLoginOptions(ctx context.Context, spec *LoginOptionsSpec) e
 		basicDesired = nil
 	}
 
-	if s.DryRun {
+	if s.DryRun && s.dryRunReader() == nil {
+		// The tenant cannot be read (no session, or another tenant whose
+		// credentials are only resolved in a real run): list the desired
+		// settings without comparing them
 		if basicDesired != nil {
 			s.record(SectionLoginOptions, LoginTypeBasic, ActionPlanned, describeDesired(basicDesired), nil)
 		}
@@ -152,7 +156,7 @@ func (s *Syncer) SyncLoginOptions(ctx context.Context, spec *LoginOptionsSpec) e
 			if spec.Preferred == LoginModeSSO && !ssoOK {
 				s.record(SectionLoginOptions, loginItemPreferred, ActionFailed, "", fmt.Errorf("the preferred login mode would stay unchanged: the sso login option failed its check"))
 			} else {
-				s.record(SectionLoginOptions, loginItemPreferred, ActionPlanned, "set to "+spec.Preferred+" (after the other login options are configured)", nil)
+				s.record(SectionLoginOptions, loginItemPreferred, ActionPlanned, "set to "+spec.Preferred+" (after the other login options are configured; not compared with the tenant)", nil)
 			}
 		}
 		return nil
@@ -213,7 +217,7 @@ func (s *Syncer) SyncLoginOptions(ctx context.Context, spec *LoginOptionsSpec) e
 		} else if err := s.setLoginOptionVisible(ctx, state, LoginTypeSSO, false); err != nil {
 			s.record(SectionLoginOptions, item, ActionFailed, "hide the sso button", err)
 		} else {
-			s.record(SectionLoginOptions, item, ActionUpdated, "visibleOnLoginPage: true → false", nil)
+			s.record(SectionLoginOptions, item, s.writeAction(ActionUpdated), "visibleOnLoginPage: true → false", nil)
 		}
 	}
 	return nil
@@ -221,7 +225,7 @@ func (s *Syncer) SyncLoginOptions(ctx context.Context, spec *LoginOptionsSpec) e
 
 // loginOptions reads the login options of the tenant
 func (s *Syncer) loginOptions(ctx context.Context) (loginOptionState, error) {
-	result := s.Client.LoginOptions.List(ctx, loginoptions.ListOptions{})
+	result := s.loginReadClient().LoginOptions.List(ctx, loginoptions.ListOptions{})
 	if result.Err != nil {
 		return nil, result.Err
 	}
@@ -250,6 +254,11 @@ func (s *Syncer) ensureLoginOption(ctx context.Context, state loginOptionState, 
 	if !found {
 		body := deepMerge(cloneMap(loginOptionDefaults[loginType]), desired)
 		body["type"] = loginType
+		if s.DryRun {
+			state[loginType] = body
+			s.record(SectionLoginOptions, loginType, ActionPlanned, "create: "+describeDesired(desired), nil)
+			return true
+		}
 		result := s.Client.LoginOptions.Create(ctx, body)
 		if result.Err != nil {
 			s.record(SectionLoginOptions, loginType, ActionFailed, "create login option", result.Err)
@@ -272,6 +281,11 @@ func (s *Syncer) ensureLoginOption(ctx context.Context, state loginOptionState, 
 	}
 	body := deepMerge(cloneMap(existing), desired)
 	delete(body, "self")
+	if s.DryRun {
+		state[loginType] = body
+		s.record(SectionLoginOptions, loginType, ActionPlanned, strings.Join(changes, "; "), nil)
+		return true
+	}
 	result := s.Client.LoginOptions.Update(ctx, loginOptionRef(existing, loginType), body)
 	if result.Err != nil {
 		s.record(SectionLoginOptions, loginType, ActionFailed, "update login option ("+strings.Join(changes, "; ")+")", result.Err)
@@ -347,6 +361,15 @@ func (s *Syncer) setPreferredLogin(ctx context.Context, state loginOptionState, 
 		changed = append(changed, target.loginType)
 	}
 
+	if s.DryRun {
+		var steps []string
+		for _, target := range pending {
+			steps = append(steps, fmt.Sprintf("%s visibleOnLoginPage=%t", target.loginType, target.visible))
+		}
+		s.record(SectionLoginOptions, loginItemPreferred, ActionPlanned, describeMode(previous)+" → "+mode+" ("+strings.Join(steps, ", ")+")", nil)
+		return
+	}
+
 	// Read back what the login page will offer
 	current, err := s.loginOptions(ctx)
 	if err == nil {
@@ -372,12 +395,43 @@ func (s *Syncer) setLoginOptionVisible(ctx context.Context, state loginOptionSta
 	body := cloneMap(existing)
 	delete(body, "self")
 	body["visibleOnLoginPage"] = visible
+	if s.DryRun {
+		state[loginType] = body
+		return nil
+	}
 	result := s.Client.LoginOptions.Update(ctx, loginOptionRef(existing, loginType), body)
 	if result.Err != nil {
 		return result.Err
 	}
 	state[loginType] = body
 	return nil
+}
+
+// dryRunReader is the client which reads the login options in dry-run mode:
+// only for the current tenant (the credentials of other tenants are not
+// resolved in a dry run), and only when a session is available
+func (s *Syncer) dryRunReader() *api.Client {
+	if s.DryRunReader == nil || (s.activeTarget != nil && !s.activeTarget.Current) {
+		return nil
+	}
+	return s.DryRunReader
+}
+
+// loginReadClient is the client used to read the tenant's login options,
+// user groups and applications (the read-only client in dry-run mode)
+func (s *Syncer) loginReadClient() *api.Client {
+	if s.DryRun {
+		return s.dryRunReader()
+	}
+	return s.Client
+}
+
+// writeAction is the action recorded for a write: planned in dry-run mode
+func (s *Syncer) writeAction(action Action) Action {
+	if s.DryRun {
+		return ActionPlanned
+	}
+	return action
 }
 
 func describeMode(mode string) string {
@@ -651,7 +705,7 @@ func (s *Syncer) resolveSSOAccessMappings(ctx context.Context, spec *SSOLoginSpe
 		for _, name := range rule.Groups {
 			id, ok := groupIDs[name]
 			if !ok {
-				group := s.Client.UserGroups.GetByName(ctx, usergroups.GetByNameOptions{GroupName: name})
+				group := s.loginReadClient().UserGroups.GetByName(ctx, usergroups.GetByNameOptions{GroupName: name})
 				if group.Err != nil {
 					return fmt.Errorf("rules[%d]: user group %q: %w", i, name, group.Err)
 				}
@@ -666,7 +720,8 @@ func (s *Syncer) resolveSSOAccessMappings(ctx context.Context, spec *SSOLoginSpe
 		for _, name := range rule.Applications {
 			id, ok := appIDs[name]
 			if !ok {
-				resolved, err := s.Client.Applications.ResolveID(ctx, s.Client.Applications.ByName(name, ""), nil)
+				apps := s.loginReadClient().Applications
+				resolved, err := apps.ResolveID(ctx, apps.ByName(name, ""), nil)
 				if err != nil {
 					return fmt.Errorf("rules[%d]: application %q: %w", i, name, err)
 				}

@@ -136,6 +136,11 @@ type Syncer struct {
 	// Secrets holds the generated values (${generate:NAME}), if any
 	Secrets *SecretStore
 
+	// DryRunReader is a client for read-only lookups in dry-run mode (nil
+	// without a session). Only the loginOptions section uses it, to compare
+	// the desired login options with the tenant's; it never writes.
+	DryRunReader *api.Client
+
 	// Targets overrides the manifest targets section (set from CLI flags)
 	Targets *TargetsSpec
 

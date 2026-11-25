@@ -1031,7 +1031,13 @@ digitalTwin:
   sources:
     - path: ./cumulocity/dtm # e.g. tiny-edge's parameter sets
       kind: PropertyDefinition
+
+    # A single file by URL (downloaded on each run)
+    - url: https://raw.githubusercontent.com/thin-edge/tiny-edge/refs/heads/main/cumulocity/dtm/tiny_edge_remote_access.json
+      kind: PropertyDefinition
 ```
+
+A `url` source is downloaded before it is read, so it always applies the current content of that URL. Pin it to a tag or commit (instead of a branch) to control when definitions change. If a download fails, the whole section is skipped, so a failed download never prunes definitions.
 
 How the sync behaves:
 
@@ -1072,7 +1078,7 @@ The rule name defaults to the package folder name, or the archive filename witho
 
 A rule is only deployed when its smart function code, configuration (description, tags, disabled, input) or tests differ from the deployed rule, or when its last deployment failed. `--force` deploys every rule. After the upload, the sync waits for the deployment to finish (`waitTimeout`) and reports errors from the engine as failures.
 
-Since the package content must be read, `url` sources are not supported for this section.
+A `url` source (for example a release asset or any other download link to a `.tar.gz`) is downloaded before the package is read. Dry-run mode does not download it, so the package is only validated in a real run.
 
 ### Target tenants
 

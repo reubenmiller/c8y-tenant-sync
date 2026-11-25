@@ -232,6 +232,28 @@ func (s *Syncer) resolveSource(section, item string, source Source) (files []Res
 	return files, true
 }
 
+// fetchFiles downloads the files which only reference a URL, for sections
+// which read the file content. A failed download is recorded and the file
+// left out; ok is false when any download failed.
+func (s *Syncer) fetchFiles(section string, files []ResolvedFile) (fetched []ResolvedFile, ok bool) {
+	ok = true
+	fetched = make([]ResolvedFile, 0, len(files))
+	for _, file := range files {
+		if s.DryRun {
+			fetched = append(fetched, file)
+			continue
+		}
+		local, err := s.Resolver.Fetch(file)
+		if err != nil {
+			s.record(section, file.Filename, ActionFailed, "", err)
+			ok = false
+			continue
+		}
+		fetched = append(fetched, local)
+	}
+	return fetched, ok
+}
+
 // notDownloaded reports whether a resolved file is a remote asset which
 // dry-run mode lists without downloading (so its content cannot be read)
 func (s *Syncer) notDownloaded(file ResolvedFile) bool {

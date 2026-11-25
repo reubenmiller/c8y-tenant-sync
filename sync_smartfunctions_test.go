@@ -145,9 +145,8 @@ func TestValidateSmartFunctions(t *testing.T) {
 		{Source: Source{URL: "https://example.com/rule.tar.gz"}},
 		{Source: Source{Path: "./rules"}, WaitTimeout: "soon"},
 	})
-	require.Len(t, errs, 2)
-	assert.Contains(t, errs[0], "smartFunctions[1]: url sources are not supported")
-	assert.Contains(t, errs[1], "smartFunctions[2]: invalid waitTimeout")
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0], "smartFunctions[2]: invalid waitTimeout")
 
 	assert.Equal(t, DefaultSmartFunctionWaitTimeout, SmartFunctionSpec{}.waitTimeout())
 	assert.Zero(t, SmartFunctionSpec{WaitTimeout: "0"}.waitTimeout())
@@ -165,4 +164,29 @@ func TestSyncSmartFunctionDryRunWithoutDownload(t *testing.T) {
 	result := resultFor(t, syncer, SectionSmartFunctions)
 	assert.Equal(t, ActionPlanned, result.Action, "err: %v", result.Err)
 	assert.Contains(t, result.Detail, "not downloaded in dry-run")
+}
+
+func TestSyncSmartFunctionsFromURL(t *testing.T) {
+	f := newFakeC8y(t)
+	archiveDir := t.TempDir()
+	writeRuleArchive(t, archiveDir, "inlet")
+	archive, err := os.ReadFile(filepath.Join(archiveDir, "inlet.tar.gz"))
+	require.NoError(t, err)
+	f.Handle("GET /releases/download/v1/inlet.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(archive)
+	})
+	f.JSON("GET /service/dataprep/v1/rules/inlet/deployed", http.StatusNotFound, map[string]any{"error": "not found"})
+	f.Handle("PUT /service/dataprep/v1/rules/inlet/deployed", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	syncer := newFakeSyncer(t, f)
+
+	require.NoError(t, syncer.SyncSmartFunctions(context.Background(), []SmartFunctionSpec{
+		{Source: Source{URL: f.server.URL + "/releases/download/v1/inlet.tar.gz"}, WaitTimeout: "0s"},
+	}))
+
+	result := resultFor(t, syncer, SectionSmartFunctions)
+	assert.Equal(t, "inlet", result.Item)
+	assert.Equal(t, ActionCreated, result.Action, "err: %v", result.Err)
+	assert.Len(t, f.Requests(http.MethodPut, "/service/dataprep/v1/rules/inlet/deployed"), 1)
 }

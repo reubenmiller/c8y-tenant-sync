@@ -126,7 +126,6 @@ func TestDigitalTwinValidate(t *testing.T) {
 	}).validate()
 	assert.Equal(t, []string{
 		"digitalTwin: prune requires managedBy (the tag marking the definitions the manifest owns)",
-		"digitalTwin.sources[0]: url sources are not supported (the model file must be available locally)",
 		"digitalTwin.propertyDefinitions[1]: duplicate property definition a",
 		"digitalTwin.assetDefinitions[0]: contexts only apply to property definitions",
 		"digitalTwin.assetDefinitions[1].composition: item 0: identifier is required",
@@ -224,4 +223,51 @@ func TestLoadDigitalTwinFileWithSourceKind(t *testing.T) {
 	errs := (&DigitalTwinSpec{Sources: []DigitalTwinSourceSpec{{Source: Source{Path: "."}, Kind: "Property"}}}).validate()
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0], `unknown kind "Property"`)
+}
+
+func TestSyncDigitalTwinFromURL(t *testing.T) {
+	f := newFakeC8y(t)
+	// The definition file is served by the same test server, like a raw
+	// GitHub URL with a plain definition (no kind field)
+	f.Handle("GET /raw/main/cumulocity/dtm/tiny_edge_remote_access.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"identifier": "tiny_edge_remote_access", "contexts": ["asset"], "jsonSchema": {"title": "remote access", "type": "object"}}`))
+	})
+	f.JSON("GET /service/dtm/definitions/properties", http.StatusOK, map[string]any{"definitions": []any{}})
+	f.Handle("POST /service/dtm/definitions/properties", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write(body)
+	})
+	syncer := newFakeSyncer(t, f)
+
+	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{
+		Sources: []DigitalTwinSourceSpec{{
+			Source: Source{URL: f.server.URL + "/raw/main/cumulocity/dtm/tiny_edge_remote_access.json?token=x"},
+			Kind:   dtm.KindPropertyDefinition,
+		}},
+	}))
+
+	result := resultFor(t, syncer, SectionDigitalTwin)
+	assert.Equal(t, "PropertyDefinition tiny_edge_remote_access[asset]", result.Item)
+	assert.Equal(t, ActionCreated, result.Action, "err: %v", result.Err)
+}
+
+func TestSyncDigitalTwinFromURLDownloadFailureSkipsApply(t *testing.T) {
+	f := newFakeC8y(t)
+	syncer := newFakeSyncer(t, f)
+	prune := true
+
+	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{
+		ManagedBy: "tenant-sync",
+		Prune:     &prune,
+		Sources:   []DigitalTwinSourceSpec{{Source: Source{URL: f.server.URL + "/missing.json"}, Kind: dtm.KindPropertyDefinition}},
+	}))
+
+	result := resultFor(t, syncer, SectionDigitalTwin)
+	assert.Equal(t, ActionFailed, result.Action)
+	assert.Contains(t, result.Err.Error(), "failed to download")
+	// Nothing is applied (and in particular nothing pruned) without the file
+	assert.Empty(t, f.Requests(http.MethodGet, "/service/dtm"))
+	assert.Empty(t, f.Requests(http.MethodDelete, "/service/dtm"))
 }

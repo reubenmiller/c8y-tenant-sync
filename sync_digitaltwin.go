@@ -132,6 +132,10 @@ func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model,
 			}
 			continue
 		}
+		files, fetched := s.fetchFiles(SectionDigitalTwin, files)
+		if !fetched {
+			ok = false
+		}
 		for _, file := range files {
 			if s.notDownloaded(file) {
 				// Remote assets are not downloaded in dry-run mode
@@ -140,7 +144,7 @@ func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model,
 			}
 			if file.Path == "" {
 				s.record(SectionDigitalTwin, file.Filename, ActionFailed, "",
-					fmt.Errorf("model source must provide a local file (url/linkOnly sources are not supported)"))
+					fmt.Errorf("model source did not provide a file"))
 				ok = false
 				continue
 			}
@@ -288,9 +292,6 @@ func (spec *DigitalTwinSpec) validate() []string {
 		}
 		if err := source.Validate(); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
-		}
-		if source.URL != "" {
-			errs = append(errs, label+": url sources are not supported (the model file must be available locally)")
 		}
 		if source.Cloudsmith != nil {
 			errs = append(errs, label+": cloudsmith sources are not supported (use path or github)")

@@ -108,6 +108,7 @@ func (s *Syncer) SyncSmartFunctions(ctx context.Context, specs []SmartFunctionSp
 			continue
 		}
 
+		files, _ = s.fetchFiles(SectionSmartFunctions, files)
 		packages := smartFunctionPackages(files, spec.Name)
 		if spec.Name != "" && len(packages) > 1 {
 			s.record(SectionSmartFunctions, spec.Name, ActionFailed, "",
@@ -131,7 +132,7 @@ func (s *Syncer) syncSmartFunction(ctx context.Context, spec SmartFunctionSpec, 
 	}
 	if pkg.Path == "" {
 		s.record(SectionSmartFunctions, pkg.Name, ActionFailed, pkg.Origin,
-			fmt.Errorf("rule package source must provide a local file (url/linkOnly sources are not supported)"))
+			fmt.Errorf("rule package source did not provide a file"))
 		return
 	}
 
@@ -185,9 +186,6 @@ func validateSmartFunctions(specs []SmartFunctionSpec) []string {
 		label := fmt.Sprintf("smartFunctions[%d]", i)
 		if err := spec.Source.Validate(); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
-		}
-		if spec.Source.URL != "" {
-			errs = append(errs, label+": url sources are not supported (the rule package must be available locally)")
 		}
 		if spec.Source.Cloudsmith != nil {
 			errs = append(errs, label+": cloudsmith sources are not supported (use path or github)")

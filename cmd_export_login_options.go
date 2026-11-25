@@ -197,7 +197,7 @@ func (e *Exporter) ssoLoginSpec(ctx context.Context, option map[string]any, pref
 			if err != nil {
 				return nil, err
 			}
-			rule.Groups = append(rule.Groups, name)
+			rule.GlobalRoles = append(rule.GlobalRoles, name)
 		}
 		for _, id := range idList(mapping["thenApplications"]) {
 			name, err := e.applicationName(ctx, id)
@@ -227,10 +227,10 @@ func (e *Exporter) checkDiscovery(ctx context.Context, discoveryURL string) {
 func (e *Exporter) groupName(ctx context.Context, id string) (string, error) {
 	group := e.Client.UserGroups.Get(ctx, usergroups.GetOptions{ID: usergroups.ByID(id)})
 	if group.Err != nil {
-		return "", fmt.Errorf("sso access mapping: user group %s: %w", id, group.Err)
+		return "", fmt.Errorf("sso access mapping: global role %s: %w", id, group.Err)
 	}
 	if group.Data.Name() == "" {
-		return "", fmt.Errorf("sso access mapping: user group %s has no name", id)
+		return "", fmt.Errorf("sso access mapping: global role %s has no name", id)
 	}
 	return group.Data.Name(), nil
 }

@@ -63,6 +63,9 @@ func (s *Syncer) syncDeviceGroup(ctx context.Context, parentID, parentPath strin
 			detail = "ensure group in " + parentPath
 		}
 		s.record(SectionDeviceGroups, path, ActionPlanned, detail, nil)
+		// Users of the same dry run can be given inventory roles on it
+		s.pending().deviceGroups[path] = true
+		s.pending().deviceGroups[spec.Name] = true
 		for _, child := range spec.Groups {
 			s.syncDeviceGroup(ctx, "", path, child)
 		}
@@ -332,16 +335,54 @@ func containsValue(want, have any) bool {
 	return true
 }
 
-// listDeviceGroupTree reads all device groups of the tenant and returns them
-// as a tree (used by export). Bookkeeping and platform properties are left
-// out; only the name, description and the child groups are kept.
-func listDeviceGroupTree(ctx context.Context, service *devicegroups.Service) ([]DeviceGroupSpec, error) {
+// deviceGroupNode is a device group of the tenant with the IDs of all of its
+// asset parents
+type deviceGroupNode struct {
+	id, name, description string
+	parents               []string
+}
+
+// listDeviceGroupNodes reads all device groups of the tenant in the order
+// listed (each group once)
+func listDeviceGroupNodes(ctx context.Context, service *devicegroups.Service) ([]deviceGroupNode, error) {
 	opts := devicegroups.ListOptions{
 		Query:      model.NewInventoryQuery().HasFragment(deviceGroupFragment).Build(),
 		GetOptions: managedobjects.GetOptions{WithParents: true},
 	}
 	opts.PaginationOptions = pagination.PaginationOptions{PageSize: deviceGroupPageSize}
 
+	seen := map[string]bool{}
+	var nodes []deviceGroupNode
+	for item, err := range service.ListAll(ctx, opts).Items() {
+		if err != nil {
+			return nil, err
+		}
+		if seen[item.ID()] {
+			continue
+		}
+		seen[item.ID()] = true
+		n := deviceGroupNode{id: item.ID(), name: item.Name(), description: item.Get("description").String()}
+		for _, ref := range item.Get("assetParents.references").Array() {
+			n.parents = append(n.parents, ref.Get("managedObject.id").String())
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
+}
+
+// listDeviceGroupTree reads all device groups of the tenant and returns them
+// as a tree (used by export). Bookkeeping and platform properties are left
+// out; only the name, description and the child groups are kept.
+func listDeviceGroupTree(ctx context.Context, service *devicegroups.Service) ([]DeviceGroupSpec, error) {
+	groups, err := listDeviceGroupNodes(ctx, service)
+	if err != nil {
+		return nil, err
+	}
+	return deviceGroupTree(groups), nil
+}
+
+// deviceGroupTree arranges the device groups as a tree
+func deviceGroupTree(groups []deviceGroupNode) []DeviceGroupSpec {
 	type node struct {
 		spec     DeviceGroupSpec
 		parents  []string
@@ -349,19 +390,9 @@ func listDeviceGroupTree(ctx context.Context, service *devicegroups.Service) ([]
 	}
 	nodes := map[string]*node{}
 	var order []string
-	for item, err := range service.ListAll(ctx, opts).Items() {
-		if err != nil {
-			return nil, err
-		}
-		if _, seen := nodes[item.ID()]; seen {
-			continue
-		}
-		n := &node{spec: DeviceGroupSpec{Name: item.Name(), Description: item.Get("description").String()}}
-		for _, ref := range item.Get("assetParents.references").Array() {
-			n.parents = append(n.parents, ref.Get("managedObject.id").String())
-		}
-		nodes[item.ID()] = n
-		order = append(order, item.ID())
+	for _, group := range groups {
+		nodes[group.id] = &node{spec: DeviceGroupSpec{Name: group.name, Description: group.description}, parents: group.parents}
+		order = append(order, group.id)
 	}
 
 	// A group is placed below its first parent which is a device group, so
@@ -402,5 +433,5 @@ func listDeviceGroupTree(ctx context.Context, service *devicegroups.Service) ([]
 		sort.SliceStable(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 		return specs
 	}
-	return build(roots, map[string]bool{}), nil
+	return build(roots, map[string]bool{})
 }

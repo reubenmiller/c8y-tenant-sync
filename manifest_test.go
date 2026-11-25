@@ -462,30 +462,30 @@ smartrestTemplates:
 			errorMsg: "url sources are not supported",
 		},
 		{
-			name: "user group requires name",
+			name: "global role requires name",
 			content: `
-userGroups:
+globalRoles:
   - description: missing name
 `,
 			errorMsg: "name is required",
 		},
 		{
-			name: "user group names must be unique",
+			name: "global role names must be unique",
 			content: `
-userGroups:
+globalRoles:
   - name: dup
   - name: dup
 `,
-			errorMsg: `duplicate group name "dup"`,
+			errorMsg: `globalRoles[1]: duplicate global role name "dup"`,
 		},
 		{
-			name: "user group roles must not be blank",
+			name: "global role permissions must not be blank",
 			content: `
-userGroups:
+globalRoles:
   - name: operators
-    roles: ["ROLE_INVENTORY_READ", " "]
+    permissions: ["ROLE_INVENTORY_READ", " "]
 `,
-			errorMsg: "role must not be empty",
+			errorMsg: "globalRoles[0].permissions[1]: permission must not be empty",
 		},
 		{
 			name: "user requires userName or email",
@@ -514,13 +514,13 @@ users:
 			errorMsg: "sendPasswordResetEmail requires email",
 		},
 		{
-			name: "user groups must not be blank",
+			name: "user global roles must not be blank",
 			content: `
 users:
   - userName: jdoe
-    groups: ["operators", ""]
+    globalRoles: ["operators", ""]
 `,
-			errorMsg: "group must not be empty",
+			errorMsg: "users[0].globalRoles[1]: global role must not be empty",
 		},
 		{
 			name: "application source is validated",

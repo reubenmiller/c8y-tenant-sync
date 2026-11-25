@@ -27,7 +27,7 @@ func TestUserCreateEmail(t *testing.T) {
 func TestUserNameDefaultsToEmail(t *testing.T) {
 	path := writeManifest(t, `users:
   - email: jdoe@example.com
-    groups: [operators]
+    globalRoles: [operators]
   - userName: svc-dashboard
     email: ops@example.com
   - userName: admin@example.com

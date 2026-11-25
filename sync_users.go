@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -16,21 +19,22 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/op"
 )
 
-// SyncUserGroups ensures user groups (called "global roles" in the Cumulocity
-// UI) exist with the desired description and roles. Role assignments are
-// additive: roles already on the group but absent from the manifest are left
-// alone, so built-in groups (admins, business, ...) can be extended safely.
-func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) error {
+// SyncGlobalRoles ensures global roles (user groups in the Cumulocity API)
+// exist with the desired description and permissions. Permission assignments
+// are additive: permissions already on the role but absent from the manifest
+// are left alone, so built-in global roles (admins, business, ...) can be
+// extended safely.
+func (s *Syncer) SyncGlobalRoles(ctx context.Context, specs []GlobalRoleSpec) error {
 	// Role self links are shared by all groups of the target tenant
 	roleSelfLinks := map[string]string{}
 
 	for _, spec := range specs {
 		if s.DryRun {
-			detail := "ensure group"
-			if len(spec.Roles) > 0 {
-				detail += " with roles: " + strings.Join(spec.Roles, ", ")
+			detail := "ensure global role"
+			if len(spec.Permissions) > 0 {
+				detail += " with permissions: " + strings.Join(spec.Permissions, ", ")
 			}
-			s.record(SectionUserGroups, spec.Name, ActionPlanned, detail, nil)
+			s.record(SectionGlobalRoles, spec.Name, ActionPlanned, detail, nil)
 			continue
 		}
 
@@ -48,7 +52,7 @@ func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) erro
 			}
 			created := s.Client.UserGroups.Create(ctx, body)
 			if created.Err != nil {
-				s.record(SectionUserGroups, spec.Name, ActionFailed, "create group", created.Err)
+				s.record(SectionGlobalRoles, spec.Name, ActionFailed, "create global role", created.Err)
 				continue
 			}
 			groupID = created.Data.ID()
@@ -61,7 +65,7 @@ func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) erro
 					"description": spec.Description,
 				})
 				if result.Err != nil {
-					s.record(SectionUserGroups, spec.Name, ActionFailed, "update group", result.Err)
+					s.record(SectionGlobalRoles, spec.Name, ActionFailed, "update global role", result.Err)
 					continue
 				}
 				action = ActionUpdated
@@ -69,18 +73,18 @@ func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) erro
 			}
 		}
 
-		assigned, err := s.ensureGroupRoles(ctx, groupID, action == ActionCreated, spec.Roles, roleSelfLinks)
+		assigned, err := s.ensureGroupRoles(ctx, groupID, action == ActionCreated, spec.Permissions, roleSelfLinks)
 		if err != nil {
-			s.record(SectionUserGroups, spec.Name, ActionFailed, "assign roles", err)
+			s.record(SectionGlobalRoles, spec.Name, ActionFailed, "assign permissions", err)
 			continue
 		}
 		if len(assigned) > 0 {
 			if action == ActionUnchanged {
 				action = ActionUpdated
 			}
-			details = append(details, "assigned roles: "+strings.Join(assigned, ", "))
+			details = append(details, "assigned permissions: "+strings.Join(assigned, ", "))
 		}
-		s.record(SectionUserGroups, spec.Name, action, strings.Join(details, "; "), nil)
+		s.record(SectionGlobalRoles, spec.Name, action, strings.Join(details, "; "), nil)
 	}
 	return nil
 }
@@ -135,126 +139,338 @@ func (s *Syncer) ensureGroupRoles(ctx context.Context, groupID string, created b
 	return assigned, nil
 }
 
-// SyncUsers ensures users exist with the desired profile fields and group
-// memberships. The password is only used when creating a user (existing
-// passwords are never overwritten); group memberships are additive: groups
-// the user belongs to but which are absent from the manifest are kept.
+// SyncUsers ensures users exist with the desired profile fields, global roles
+// and inventory roles, and deletes the users with state absent. The password
+// is only used when creating a user (existing passwords are never
+// overwritten); global roles are additive: global roles the user has but
+// which are absent from the manifest are kept. A missing user is created,
+// skipped or failed as its ifMissing says, and the user running the sync is
+// never deleted.
+//
+// A dry run reads the users (when it can) and reports the same changes as a
+// real run, without writing them.
 func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
+	if s.DryRun && s.dryRunReader() == nil {
+		// The tenant cannot be read: list the desired users without
+		// comparing them
+		for _, spec := range specs {
+			s.record(SectionUsers, spec.Username, ActionPlanned, plannedUserDetail(spec), nil)
+		}
+		return nil
+	}
+
 	// Group IDs are resolved once and shared by all users of the target tenant
 	groupIDs := map[string]string{}
 	// Inventory roles and device groups are looked up once as well
 	inventory := &inventoryAssignmentCache{}
+	// The user running the sync is only looked up when a user is deleted or
+	// uses inventoryRolesMode exact
+	syncUser := &syncUserCache{}
 
 	for _, spec := range specs {
-		if s.DryRun {
-			detail := "ensure user"
-			if len(spec.Groups) > 0 {
-				detail += " in groups: " + strings.Join(spec.Groups, ", ")
-			}
-			if len(spec.InventoryAssignments) > 0 {
-				detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryAssignments)
-			}
-			s.record(SectionUsers, spec.Username, ActionPlanned, detail, nil)
-			continue
-		}
-
-		existing := s.Client.Users.GetByUsername(ctx, users.GetByUsernameOptions{Username: spec.Username})
-
-		action := ActionUnchanged
-		var details []string
-		var userID, userSelf string
-
-		if existing.Err != nil {
-			// Not found: create it. Cumulocity requires an email for new users
-			if spec.CreateEmail() == "" {
-				s.record(SectionUsers, spec.Username, ActionFailed, "create user",
-					fmt.Errorf("an email is required to create a user: set email, or use an email address as userName"))
-				continue
-			}
-			created := s.Client.Users.Create(ctx, userCreateBody(spec))
-			if created.Err != nil {
-				s.record(SectionUsers, spec.Username, ActionFailed, "create user", created.Err)
-				continue
-			}
-			userID = created.Data.ID()
-			userSelf = created.Data.Self()
-			action = ActionCreated
-			if name, ok := s.generatedName(spec.Password); ok {
-				details = append(details, "initial password from ${generate:"+name+"}")
-			}
-		} else {
-			if name, ok := s.newlyGeneratedName(spec.Password); ok {
-				// Passwords are only set when creating users
-				details = append(details, "generated password ${generate:"+name+"} not applied (the user already exists)")
-			}
-			userID = existing.Data.ID()
-			userSelf = existing.Data.Self()
-			if changes := userDiff(spec, existing.Data); len(changes) > 0 {
-				result := s.Client.Users.Update(ctx, users.UpdateOptions{ID: users.ByID(userID)}, changes)
-				if result.Err != nil {
-					s.record(SectionUsers, spec.Username, ActionFailed, "update user", result.Err)
-					continue
-				}
-				action = ActionUpdated
-				details = append(details, "updated "+strings.Join(sortedKeys(changes), ", "))
-			}
-		}
-
-		assigned, err := s.ensureUserGroups(ctx, userID, userSelf, action == ActionCreated, spec.Groups, groupIDs)
+		plan, err := s.planUser(ctx, spec, inventory, syncUser)
 		if err != nil {
-			s.record(SectionUsers, spec.Username, ActionFailed, "assign groups", err)
+			s.record(SectionUsers, spec.Username, ActionFailed, plan.failure, err)
 			continue
 		}
-		if len(assigned) > 0 {
-			if action == ActionUnchanged {
-				action = ActionUpdated
-			}
-			details = append(details, "assigned to groups: "+strings.Join(assigned, ", "))
+		switch {
+		case plan.skip:
+			s.record(SectionUsers, spec.Username, ActionSkipped, "user does not exist (ifMissing: skip)", nil)
+		case plan.absent:
+			s.record(SectionUsers, spec.Username, ActionUnchanged, "absent", nil)
+		case plan.delete && s.DryRun:
+			s.record(SectionUsers, spec.Username, ActionPlanned, "delete", nil)
+		case plan.delete:
+			s.deleteUser(ctx, spec, plan)
+		case s.DryRun:
+			s.recordUserPlan(spec, plan)
+		default:
+			s.applyUserPlan(ctx, spec, plan, groupIDs)
 		}
-
-		inventoryChanges, err := s.ensureInventoryAssignments(ctx, userID, action == ActionCreated, spec.InventoryAssignments, inventory)
-		if len(inventoryChanges) > 0 {
-			if action == ActionUnchanged {
-				action = ActionUpdated
-			}
-			details = append(details, inventoryChanges...)
-		}
-		if err != nil {
-			s.record(SectionUsers, spec.Username, ActionFailed, strings.Join(append(details, "assign inventory roles"), "; "), err)
-			continue
-		}
-		s.record(SectionUsers, spec.Username, action, strings.Join(details, "; "), nil)
 	}
 	return nil
 }
 
-// ensureUserGroups assigns the user to the missing groups and returns the
-// names of the groups the user was actually assigned to. For a freshly
-// created user the membership lookup is skipped (it has none yet).
-func (s *Syncer) ensureUserGroups(ctx context.Context, userID, userSelf string, created bool, groups []string, groupIDs map[string]string) ([]string, error) {
+// plannedUserDetail describes a user in a dry run which cannot read the tenant
+func plannedUserDetail(spec UserSpec) string {
+	if spec.Absent() {
+		return "delete if it exists"
+	}
+	detail := "ensure user"
+	if len(spec.GlobalRoles) > 0 {
+		detail += " with global roles: " + strings.Join(spec.GlobalRoles, ", ")
+	}
+	if len(spec.InventoryRoles) > 0 {
+		detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryRoles)
+	}
+	if spec.ExactInventoryRoles() {
+		detail += "; inventoryRolesMode exact: other inventory roles are removed"
+	}
+	switch spec.MissingAction() {
+	case UserIfMissingSkip:
+		detail += "; skipped if missing"
+	case UserIfMissingFail:
+		detail += "; fails if missing"
+	}
+	return detail
+}
+
+// userPlan is the change a user needs: shared by the dry run (which reports
+// it) and the real run (which applies it)
+type userPlan struct {
+	// exists is set when the user exists in the tenant
+	exists           bool
+	userID, userSelf string
+	// skip is set for a missing user with ifMissing: skip
+	skip bool
+	// delete is set for an existing user with state: absent, and absent
+	// for a user with state: absent which does not exist
+	delete, absent bool
+	// profile are the profile fields to update (existing users only)
+	profile map[string]any
+	// globalRoles are the global roles the user is not a member of yet
+	globalRoles []string
+	// inventory are the changes of the user's inventory roles, and
+	// inventoryErr the error of the assignments which cannot be planned
+	inventory    []inventoryAssignmentChange
+	inventoryErr error
+	// failure describes the step which failed (with the returned error)
+	failure string
+}
+
+// errUserMissing is returned for a missing user with ifMissing: fail
+var errUserMissing = errors.New("the user does not exist (ifMissing: fail)")
+
+// planUser compares the user of the manifest with the tenant
+func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *inventoryAssignmentCache, syncUser *syncUserCache) (userPlan, error) {
+	var plan userPlan
+	existing := s.readClient().Users.GetByUsername(ctx, users.GetByUsernameOptions{Username: spec.Username})
+	if existing.Err != nil && existing.HTTPStatus != http.StatusNotFound {
+		plan.failure = "read user"
+		return plan, existing.Err
+	}
+	found := existing.Err == nil
+
+	if spec.Absent() {
+		if !found {
+			plan.absent = true
+			return plan, nil
+		}
+		plan.userID = existing.Data.ID()
+		if err := syncUser.refuse(ctx, s, plan.userID, existing.Data.UserName(), errSyncUser); err != nil {
+			plan.failure = "delete user"
+			return plan, err
+		}
+		plan.exists, plan.delete = true, true
+		return plan, nil
+	}
+
+	if !found {
+		switch spec.MissingAction() {
+		case UserIfMissingSkip:
+			plan.skip = true
+			return plan, nil
+		case UserIfMissingFail:
+			plan.failure = "find user"
+			return plan, errUserMissing
+		}
+		// Create it. Cumulocity requires an email for new users
+		if spec.CreateEmail() == "" {
+			plan.failure = "create user"
+			return plan, fmt.Errorf("an email is required to create a user: set email, or use an email address as userName")
+		}
+		plan.globalRoles = slices.Clone(spec.GlobalRoles)
+	} else {
+		plan.exists = true
+		plan.userID = existing.Data.ID()
+		plan.userSelf = existing.Data.Self()
+		if spec.ExactInventoryRoles() {
+			// Exact mode must not revoke the access of the sync itself
+			if err := syncUser.refuse(ctx, s, plan.userID, existing.Data.UserName(), errSyncUserExact); err != nil {
+				plan.failure = "inventoryRolesMode exact"
+				return plan, err
+			}
+		}
+		plan.profile = userDiff(spec, existing.Data)
+		missing, err := s.missingGlobalRoles(ctx, plan.userID, spec.GlobalRoles)
+		if err != nil {
+			plan.failure = "assign global roles"
+			return plan, err
+		}
+		plan.globalRoles = missing
+	}
+	plan.inventory, plan.inventoryErr = s.planInventoryAssignments(ctx, plan.userID, plan.exists, spec.ExactInventoryRoles(), spec.InventoryRoles, inventory)
+	return plan, nil
+}
+
+// deleteUser deletes a user with state: absent
+func (s *Syncer) deleteUser(ctx context.Context, spec UserSpec, plan userPlan) {
+	result := s.Client.Users.Delete(ctx, users.DeleteOptions{ID: users.ByID(plan.userID)})
+	if result.Err != nil {
+		s.record(SectionUsers, spec.Username, ActionFailed, "delete user", result.Err)
+		return
+	}
+	s.record(SectionUsers, spec.Username, ActionDeleted, "", nil)
+}
+
+// syncUserCache looks up the user running the sync once per target tenant
+type syncUserCache struct {
+	loaded       bool
+	id, userName string
+	err          error
+}
+
+// errSyncUser is returned when the manifest would delete the user running
+// the sync
+var errSyncUser = errors.New("refusing to delete the user running the sync")
+
+// errSyncUserExact is returned when the manifest gives the user running the
+// sync inventoryRolesMode exact, which could revoke its own access
+var errSyncUserExact = errors.New("refusing to use inventoryRolesMode exact for the user running the sync")
+
+// refuse returns refusal when the user is the one running the sync (or an
+// error when that user cannot be determined)
+func (c *syncUserCache) refuse(ctx context.Context, s *Syncer, userID, userName string, refusal error) error {
+	if !c.loaded {
+		c.loaded = true
+		current := s.readClient().Users.CurrentUser.Get(ctx)
+		if current.Err != nil {
+			c.err = fmt.Errorf("look up the user running the sync: %w", current.Err)
+		} else {
+			c.id, c.userName = current.Data.ID(), current.Data.UserName()
+		}
+	}
+	if c.err != nil {
+		return c.err
+	}
+	if isSameUser(userID, c.id) || isSameUser(userName, c.id) || isSameUser(userName, c.userName) {
+		return refusal
+	}
+	return nil
+}
+
+// isSameUser compares user names or IDs (Cumulocity user IDs are the user
+// names), ignoring case so a match is never missed
+func isSameUser(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(a, b)
+}
+
+// recordUserPlan reports the changes of a user in a dry run
+func (s *Syncer) recordUserPlan(spec UserSpec, plan userPlan) {
+	var details []string
+	if !plan.exists {
+		details = append(details, "create user")
+	} else if len(plan.profile) > 0 {
+		details = append(details, "update "+strings.Join(sortedKeys(plan.profile), ", "))
+	}
+	if len(plan.globalRoles) > 0 {
+		details = append(details, "assign global roles: "+strings.Join(plan.globalRoles, ", "))
+	}
+	for _, change := range plan.inventory {
+		details = append(details, change.describe())
+	}
+	if plan.inventoryErr != nil {
+		s.record(SectionUsers, spec.Username, ActionFailed, strings.Join(append(details, "assign inventory roles"), "; "), plan.inventoryErr)
+		return
+	}
+	if len(details) == 0 {
+		s.record(SectionUsers, spec.Username, ActionUnchanged, "", nil)
+		return
+	}
+	s.record(SectionUsers, spec.Username, ActionPlanned, strings.Join(details, "; "), nil)
+}
+
+// applyUserPlan writes the changes of a user and records the result
+func (s *Syncer) applyUserPlan(ctx context.Context, spec UserSpec, plan userPlan, groupIDs map[string]string) {
+	action := ActionUnchanged
+	var details []string
+	userID, userSelf := plan.userID, plan.userSelf
+
+	if !plan.exists {
+		created := s.Client.Users.Create(ctx, userCreateBody(spec))
+		if created.Err != nil {
+			s.record(SectionUsers, spec.Username, ActionFailed, "create user", created.Err)
+			return
+		}
+		userID = created.Data.ID()
+		userSelf = created.Data.Self()
+		action = ActionCreated
+		if name, ok := s.generatedName(spec.Password); ok {
+			details = append(details, "initial password from ${generate:"+name+"}")
+		}
+	} else {
+		if name, ok := s.newlyGeneratedName(spec.Password); ok {
+			// Passwords are only set when creating users
+			details = append(details, "generated password ${generate:"+name+"} not applied (the user already exists)")
+		}
+		if len(plan.profile) > 0 {
+			result := s.Client.Users.Update(ctx, users.UpdateOptions{ID: users.ByID(userID)}, plan.profile)
+			if result.Err != nil {
+				s.record(SectionUsers, spec.Username, ActionFailed, "update user", result.Err)
+				return
+			}
+			action = ActionUpdated
+			details = append(details, "updated "+strings.Join(sortedKeys(plan.profile), ", "))
+		}
+	}
+
+	assigned, err := s.assignUserGroups(ctx, userSelf, plan.globalRoles, groupIDs)
+	if err != nil {
+		s.record(SectionUsers, spec.Username, ActionFailed, "assign global roles", err)
+		return
+	}
+	if len(assigned) > 0 {
+		if action == ActionUnchanged {
+			action = ActionUpdated
+		}
+		details = append(details, "assigned global roles: "+strings.Join(assigned, ", "))
+	}
+
+	inventoryChanges, err := s.applyInventoryAssignments(ctx, userID, plan.inventory)
+	if len(inventoryChanges) > 0 {
+		if action == ActionUnchanged {
+			action = ActionUpdated
+		}
+		details = append(details, inventoryChanges...)
+	}
+	if err = errors.Join(plan.inventoryErr, err); err != nil {
+		s.record(SectionUsers, spec.Username, ActionFailed, strings.Join(append(details, "assign inventory roles"), "; "), err)
+		return
+	}
+	s.record(SectionUsers, spec.Username, action, strings.Join(details, "; "), nil)
+}
+
+// missingGlobalRoles returns the global roles of the manifest which the
+// existing user is not a member of
+func (s *Syncer) missingGlobalRoles(ctx context.Context, userID string, groups []string) ([]string, error) {
 	if len(groups) == 0 {
 		return nil, nil
 	}
-
 	member := map[string]bool{}
-	if !created {
-		result := s.Client.Users.ListGroupsWithUser(ctx, users.ListGroupsOptions{
-			UserID:            userID,
-			PaginationOptions: pagination.PaginationOptions{PageSize: 2000},
-		})
-		for item, err := range result.Items() {
-			if err != nil {
-				return nil, fmt.Errorf("list group memberships: %w", err)
-			}
-			member[item.Name()] = true
+	result := s.readClient().Users.ListGroupsWithUser(ctx, users.ListGroupsOptions{
+		UserID:            userID,
+		PaginationOptions: pagination.PaginationOptions{PageSize: 2000},
+	})
+	for item, err := range result.Items() {
+		if err != nil {
+			return nil, fmt.Errorf("list group memberships: %w", err)
+		}
+		member[item.Name()] = true
+	}
+	var missing []string
+	for _, groupName := range groups {
+		if !member[groupName] && !slices.Contains(missing, groupName) {
+			missing = append(missing, groupName)
 		}
 	}
+	return missing, nil
+}
 
+// assignUserGroups assigns the user to the groups and returns the names of
+// the groups the user was actually assigned to
+func (s *Syncer) assignUserGroups(ctx context.Context, userSelf string, groups []string, groupIDs map[string]string) ([]string, error) {
 	var assigned []string
 	for _, groupName := range groups {
-		if member[groupName] {
-			continue
-		}
 		groupID, ok := groupIDs[groupName]
 		if !ok {
 			group := s.Client.UserGroups.GetByName(ctx, usergroups.GetByNameOptions{GroupName: groupName})

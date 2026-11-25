@@ -1,6 +1,6 @@
 # c8y-tenant-sync
 
-A GitOps-style CLI tool for keeping Cumulocity IoT tenants in sync with a declarative manifest. Describe the desired tenant state in a YAML file — software, firmware and configuration repositories, tenant options, feature toggles, retention rules, application subscriptions, users and user groups, SmartREST 2.0 templates, device profiles — and apply it idempotently to one or more tenants.
+A GitOps-style CLI tool for keeping Cumulocity IoT tenants in sync with a declarative manifest. Describe the desired tenant state in a YAML file (software, firmware and configuration repositories, tenant options, feature toggles, retention rules, application subscriptions, users, global roles and inventory roles, SmartREST 2.0 templates, device profiles) and apply it idempotently to one or more tenants.
 
 It is a [go-c8y-cli](https://goc8ycli.netlify.app/) binary extension, so it runs as `c8y tenant-sync` and uses your active c8y session. It started as the [tenant-sync example](https://github.com/reubenmiller/go-c8y/tree/v2/examples/tenant-sync) of the go-c8y SDK, which generalises the software-uploader example: the same filename parsing and idempotent upload logic, extended to firmware and configuration, with artifact sources that can be local files **or GitHub releases**, all driven from a single configuration file.
 
@@ -17,12 +17,12 @@ It is a [go-c8y-cli](https://goc8ycli.netlify.app/) binary extension, so it runs
                      └──────────────────┘      • tenant options
                                                • feature toggles
                                                • application subscriptions
-                                               • users & user groups
+                                               • users & global roles
                                                • SmartREST 2.0 templates
                                                • retention rules
 ```
 
-Because every operation is idempotent (get-or-create / upsert), the same manifest can be applied repeatedly and to multiple tenants — keep it in git, run it from CI, and your tenants stay in sync with the source of truth.
+Because every operation is idempotent (get-or-create / upsert), the same manifest can be applied repeatedly and to multiple tenants. Keep it in git, run it from CI, and your tenants stay in sync with the source of truth.
 
 ## Features
 
@@ -36,21 +36,21 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
   - **Update frameworks**: `*.swu` (SWUpdate), `*.raucb` (RAUC), `*.mender`
   - **Custom types**: any extension, with a `versionPattern` regex for custom naming schemes
 - ⚙️ **Configuration repository sync**: upload configuration files with type and device type filters
-- 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
+- 🐙 **GitHub sources**: point any entry at a GitHub repository: assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
 - 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata; versions are installed by the device's package manager, or link or upload the package
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe microservices and web applications, upload UI extensions and install them into web applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
-- 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
+- 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store (matched by fingerprint, with name/status/auto-registration updated when they differ), plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
-- 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
+- 👥 **Users & global roles**: create global roles with permissions, create users and give them global roles, additively and idempotently; skip SSO users until their first login and delete offboarded users
 - 🚪 **Login options**: choose the preferred login mode (OAI-Secure, basic or single sign-on) and configure basic restrictions, OAI-Secure sessions and SSO generated from a provider's OpenID Connect discovery URL, with safeguards against locking anyone out
-- 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
-- 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
+- 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site; opt in per user to make the listed roles their exact inventory access
+- 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform, matched by external identity, updated only when the templates differ (order-insensitive)
 - 🧬 **Digital Twin Manager definitions**: create and update property and asset definitions (plus measurement, event and alarm definitions) inline or from model files, in dependency order, with optional pruning of definitions the manifest no longer declares
 - 🧪 **Smart functions**: deploy Data Preparation rules from package folders or exported `.tar.gz` archives, only when the code, configuration or tests changed, and report deployment errors
-- 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
-- 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, user groups, certificates) from per-environment or per-customer manifests
+- 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector, with per-tenant credentials resolved automatically
+- 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, global roles, certificates) from per-environment or per-customer manifests
 - 🏗️ **Child tenant provisioning**: declare child tenants (domain, company, admin, contact, custom properties, subscriptions) and create them from the parent tenant, then configure them with the rest of the manifest in the same run
 - 🔎 **Dry-run**: preview every change before applying
 - 🧾 **Run reports**: JSON and Markdown reports of what a run changed per tenant, for CI pipelines and audits, plus `--fail-on-change` for drift checks
@@ -150,7 +150,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | Command | Description |
 |---------|-------------|
 | `init [path]` | Create a new manifest (default: `tenant.yaml`) and the `packages` folder next to it, which the manifest syncs software from (skipped while empty). `--full` writes the fully annotated example instead, `--force` overwrites |
-| `validate [path]` | Validate the manifest schema (strict — unknown fields are errors). `--check-sources` also resolves local paths and GitHub releases |
+| `validate [path]` | Validate the manifest schema (strict: unknown fields are errors). `--check-sources` also resolves local paths and GitHub releases |
 | `run [path]` | Apply the manifest to the tenant (alias: `apply`) |
 | `schema` | Generate the JSON schema for the manifest (`-o file` to write to a file) |
 | `export` | Create a manifest from the current state of the tenant (`-o file` to write to a file), see [Exporting a tenant](#exporting-a-tenant) |
@@ -163,7 +163,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file, or `-` for stdin (also accepted as a positional argument), see [Remote manifests](#remote-manifests) and [Manifest from stdin](#manifest-from-stdin) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `globalRoles`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -180,7 +180,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
 
-Sections are applied in a fixed order — child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, microservices, extensions, web applications, user groups, users, login options, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+Sections are applied in a fixed order: child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, microservices, extensions, web applications, device groups, global roles, inventory roles, users, login options, software, firmware, configuration, SmartREST templates, device profiles, then commands. So users can be given roles created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
 
 ### Run reports
 
@@ -358,7 +358,8 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 | `microservices` | Microservices the tenant is subscribed to but does not own, such as the built-in microservices |
 | `applications` | Web applications the tenant is subscribed to but does not own, such as the built-in Cockpit and Device Management applications |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
-| `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
+| `inventoryRoles` | All inventory roles with their permissions (the inventory roles of users are exported in the opt-in `users` section) |
+| `users` | **Opt-in**: only exported with `--only users`, never in a plain export. See [Exporting users](#exporting-users) |
 | `loginOptions` | The preferred login mode, the basic authentication restrictions, the OAI-Secure session, and the SSO login option as the discovery URL of its issuer with the client ID, scopes and claim and access mappings (group and application IDs as names). The client secret is never exported: it is replaced by `clientSecretFrom: {env: SSO_CLIENT_SECRET}`. The export notes on stderr when the discovery URL derived from the issuer does not work (some providers, such as Azure AD v1, serve it elsewhere), leaves out an SSO option without issuer, and leaves out `preferred: sso` when there are no access mapping rules (which `validate` requires). A mapped group or application which cannot be read fails the export |
 | `digitalTwin` | The tenant's own property and asset definitions. Library definitions and definitions shared from the enterprise tenant are not exported, and neither are fields the server generates (such as `$schema`) or maintains (such as `lastUpdated`). Other custom fields, such as an asset definition's `icon`, are exported as `fragments` |
 | `smartFunctions` | The deployed Data Preparation rules as [inline rules](#inline-rules), with their code and tests. Drafts and the AI chat history are not exported |
@@ -366,7 +367,7 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Write the manifest to a file instead of stdout |
-| `--only` | Comma-separated sections to export (default: all of the above). |
+| `--only` | Comma-separated sections to export (default: all of the above except `users`, which is opt-in). |
 | `--all-features` | Export all feature toggles, not only the ones set for the tenant |
 | `--force` | Overwrite the output file |
 
@@ -375,6 +376,52 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 A tenant without the Digital Twin Manager or Data Preparation skips that section with a note, so a full export also works there.
 
 Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
+
+#### Exporting users
+
+The `users` section contains personal data (user names and email addresses), so it is only exported when it is named in `--only`:
+
+```bash
+c8y tenant-sync export --only users -o users.yaml
+c8y tenant-sync export --only deviceGroups,inventoryRoles,users -o access.yaml
+```
+
+Each user is exported with:
+
+- `userName`, and `email`, `firstName` and `lastName` when they are set. Passwords, phone numbers and other personal fields are never exported.
+- `ifMissing: skip`, so applying the export never creates accounts: a user who does not exist in the target tenant is reported as skipped.
+- `enabled: false` for a disabled user (`enabled` is left out for enabled users).
+- `globalRoles`: the names of the user's global roles, sorted.
+- `inventoryRoles`: the user's inventory roles by device group, sorted by group and role name. Several assignments on one group are merged into one entry. A group is written by its name when the name is unique, otherwise as the shortest `Parent/Child` path which is unique.
+
+`inventoryRolesMode` is left out, so the export uses the default additive mode, and `state` is not written. Applying the export to the same tenant changes nothing.
+
+Not exported:
+
+- Microservice service users (user names starting with `service_`) and device users (`device_*`, which the API does not list).
+- Inventory roles on managed objects which are not device groups (the users section only targets device groups), and roles which cannot be found. The export notes each of them on stderr.
+
+A group whose name and paths are all ambiguous (for example two root groups with the same name) is written as its path with a note on stderr: rename one of the groups or fix the entry by hand.
+
+```yaml
+users:
+  - userName: berlin-ops@example.com
+    ifMissing: skip
+    email: berlin-ops@example.com
+    firstName: Berlin
+    lastName: Ops
+    globalRoles:
+      - business
+      - operators
+    inventoryRoles:
+      - group: Berlin
+        roles:
+          - Reader
+      - group: Europe/Plant A   # "Plant A" also exists below Asia
+        roles:
+          - Reader
+          - Site operator
+```
 
 ## The Manifest
 
@@ -402,12 +449,12 @@ The schema encodes the same rules as `c8y tenant-sync validate`: unknown fields 
 
 ### Composing manifests
 
-A manifest can include other manifest files with a top-level `include` list. This keeps shared settings (company-wide retention rules, user groups, trusted certificates) in one base file which per-environment or per-customer manifests reuse:
+A manifest can include other manifest files with a top-level `include` list. This keeps shared settings (company-wide retention rules, global roles, trusted certificates) in one base file which per-environment or per-customer manifests reuse:
 
 ```
 manifests/
 ├── base/
-│   ├── common.yaml          # retention rules, user groups, certificates
+│   ├── common.yaml          # retention rules, global roles, certificates
 │   └── certs/company-ca.pem
 ├── dev.yaml
 ├── prod.yaml
@@ -440,7 +487,7 @@ Rules:
 - **Relative paths**: relative `source.path` values in an included file are resolved against the directory of that file, not the main manifest. Hooks and commands declared in an included file run from that file's directory.
 - **Merge order**: the included files are merged first, in the listed order, then the content of the including file.
   - List sections are concatenated.
-  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), microservices, extensions, applications, user groups, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a user group redefined in `prod.yaml` must list all its roles.
+  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), microservices, extensions, applications, global roles, inventory roles, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a global role redefined in `prod.yaml` must list all its permissions.
   - Entries without an identity (trusted certificates, certificate revocation lists, software, firmware, configuration and SmartREST templates, which are matched by their files at run time) are all kept and applied in order.
   - `targets` and `certificateAuthority` of a later file replace those of earlier files.
   - `hooks.pre` and `hooks.post` are concatenated, and so are the `pre` and `post` hooks of each section in `hooks.sections`.
@@ -712,9 +759,9 @@ Software and configuration entries upload by default. Set `linkOnly: true` on th
 
 Changing `linkOnly` on an entry which was already synced updates the existing versions on the next run, without `--force`: a linked version is replaced with an uploaded binary, an uploaded one is switched to the link (and its old binary removed), and a link whose URL changed is updated. An already uploaded binary is not compared by content, so replacing it still needs `--force`.
 
-Any source can be marked `optional: true`: when the local path does not exist or nothing matches (no files, no release assets), the entry is reported as `skipped` instead of failing the run — useful when a build directory only exists on some pipelines.
+Any source can be marked `optional: true`: when the local path does not exist or nothing matches (no files, no release assets), the entry is reported as `skipped` instead of failing the run. This is useful when a build directory only exists on some pipelines.
 
-With a GitHub source, `release: all` mirrors every release into the tenant, and `release: latest-5` keeps just the most recent five — pointing a firmware entry at an image repository is enough to populate the firmware version history:
+With a GitHub source, `release: all` mirrors every release into the tenant, and `release: latest-5` keeps just the most recent five. Pointing a firmware entry at an image repository is enough to populate the firmware version history:
 
 ```yaml
 firmware:
@@ -746,7 +793,7 @@ firmware:
       patterns: ["FW_MODEL7_*.custom"]
 ```
 
-The firmware `deviceType` supports placeholders derived from each parsed artifact — `{name}`, `{version}` and `{filename}` — so the device type can follow the artifact naming without listing every image explicitly:
+The firmware `deviceType` supports placeholders derived from each parsed artifact (`{name}`, `{version}` and `{filename}`), so the device type can follow the artifact naming without listing every image explicitly:
 
 ```yaml
 firmware:
@@ -849,7 +896,7 @@ tenantOptions:
 
 ### Retention rules
 
-Retention rules have no name, so a rule is identified by its selector combination — `dataType` plus the optional `fragmentType`, `type` and `source` filters (defaulting to the `*` wildcard). The rules in the tenant are matched against that combination: a missing rule is created, and an existing rule is updated when its `maximumAge` (or `editable`, when set) differs. Rules in the tenant that are absent from the manifest are left alone (no prune mode yet).
+Retention rules have no name, so a rule is identified by its selector combination: `dataType` plus the optional `fragmentType`, `type` and `source` filters (defaulting to the `*` wildcard). The rules in the tenant are matched against that combination: a missing rule is created, and an existing rule is updated when its `maximumAge` (or `editable`, when set) differs. Rules in the tenant that are absent from the manifest are left alone (no prune mode yet).
 
 ```yaml
 retentionRules:
@@ -860,7 +907,7 @@ retentionRules:
     maximumAge: 30
 ```
 
-> **Note**: updating a rule that is marked non-editable in the tenant fails — such system rules must be unlocked or removed manually first.
+> **Note**: updating a rule that is marked non-editable in the tenant fails. Such system rules must be unlocked or removed manually first.
 
 ### Cumulocity certificate authority
 
@@ -910,7 +957,7 @@ SERIALNO,DATE
 0b77e2
 ```
 
-Since the file content must be read, `url` sources are not supported for these sections (GitHub release assets work — they are downloaded first).
+Since the file content must be read, `url` sources are not supported for these sections (GitHub release assets work, since they are downloaded first).
 
 ### Microservices, web applications and extensions
 
@@ -1112,17 +1159,17 @@ deviceGroups:
 - If several groups match a name (e.g. two root groups called `Europe`), the item fails with the IDs of the matches and its child groups are skipped. Rename or remove the duplicates; tenant-sync does not guess.
 - Groups are never deleted or unlinked, and devices in the groups are not changed.
 - Names must not be empty and must be unique among siblings. The fragments `name`, `type`, `description`, `c8y_IsDeviceGroup`, `c8y_TenantSync` and the platform properties (`id`, `owner`, `childAssets`, ...) can not be set.
-- Device groups are synced before user groups and users.
+- Device groups are synced before global roles, inventory roles and users.
 
-### Users and user groups
+### Users and global roles
 
-The `userGroups` section creates user groups (called *global roles* in the Cumulocity UI) and assigns roles to them; the `users` section creates users and assigns them to groups. Both are idempotent and **additive**: roles and group memberships already present in the tenant but absent from the manifest are never removed, so built-in groups (`admins`, `business`, ...) can be extended and manually-managed assignments survive a sync.
+The manifest names roles as the Cumulocity UI does. The `globalRoles` section creates *global roles* (user groups in the Cumulocity API), which apply to the whole tenant, and assigns permissions to them; the `users` section creates users (or deletes users marked `state: absent`, see below) and gives them global roles with `users[].globalRoles`. Both are idempotent and **additive**: permissions and global roles already present in the tenant but absent from the manifest are never removed, so built-in global roles (`admins`, `business`, ...) can be extended and manually managed assignments survive a sync.
 
 ```yaml
-userGroups:
+globalRoles:
   - name: operators
     description: Read-only access for the operations team
-    roles:
+    permissions:
       - ROLE_INVENTORY_READ
       - ROLE_ALARM_READ
 
@@ -1131,18 +1178,18 @@ users:
     firstName: Jane
     lastName: Doe
     sendPasswordResetEmail: true # email a reset link instead of setting a password
-    groups: [operators]          # groups synced above or already in the tenant
+    globalRoles: [operators]     # global roles synced above or already in the tenant
 
   - userName: svc-dashboard
     email: ops@example.com       # required to create a user whose userName is not an email
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
-    groups: [operators]
+    globalRoles: [operators]
 
   - userName: old-account@example.com
     enabled: false # keep the account but disable it
 ```
 
-User groups are synced before users, so `users[].groups` can reference groups declared in the same manifest (or groups that already exist in the tenant). Roles referenced by `userGroups[].roles` must exist in the tenant — note that some roles only appear after subscribing the microservice that provides them, which the `microservices` section (applied earlier) can take care of.
+Global roles are synced before users, so `users[].globalRoles` can reference global roles declared in the same manifest (or global roles that already exist in the tenant). Permissions referenced by `globalRoles[].permissions` must exist in the tenant. Some permissions only appear after subscribing the microservice that provides them, which the `microservices` section (applied earlier) can take care of.
 
 A user needs a `userName` or an `email`, and each defaults to the other:
 
@@ -1154,9 +1201,54 @@ For existing users only the fields set in the manifest are compared and updated 
 - **`password` is only used when creating the user** and never updated afterwards, so re-running the sync doesn't reset credentials. Use `${VAR}` expansion to keep secrets out of the manifest, or prefer `sendPasswordResetEmail: true` to avoid handling passwords entirely.
 - **`enabled` defaults to true** and is always managed: a user disabled in the UI is re-enabled on the next sync unless the manifest says `enabled: false`.
 
+#### Missing and removed users
+
+Two optional fields say what tenant-sync does with a user entry:
+
+- `state`: should the user exist? `present` (the default) or `absent`.
+- `ifMissing`: what to do when a `present` user does not exist yet. `create` (the default), `skip` or `fail`.
+
+```yaml
+users:
+  - userName: new-hire@example.com      # created when missing (the defaults)
+    email: new-hire@example.com
+    sendPasswordResetEmail: true
+    globalRoles: [operators]
+
+  - userName: jdoe@example.com          # SSO user, created on first login
+    ifMissing: skip
+    inventoryRoles:
+      - group: Plant Berlin
+        roles: [Site operator]
+
+  - userName: svc-dashboard             # must already exist
+    ifMissing: fail
+    globalRoles: [operators]
+
+  - userName: contractor@example.com    # offboarded
+    state: absent
+```
+
+| Entry | User missing | User exists |
+| --- | --- | --- |
+| `state: present`, `ifMissing: create` (defaults) | Create | Update |
+| `state: present`, `ifMissing: skip` | Skip (reported as `skipped`) | Update |
+| `state: present`, `ifMissing: fail` | Fail the user | Update |
+| `state: absent` | Nothing to do (`unchanged`) | Delete |
+
+- `ifMissing: skip` suits SSO users who have not logged in yet: the next run picks them up. With `skip` or `fail` the user is never created, so the entry does not need `email`, `password` or `sendPasswordResetEmail`.
+- `state: absent` deletes the user. To only block a login, use `enabled: false`, which keeps the user and their history. An entry with `state: absent` may only have `userName`: validation fails on any other field, `ifMissing` included.
+- The user running the sync is never deleted: such an entry fails with `refusing to delete the user running the sync`. When that user cannot be looked up, no user is deleted.
+- A user that cannot be read (for example because of missing permissions) fails with `read user`. Only a user that does not exist is created, skipped or failed as `ifMissing` says.
+- `enabled` stays a separate field: it is the account state in Cumulocity, while `state` and `ifMissing` say what tenant-sync does with the entry.
+
+To start from the users of an existing tenant, `export --only users` writes them with `ifMissing: skip` and their global and inventory roles, see [Exporting users](#exporting-users).
+
+A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add (and, with `inventoryRolesMode: exact`, to remove) per device group. A user who is already in the desired state is `unchanged`. A missing user with `ifMissing: skip` is `skipped`, a missing user with `ifMissing: fail` fails, and a user with `state: absent` shows `delete` (or `unchanged` when it does not exist).
+
 ### Inventory roles and device group access
 
-User groups grant permissions on the whole tenant. For least-privilege access, Cumulocity has *inventory roles*: a set of permissions (for example "read measurements" or "manage alarms") which a user gets only on the devices of specific device groups. The `inventoryRoles` section defines the roles, and `users[].inventoryAssignments` gives a user roles on a device group:
+Global roles grant permissions on the whole tenant. For least-privilege access, Cumulocity has *inventory roles*: a set of permissions (for example "read measurements" or "manage alarms") which a user gets only on the devices of specific device groups. The `inventoryRoles` section defines the roles, and `users[].inventoryRoles` gives a user roles on a device group:
 
 ```yaml
 inventoryRoles:
@@ -1174,7 +1266,7 @@ inventoryRoles:
 
 users:
   - email: berlin-ops@example.com
-    inventoryAssignments:
+    inventoryRoles:
       - group: Plant Berlin          # device group name ...
         roles: [Site operator]
       - group: Europe/Plant Paris    # ... or a path of group names
@@ -1188,15 +1280,85 @@ Inventory roles:
 - are matched by **name** and created when missing;
 - get their **description** updated when it is set and differs;
 - get their **permissions replaced** when the set differs from the manifest (the order does not matter). The manifest owns the definition of a declared role. A role without `permissions` in the manifest keeps the permissions it has;
-- are never deleted, and roles not in the manifest are left alone.
+- are renamed when `renamedFrom` lists their previous names (see below);
+- are deleted only when they have `state: absent`. Roles not in the manifest are left alone.
 
-Inventory assignments are applied in the `users` section, after the user is created or updated, and are **additive**:
+#### Renaming and deleting roles
+
+```yaml
+inventoryRoles:
+  - name: Site operator
+    renamedFrom: [Site operators, Operator (site)]
+    permissions:
+      - {scope: ALARM, permission: ADMIN}
+      - {scope: OPERATION, permission: ADMIN}
+
+  - name: Legacy viewer
+    state: absent
+```
+
+- `renamedFrom` lists previous names of a role. When no role has `name` but exactly one role has one of the previous names, that role is renamed (and its description and permissions are updated as usual) instead of creating a new role. Users keep the role, because their assignments refer to the role ID. If roles with both the new name and a previous name exist, or several roles have previous names, the role fails as ambiguous and nothing is changed. The error says how to resolve it: delete the role which is no longer needed (for example one created again under the old name), or remove `renamedFrom` to keep both. Once no role has a previous name, `renamedFrom` has no effect and can be removed.
+- `state: absent` (the default is `present`) deletes the role if it exists; a role which does not exist is reported as unchanged. Cumulocity refuses to delete a role which is still assigned to a user, so the delete runs **after the `users` section**: users with `inventoryRolesMode: exact` lose the role first, in the same run. If the role is still assigned after that, it fails with the users and device groups which still have it, for example `cannot delete inventory role: still assigned to berlin-ops@example.com on Plant Paris`. Declare those users with the role removed, or revoke it by hand, and run again. tenant-sync never revokes a role from users only to delete it. To name the holders, tenant-sync reads the inventory roles of every user, which only happens when the delete is refused. With `--only inventoryRoles` (no `users` section), the delete runs right after the inventory roles.
+- A role with `state: absent` must not have `permissions` or `renamedFrom`. Validation fails when a user's `inventoryRoles` refers to a role with `state: absent` or to a previous name in `renamedFrom` (refer to the new name instead).
+- There is no option to delete every role which is not in the manifest: inventory roles have no field to mark who manages them, so this would also delete roles created by other teams in the UI.
+
+A user's inventory roles are applied in the `users` section, after the user is created or updated, and are **additive** by default (see [Exact inventory roles](#exact-inventory-roles) to also remove access):
 
 - `group` is the name of a device group (`has(c8y_IsDeviceGroup)`). The name must match exactly one group, otherwise the user fails with "not found" or "ambiguous" (with the IDs of the matching groups). For groups with the same name, use a path of names separated by `/`, such as `Europe/Plant Berlin`, where each group is a direct child of the previous one. A value with a `/` is first looked up as a plain group name.
 - `roles` are inventory role names, declared in `inventoryRoles` or already in the tenant. They are checked when the manifest is applied, so a role which is in neither fails the user with "not found".
 - Missing roles are added to the user's existing assignment for the group, or a new assignment is created. Roles and assignments which are not in the manifest are never removed.
+- List all roles of a group in one entry: validation fails when two entries name the same group. Entries written differently which find the same group (such as `Plant Berlin` and `Europe/Plant Berlin`) are merged into one assignment with the roles of both.
 
-`inventoryRoles` is applied after `userGroups` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
+The `inventoryRoles` section is applied after `globalRoles` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
+
+#### Exact inventory roles
+
+With `inventoryRolesMode: exact`, the listed assignments become the user's full inventory access:
+
+```yaml
+users:
+  - email: berlin-ops@example.com
+    inventoryRolesMode: exact        # additive (default) or exact
+    inventoryRoles:
+      - group: Europe/Plant Berlin
+        roles: [Site operator]
+      - group: Europe/Plant Paris
+        roles: [Restart only]
+```
+
+- On each listed group, the user's roles are set to exactly the listed roles: missing roles are added and other roles are removed. If the user has several assignments on one group, they are merged into one.
+- The user's assignments on groups which are not listed are deleted.
+- `inventoryRolesMode: exact` without `inventoryRoles` (or with an empty list) removes all of the user's inventory access. This is allowed, but `validate` prints a warning so it is not done by accident.
+- If a listed group cannot be found, the user fails and no assignment on an unlisted group is deleted, since it could be the missing group.
+- The user running the sync cannot use `exact`, so a run cannot revoke its own access. Such a user fails with "refusing to use inventoryRolesMode exact for the user running the sync".
+- Only users with `exact` are affected; all other users stay additive. Global roles are always additive.
+
+A dry run lists every role which would be removed, per group:
+
+```
+→ [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: -Reader, merge 2 assignments; inventory roles on Europe/Plant Paris: +Restart only; inventory roles on Plant Hamburg (not listed): -Reader
+```
+
+`(not listed)` marks an assignment on a group which is not in the manifest, which a real run deletes. A role which the `inventoryRoles` section of the same run deletes is not listed as removed.
+
+A dry run (`--dry`) reads the inventory roles, device groups and assignments of the tenant and reports what a real run would change, without writing anything:
+
+```
+→ [inventoryRoles] Site operator (planned): permissions: +OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ
+→ [inventoryRoles] Reader (planned): create with permissions: *:*:READ
+→ [inventoryRoles] Plant operator (planned): name: "Plant operators" → "Plant operator"
+→ [inventoryRoles] Legacy viewer (planned): delete after the users section (fails if still assigned)
+✓ [inventoryRoles] Restart only (unchanged)
+→ [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: +Site operator, +Reader (new role)
+```
+
+- A role to update lists the permissions it gains (`+`) and loses (`-`), and the old and new description. A role to rename shows its old and new name, and a role to delete shows `delete after the users section`. The dry run does not check whether the role would still be assigned then.
+- Users of the same dry run already refer to a renamed role by its new name, and no longer by its old name or the name of a deleted role. A user with `inventoryRolesMode: exact` lists a role to delete as a role they lose, since the users section revokes it before the delete.
+- A role or device group which the same dry run would create (declared in `inventoryRoles` or `deviceGroups` but not in the tenant yet) is marked `(new role)` or `(new group)` instead of failing with "not found".
+- A user who does not exist yet shows the inventory roles they would get when created.
+- A user with `inventoryRolesMode: exact` also lists the roles they would lose (`-`), see [Exact inventory roles](#exact-inventory-roles).
+
+A real run reports the same details. Without an active session, and for tenants other than the current one in a dry run with `targets`, the dry run lists the desired roles and assignments without comparing them.
 
 ### Login options
 
@@ -1232,19 +1394,19 @@ loginOptions:
       firstName: given_name
       lastName: family_name
     accessMappings:
-      manageRolesOnlyFromAccessMapping: true # keep groups assigned in Cumulocity which no rule lists
+      manageRolesOnlyFromAccessMapping: true # keep global roles assigned in Cumulocity which no rule lists
       rules:
         - when:
             - claim: groups
               operator: IN   # EQ (default), NEQ, GT, LT, GTE, LTE, IN
               value: c8y-admins
-          groups: [admins]
+          globalRoles: [admins]
           applications: [devicemanagement, cockpit]
         - match: any         # all (default) or any of the conditions
           when:
             - {claim: groups, operator: IN, value: c8y-operators}
             - {claim: email, value: ops@example.com}
-          groups: [business]
+          globalRoles: [business]
 ```
 
 The preferred login mode is what the login page offers:
@@ -1264,7 +1426,7 @@ The SSO login option is generated from the OpenID Connect discovery document of 
 - The client secret is sent in the token and refresh request bodies (`client_secret_post`), or in an `Authorization` header when the provider only supports `client_secret_basic`. It is masked in all output, in every encoding. It comes from `clientSecret` (with `${VAR}` or sops) or `clientSecretFrom.env`; a generated value is refused, since the provider would not know it.
 - The endpoints of the discovery document must use https (http only for `localhost`), since the platform sends the client secret and authorization codes to them.
 - The generated requests (`authorizationRequest`, `tokenRequest`, `refreshRequest`, `logoutRequest`) and `signatureVerificationConfig` replace the tenant's values as a whole, so fields which are no longer generated, such as an old `Authorization` header, are removed. Fields the platform generates, such as `_type` or `initRequest`, are not sent back; settings the login option carries besides, such as the password strength and two-factor strategy, are sent back unchanged. When the provider has no logout endpoint, an earlier `logoutRequest` is removed.
-- `accessMappings.rules` reference user groups and applications by name. They are resolved to IDs when the manifest is applied, and an unknown name fails the SSO login option. A user who matches no rule is denied access.
+- `accessMappings.rules` reference global roles (`globalRoles`, sent to Cumulocity as `thenGroups`) and applications by name. They are resolved to IDs when the manifest is applied, and an unknown name fails the SSO login option. A user who matches no rule is denied access.
 - `overrides` are merged last into the generated login option, for fields the section does not model (such as `externalTokenConfig`). Write the platform's placeholders as `$${code}`, since `${...}` is expanded from the environment.
 - Fields which are not declared are left as they are in the tenant. Each run compares the generated login option with the tenant's and only writes when they differ.
 
@@ -1277,13 +1439,13 @@ A broken login configuration can lock everyone out of the tenant, so the section
 - **The preferred mode is switched last**, after the other login options are configured. The option of the new mode is made visible before the others are hidden, the result is read back, and if it does not match, the previous visibility is restored.
 - **`validate` refuses** an unknown mode, `preferred: sso` without an `sso` section or without any access mapping rule, `preferred: basic` with `forbiddenClients: [WEB_BROWSERS]`, and OAI-Secure sessions shorter than 15 minutes.
 - **The run refuses** to forbid basic authentication for web browsers while basic is the preferred mode, to make basic preferred while web browsers are forbidden from it, to hide the SSO button while SSO is the preferred mode, and to add a forbidden user agent which matches this tool's own `User-Agent`. Restrictions which are lifted are applied before the preferred mode changes, and new restrictions after it.
-- **`--dry` shows the change**: unlike the other sections, a dry run reads the tenant's login options (and the groups and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
+- **`--dry` shows the change**: like the `inventoryRoles` and `users` sections, a dry run reads the tenant's login options (and the global roles and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
 
 If the SSO provider stops working while `sso` is the preferred mode, users can still reach the tenant with basic authentication through the API (unless it is restricted), for example to set `preferred: oaiSecure` again with this tool.
 
 ### SmartREST 2.0 template collections
 
-The `smartrestTemplates` section syncs SmartREST 2.0 template collections from JSON files as exported by the platform UI (Device Management → Device types → SmartREST templates → Export) — one collection per file. Point a source at a directory and every `*.json` file in it is synced:
+The `smartrestTemplates` section syncs SmartREST 2.0 template collections from JSON files as exported by the platform UI (Device Management → Device types → SmartREST templates → Export), one collection per file. Point a source at a directory and every `*.json` file in it is synced:
 
 ```yaml
 smartrestTemplates:
@@ -1296,9 +1458,9 @@ smartrestTemplates:
       path: ./exports/custom_devmgmt.json
 ```
 
-A collection is stored as a managed object of type `c8y_SmartRest2Template` and matched via its external identity (`c8y_SmartRest2DeviceIdentifier`, the X-Id devices reference), taken from the file's `name` (falling back to `__externalId`). The upsert only writes when the collection actually differs from the file: the request/response template lists are compared **order-insensitively** (sorted by `msgId`), platform bookkeeping fields (`id`, `lastUpdated`, `owner`, ...) are ignored, and the `c8y_TenantSync` annotation never triggers an update by itself — so re-applying an unchanged export performs no writes.
+A collection is stored as a managed object of type `c8y_SmartRest2Template` and matched via its external identity (`c8y_SmartRest2DeviceIdentifier`, the X-Id devices reference), taken from the file's `name` (falling back to `__externalId`). The upsert only writes when the collection actually differs from the file: the request/response template lists are compared **order-insensitively** (sorted by `msgId`), platform bookkeeping fields (`id`, `lastUpdated`, `owner`, ...) are ignored, and the `c8y_TenantSync` annotation never triggers an update by itself, so re-applying an unchanged export performs no writes.
 
-Since the file content must be read, `url` sources are not supported for this section (GitHub release assets work — they are downloaded first).
+Since the file content must be read, `url` sources are not supported for this section (GitHub release assets work, since they are downloaded first).
 
 ### Digital Twin Manager definitions
 
@@ -1440,7 +1602,7 @@ For rules with several tests, a package folder is usually easier to maintain: it
 
 ### Target tenants
 
-By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead — run once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):
+By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead. Run it once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):
 
 ```yaml
 targets:
@@ -1461,7 +1623,7 @@ c8y tenant-sync run -f tenant.yaml --target t12345 --target child.example.com
 c8y tenant-sync run -f tenant.yaml --target-selector "domain=*.iot.example.com" --include-current
 ```
 
-Application subscriptions and feature toggles are managed directly from the parent (their APIs address the target tenant by ID). Everything else — tenant options, software/firmware/configuration repositories, device profiles, hooks — runs *inside* each target tenant and therefore needs per-tenant credentials, configured via `targets.credentials`:
+Application subscriptions and feature toggles are managed directly from the parent (their APIs address the target tenant by ID). Everything else (tenant options, software/firmware/configuration repositories, device profiles, hooks) runs *inside* each target tenant and therefore needs per-tenant credentials, configured via `targets.credentials`:
 
 ```yaml
 targets:
@@ -1473,9 +1635,9 @@ targets:
 ```
 
 - **`serviceUser`** (default) uses the [microservice service user](https://goc8ycli.netlify.app/docs/tutorials/microservice-serviceuser/) pattern: a placeholder `MICROSERVICE` application (default name `tenant-sync`, no binary, no deployment) is created in the current tenant, subscribed to every target tenant, and its per-tenant service users are fetched via the application bootstrap user. The application and subscriptions are idempotent and left in place between runs. Service users for freshly subscribed tenants can take a few seconds to appear; the tool retries briefly.
-  - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (user groups, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `microservices`, `extensions`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
+  - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (global roles, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `microservices`, `extensions`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
   - **Existing subscriptions.** A tenant's service user gets its roles when the tenant is subscribed. When the service user of a target lacks a required role (e.g. the tenant was subscribed by an older version), the tool subscribes the application to that tenant again, which creates a new service user with the current roles.
-- **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported — the run fails with a clear error listing tenants without a matching session.
+- **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported: the run fails with a clear error listing tenants without a matching session.
 - **`tenantAdmin`** logs in to each target with the admin credentials of its entry in the [`tenants`](#provision-child-tenants) section: `adminName` and the admin password (`adminPass`, an `env` reference, or a generated value from the secrets file). It needs no placeholder microservice and no session files, so it suits tenants which this tool creates and manages, e.g. from a CI runner. Targets are matched to `tenants` entries by ID and then by domain. The credentials are checked before any section runs; the run fails for a target without a matching entry, with `sendPasswordResetEmail` (the password is not known), with a password generated in this run for a tenant which already existed (the secrets file was lost), or whose admin login is rejected (the password was changed or two-factor authentication was enabled).
 
 In multi-tenant runs every result line and the hook environment (`C8Y_TENANT`, `C8Y_USERNAME`, `C8Y_PASSWORD`) are scoped to the tenant being applied:
@@ -1515,13 +1677,13 @@ tenantOptions:
     key: crm.reference
     value: CRM-1234
 
-userGroups:
+globalRoles:
   - name: operators
-    roles: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]
+    permissions: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]
 ```
 
 ```bash
-c8y tenant-sync run -f customer-a.yaml --dry   # preview (no API calls)
+c8y tenant-sync run -f customer-a.yaml --dry   # preview, nothing is written
 c8y tenant-sync run -f customer-a.yaml
 ```
 
@@ -1530,7 +1692,7 @@ c8y tenant-sync run -f customer-a.yaml
 
 🏢 Tenant: customer-a
   ✚ [tenantOptions] customer-a: onboarding/crm.reference (created)
-  ✚ [userGroups] customer-a: operators (created): assigned roles: ROLE_INVENTORY_READ, ROLE_ALARM_READ
+  ✚ [globalRoles] customer-a: operators (created): assigned permissions: ROLE_INVENTORY_READ, ROLE_ALARM_READ
 
 🔐 Generated 1 value(s): customer-a-admin
    Saved to customer-a.secrets.yaml (unencrypted, permissions 0600)
@@ -1564,7 +1726,7 @@ c8y tenant-sync run -f customer-a.yaml
 
 ### Hooks
 
-Pre and post hooks run arbitrary commands around the sync — for example go-c8y-cli calls for anything outside the manifest's scope. Hooks execute via `sh -c` from the manifest directory with the current environment (including the `C8Y_*` session variables) passed through. A failing pre hook aborts the run; post hooks always run (also after section failures) and their failures are reported without aborting. Hooks run regardless of `--only`, and are only printed (not executed) in dry-run mode. In multi-tenant runs hooks execute once per target tenant, with `C8Y_TENANT`, `C8Y_USERNAME` and `C8Y_PASSWORD` overridden to that tenant's resolved credentials (and `C8Y_TOKEN` cleared).
+Pre and post hooks run arbitrary commands around the sync, for example go-c8y-cli calls for anything outside the manifest's scope. Hooks execute via `sh -c` from the manifest directory with the current environment (including the `C8Y_*` session variables) passed through. A failing pre hook aborts the run; post hooks always run (also after section failures) and their failures are reported without aborting. Hooks run regardless of `--only`, and are only printed (not executed) in dry-run mode. In multi-tenant runs hooks execute once per target tenant, with `C8Y_TENANT`, `C8Y_USERNAME` and `C8Y_PASSWORD` overridden to that tenant's resolved credentials (and `C8Y_TOKEN` cleared).
 
 ```yaml
 hooks:
@@ -1575,7 +1737,7 @@ hooks:
     - run: c8y inventory list --query "has(c8y_TenantSync)" --select id,name -o csv
 ```
 
-Hooks can also be scoped to a single section under `hooks.sections.<sectionName>` — they run immediately before/after that section, and (unlike the global hooks) are skipped when the section is excluded by `--only`. The same failure semantics apply: a failing section pre hook aborts the run, post hook failures are reported without aborting.
+Hooks can also be scoped to a single section under `hooks.sections.<sectionName>`. They run immediately before/after that section, and (unlike the global hooks) are skipped when the section is excluded by `--only`. The same failure semantics apply: a failing section pre hook aborts the run, post hook failures are reported without aborting.
 
 ```yaml
 hooks:
@@ -1589,7 +1751,7 @@ hooks:
 
 ### Commands
 
-The `commands` section runs named groups of arbitrary shell commands as the last section — for anything declarative sections don't cover (creating devices, registering external IDs, smoke tests, ...). The **actions within a group run in sequence** (a failing action skips the rest of its group, reported as `skipped`), while **separate groups run concurrently** with each other — so order-dependent steps go in one group, and independent work goes in separate groups:
+The `commands` section runs named groups of arbitrary shell commands as the last section, for anything declarative sections don't cover (creating devices, registering external IDs, smoke tests, ...). The **actions within a group run in sequence** (a failing action skips the rest of its group, reported as `skipped`), while **separate groups run concurrently** with each other, so order-dependent steps go in one group, and independent work goes in separate groups:
 
 ```yaml
 commands:
@@ -1604,13 +1766,13 @@ commands:
       - c8y currenttenant get --select name -o csv
 ```
 
-Commands execute like hooks: via `sh -c` from the manifest directory, with the `C8Y_*` session variables passed through (scoped to the target tenant in multi-tenant runs), printed but not executed in dry-run mode. Unlike a failing pre hook, a failing action does not abort the run — it fails its group and is reflected in the summary and exit code.
+Commands execute like hooks: via `sh -c` from the manifest directory, with the `C8Y_*` session variables passed through (scoped to the target tenant in multi-tenant runs), printed but not executed in dry-run mode. Unlike a failing pre hook, a failing action does not abort the run. It fails its group and is reflected in the summary and exit code.
 
 ### Device profiles
 
-Device profiles bundle firmware, software and configuration — a profile is essentially a set of links to existing repository items. By default each reference is looked up in the tenant and resolved to its binary URL; that's why the `deviceProfiles` section runs **after** the repository sections, so the referenced items can be synced by the same manifest. References to items outside the manifest must already exist in the tenant, otherwise the profile fails with a lookup error.
+Device profiles bundle firmware, software and configuration. A profile is essentially a set of links to existing repository items. By default each reference is looked up in the tenant and resolved to its binary URL; that's why the `deviceProfiles` section runs **after** the repository sections, so the referenced items can be synced by the same manifest. References to items outside the manifest must already exist in the tenant, otherwise the profile fails with a lookup error.
 
-Alternatively a reference can set `url` explicitly (e.g. for an externally hosted binary), which skips the repository lookup entirely. The special values `none` and `"-"` also skip the lookup but leave the `url` off the profile entry altogether — useful when the devices resolve artifacts by name/version themselves and the referenced item doesn't exist in the tenant at all:
+Alternatively a reference can set `url` explicitly (e.g. for an externally hosted binary), which skips the repository lookup entirely. The special values `none` and `"-"` also skip the lookup but leave the `url` off the profile entry altogether. This is useful when the devices resolve artifacts by name/version themselves and the referenced item doesn't exist in the tenant at all:
 
 ```yaml
 deviceProfiles:
@@ -1703,7 +1865,7 @@ Managed objects created by this tool carry a `c8y_TenantSync` fragment:
 }
 ```
 
-The fragment is passed to the SDK upserts as an **annotation**: it is written on create and on every real update, but it is excluded from change detection and never triggers an update by itself. Re-applying an unchanged manifest therefore performs no writes — `syncedAt` records when the desired state last actually changed, not when the tool last ran.
+The fragment is passed to the SDK upserts as an **annotation**: it is written on create and on every real update, but it is excluded from change detection and never triggers an update by itself. Re-applying an unchanged manifest therefore performs no writes: `syncedAt` records when the desired state last actually changed, not when the tool last ran.
 
 ```bash
 # List everything managed by tenant-sync
@@ -1755,9 +1917,9 @@ The **[GitHub Actions guide](docs/github-actions.md)** has a complete workflow: 
 │  sync_tenant.go    (options,     │
 │                     features,    │
 │                     apps)        │
-│  sync_users.go     (user groups, │
-│                     users, role/ │
-│                     group assign)│
+│  sync_users.go     (global roles,│
+│                     users, role  │
+│                     assignments) │
 │  sync_inventory_roles.go         │  inventory roles + assignments
 │  sync_login_options.go + oidc.go │  login options, SSO discovery
 │  sync_software.go  + parser.go   │  package filename parsing

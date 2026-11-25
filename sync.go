@@ -48,7 +48,7 @@ const (
 	SectionExtensions             = "extensions"
 	SectionApplications           = "applications"
 	SectionDeviceGroups           = "deviceGroups"
-	SectionUserGroups             = "userGroups"
+	SectionGlobalRoles            = "globalRoles"
 	SectionInventoryRoles         = "inventoryRoles"
 	SectionUsers                  = "users"
 	SectionLoginOptions           = "loginOptions"
@@ -62,15 +62,15 @@ const (
 	SectionCommands               = "commands"
 )
 
-// SectionOrder is the order sections are applied in. User groups are synced
-// before users so users can be assigned to groups created in the same run;
-// inventory roles are synced after user groups and before users so the
-// users' inventory assignments can reference roles created in the same run;
-// login options follow the users, so the user groups of SSO access mappings
+// SectionOrder is the order sections are applied in. Global roles are synced
+// before users so users can be given global roles created in the same run;
+// inventory roles are synced after global roles and before users so the
+// users' inventory roles can reference roles created in the same run;
+// login options follow the users, so the global roles of SSO access mappings
 // exist and the login changes come after the users who log in;
 // repositories are synced before device profiles so profiles can reference
 // the synced items; custom commands run last so they can build on everything
-// the manifest declares. Device groups are synced before user groups and
+// the manifest declares. Device groups are synced before global roles and
 // users so roles and permissions can later be assigned on groups created in
 // the same run. UI extensions are uploaded before the web applications so
 // the applications can install extensions uploaded in the same run.
@@ -91,7 +91,7 @@ var SectionOrder = []string{
 	SectionExtensions,
 	SectionApplications,
 	SectionDeviceGroups,
-	SectionUserGroups,
+	SectionGlobalRoles,
 	SectionInventoryRoles,
 	SectionUsers,
 	SectionLoginOptions,
@@ -137,8 +137,9 @@ type Syncer struct {
 	Secrets *SecretStore
 
 	// DryRunReader is a client for read-only lookups in dry-run mode (nil
-	// without a session). Only the loginOptions section uses it, to compare
-	// the desired login options with the tenant's; it never writes.
+	// without a session). The loginOptions, inventoryRoles and users
+	// sections use it to compare the manifest with the tenant; it never
+	// writes.
 	DryRunReader *api.Client
 
 	// Targets overrides the manifest targets section (set from CLI flags)
@@ -148,6 +149,13 @@ type Syncer struct {
 
 	// activeTarget is the tenant currently being applied
 	activeTarget *Target
+	// dryRunPending holds the objects a dry run would create in the active
+	// target, so later sections can refer to them (reset per target)
+	dryRunPending *dryRunPending
+	// roleDeletes are the inventory roles with state absent which the
+	// inventoryRoles section found; they are deleted after the users section
+	// (reset per target)
+	roleDeletes []roleDelete
 	// multiTarget is set when the run covers tenants other than the current
 	// one, enabling per-tenant labels in the output
 	multiTarget bool
@@ -395,6 +403,8 @@ func (s *Syncer) Apply(ctx context.Context, manifest *Manifest, only []string) e
 // of the current tenant (used by the sections that address the target tenant
 // by ID from the parent).
 func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, only []string) error {
+	s.dryRunPending = nil
+	s.roleDeletes = nil
 	if err := s.runHooks(ctx, "pre", manifest.Hooks.Pre); err != nil {
 		return err
 	}
@@ -437,8 +447,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncApplications(baseCtx, manifest.Applications)
 		case SectionDeviceGroups:
 			err = s.SyncDeviceGroups(ctx, manifest.DeviceGroups)
-		case SectionUserGroups:
-			err = s.SyncUserGroups(ctx, manifest.UserGroups)
+		case SectionGlobalRoles:
+			err = s.SyncGlobalRoles(ctx, manifest.GlobalRoles)
 		case SectionInventoryRoles:
 			err = s.SyncInventoryRoles(ctx, manifest.InventoryRoles)
 		case SectionUsers:
@@ -461,6 +471,14 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncDeviceProfiles(ctx, manifest.DeviceProfiles)
 		case SectionCommands:
 			err = s.SyncCommands(ctx, manifest.Commands)
+		}
+
+		// Inventory roles with state absent are deleted once the users
+		// section has revoked them (or right after inventoryRoles when the
+		// users section does not run), since Cumulocity refuses to delete
+		// a role which is still assigned
+		if err == nil && (section == SectionUsers || (section == SectionInventoryRoles && !sectionEnabled(only, SectionUsers))) {
+			s.DeleteInventoryRoles(ctx)
 		}
 
 		s.runHooks(ctx, "sections."+section+".post", sectionHooks.Post)

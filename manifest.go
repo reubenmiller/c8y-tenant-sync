@@ -21,7 +21,7 @@ import (
 // profiles) can reference items created by earlier ones (firmware, software,
 // configuration).
 type Manifest struct {
-	Include []IncludeSpec `yaml:"include" json:"include,omitempty" jsonschema:"description=Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or user group name) and the targets and certificateAuthority sections of a later file replace earlier ones"`
+	Include []IncludeSpec `yaml:"include" json:"include,omitempty" jsonschema:"description=Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or global role name) and the targets and certificateAuthority sections of a later file replace earlier ones"`
 
 	Targets *TargetsSpec `yaml:"targets" json:"targets,omitempty" jsonschema:"description=Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"`
 
@@ -41,11 +41,11 @@ type Manifest struct {
 	Extensions    []ExtensionSpec    `yaml:"extensions" json:"extensions,omitempty" jsonschema:"description=UI extensions (plugin packages) to upload into the tenant running the sync; a version is only uploaded when it is not on the extension yet. Install them into web applications with applications[].extensions; the Extensions page of the Administration application"`
 	Applications  []ApplicationSpec  `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Web applications to subscribe to the target tenant (optionally kept at the version of a source and with UI extensions installed); the Applications page of the Administration application. Microservices are listed under microservices"`
 	DeviceGroups  []DeviceGroupSpec  `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
-	UserGroups    []UserGroupSpec    `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
+	GlobalRoles   []GlobalRoleSpec   `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed)"`
 	// InventoryRoles are permission sets which users get on specific device
-	// groups through users[].inventoryAssignments
-	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"`
-	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and assign to user groups (additive: existing memberships are never removed)"`
+	// groups through users[].inventoryRoles
+	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"`
+	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update (or delete with state absent) and give global roles and inventory roles (additive by default: existing roles are never removed unless a user sets inventoryRolesMode exact)"`
 	// LoginOptions configures how users log in (basic, OAI-Secure, SSO)
 	LoginOptions  *LoginOptionsSpec   `yaml:"loginOptions" json:"loginOptions,omitempty" jsonschema:"description=Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"`
 	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
@@ -545,24 +545,34 @@ type DeviceGroupSpec struct {
 	Groups []DeviceGroupSpec `yaml:"groups" json:"groups,omitempty" jsonschema:"description=Child groups linked to this group as child assets"`
 }
 
-// UserGroupSpec ensures a user group (called "global role" in the Cumulocity
-// UI) exists with the given description and roles. Role assignments are
-// additive: roles already on the group but absent from the manifest are left
-// alone.
-type UserGroupSpec struct {
-	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the user group,example=operators"`
-	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the user group"`
+// GlobalRoleSpec ensures a global role (a user group in the Cumulocity API)
+// exists with the given description and permissions. Permission assignments
+// are additive: permissions already on the role but absent from the manifest
+// are left alone.
+type GlobalRoleSpec struct {
+	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the global role,example=operators"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the global role"`
 
-	// Roles lists role names assigned to the group. Missing roles are
-	// assigned; roles not listed are never removed.
-	Roles []string `yaml:"roles" json:"roles,omitempty" jsonschema:"description=Role names assigned to the group (additive; roles not listed are never removed),example=ROLE_INVENTORY_READ"`
+	// Permissions lists the ROLE_* permission names assigned to the global
+	// role. Missing permissions are assigned; permissions not listed are
+	// never removed.
+	Permissions []string `yaml:"permissions" json:"permissions,omitempty" jsonschema:"description=Permission names (ROLE_*) assigned to the global role (additive; permissions not listed are never removed),example=ROLE_INVENTORY_READ"`
 }
 
-// UserSpec ensures a user exists with the desired profile fields and group
-// memberships. The password is only used when creating the user (existing
-// passwords are never overwritten) and group memberships are additive.
+// UserSpec ensures a user exists with the desired profile fields, global
+// roles and inventory roles, or (state: absent) that it does not exist. The
+// password is only used when creating the user (existing passwords are never
+// overwritten) and roles are additive. IfMissing says what happens when the
+// user does not exist yet: create it (the default), skip it or fail.
 type UserSpec struct {
-	Username  string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
+	Username string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
+
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may only have userName; the user running the sync is never deleted),enum=present,enum=absent"`
+
+	// IfMissing is create (the default), skip or fail
+	IfMissing string `yaml:"ifMissing" json:"ifMissing,omitempty" jsonschema:"description=What to do when the user does not exist: create (default) creates it; skip leaves it out and reports it as skipped (e.g. SSO users who have not logged in yet); fail fails the user. With skip or fail the user is never created so email and password are not needed,enum=create,enum=skip,enum=fail"`
+
 	Email     string `yaml:"email" json:"email,omitempty" jsonschema:"description=Email address of the user (required to create a user; defaults to the userName when it is an email address)"`
 	FirstName string `yaml:"firstName" json:"firstName,omitempty" jsonschema:"description=First name of the user"`
 	LastName  string `yaml:"lastName" json:"lastName,omitempty" jsonschema:"description=Last name of the user"`
@@ -583,14 +593,18 @@ type UserSpec struct {
 	// link on creation instead of (or in addition to) setting a password
 	SendPasswordResetEmail bool `yaml:"sendPasswordResetEmail" json:"sendPasswordResetEmail,omitempty" jsonschema:"description=Send a password reset email when creating the user (requires email; alternative to password)"`
 
-	// Groups lists user group names the user is assigned to. Missing
-	// memberships are added; memberships not listed are never removed.
-	Groups []string `yaml:"groups" json:"groups,omitempty" jsonschema:"description=User group names the user is assigned to (additive; memberships not listed are never removed),example=operators"`
-
-	// InventoryAssignments give the user inventory roles on device groups.
-	// Missing roles are added; roles and assignments not listed are never
+	// GlobalRoles lists the global roles (user groups in the API) the user
+	// is assigned to. Missing roles are added; roles not listed are never
 	// removed.
-	InventoryAssignments []InventoryAssignmentSpec `yaml:"inventoryAssignments" json:"inventoryAssignments,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"`
+	GlobalRoles []string `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global role names the user is assigned to (additive; global roles not listed are never removed),example=operators"`
+
+	// InventoryRoles give the user inventory roles on device groups.
+	// Missing roles are added; with inventoryRolesMode additive (the
+	// default) roles and assignments not listed are never removed.
+	InventoryRoles []InventoryAssignmentSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive by default: roles and assignments not listed are kept; see inventoryRolesMode)"`
+
+	// InventoryRolesMode is additive (the default) or exact
+	InventoryRolesMode string `yaml:"inventoryRolesMode" json:"inventoryRolesMode,omitempty" jsonschema:"description=additive (default) only adds the inventory roles listed in inventoryRoles; exact makes them the user's full inventory access: on each listed group the roles are set to exactly the listed roles and the assignments on groups which are not listed are deleted (an empty or missing inventoryRoles removes all inventory access). Not allowed for the user running the sync,enum=additive,enum=exact"`
 }
 
 // InventoryRoleScopes are the scopes of inventory role permissions
@@ -600,16 +614,37 @@ var InventoryRoleScopes = []string{"ALARM", "AUDIT", "EVENT", "MANAGED_OBJECT", 
 // ALL is an alias of "*" (the name used in the Cumulocity UI).
 var InventoryRolePermissionLevels = []string{"READ", "ADMIN", "*", "ALL"}
 
+// Inventory role states
+const (
+	InventoryRoleStatePresent = "present"
+	InventoryRoleStateAbsent  = "absent"
+)
+
+// InventoryRoleStates are the values of inventoryRoles[].state
+var InventoryRoleStates = []string{InventoryRoleStatePresent, InventoryRoleStateAbsent}
+
 // InventoryRoleSpec ensures an inventory role exists with the given
-// description and permissions. The role is matched by name; its permissions
-// are replaced when the set differs from the manifest (the manifest owns the
-// role definition).
+// description and permissions, or (state: absent) that it does not exist.
+// The role is matched by name; its permissions are replaced when the set
+// differs from the manifest (the manifest owns the role definition). A role
+// found only under one of its previous names (renamedFrom) is renamed.
 type InventoryRoleSpec struct {
 	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the inventory role (used to match an existing role),example=Site operator"`
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the inventory role (only updated when set)"`
 
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the role; absent deletes the role if it exists, after the users section; fails while users still have the role (the role must not be referenced in users[].inventoryRoles),enum=present,enum=absent"`
+
+	// RenamedFrom are previous names of the role
+	RenamedFrom []string `yaml:"renamedFrom" json:"renamedFrom,omitempty" jsonschema:"description=Previous names of the role: when no role has the name but exactly one role has a previous name that role is renamed (keeping its assignments) instead of creating a new role; fails as ambiguous when both the name and a previous name exist,example=Site operators"`
+
 	// Permissions is the full set of permissions of the role
 	Permissions []InventoryRolePermissionSpec `yaml:"permissions" json:"permissions,omitempty" jsonschema:"description=Permissions of the role (compared as a set; the role is updated when the set differs)"`
+}
+
+// Absent reports whether the role is to be deleted
+func (r InventoryRoleSpec) Absent() bool {
+	return strings.TrimSpace(r.State) == InventoryRoleStateAbsent
 }
 
 // InventoryRolePermissionSpec is a single permission of an inventory role,
@@ -656,6 +691,97 @@ type InventoryAssignmentSpec struct {
 
 func (u UserSpec) IsEnabled() bool {
 	return u.Enabled == nil || *u.Enabled
+}
+
+// User states (users[].state)
+const (
+	UserStatePresent = "present"
+	UserStateAbsent  = "absent"
+)
+
+// UserStates are the values of users[].state
+var UserStates = []string{UserStatePresent, UserStateAbsent}
+
+// What to do with a missing user (users[].ifMissing)
+const (
+	UserIfMissingCreate = "create"
+	UserIfMissingSkip   = "skip"
+	UserIfMissingFail   = "fail"
+)
+
+// UserIfMissingValues are the values of users[].ifMissing
+var UserIfMissingValues = []string{UserIfMissingCreate, UserIfMissingSkip, UserIfMissingFail}
+
+// Modes of a user's inventory roles (users[].inventoryRolesMode)
+const (
+	UserInventoryRolesAdditive = "additive"
+	UserInventoryRolesExact    = "exact"
+)
+
+// UserInventoryRolesModes are the values of users[].inventoryRolesMode
+var UserInventoryRolesModes = []string{UserInventoryRolesAdditive, UserInventoryRolesExact}
+
+// ExactInventoryRoles reports whether the listed inventory roles are the
+// user's full inventory access (inventoryRolesMode: exact)
+func (u UserSpec) ExactInventoryRoles() bool {
+	return strings.TrimSpace(u.InventoryRolesMode) == UserInventoryRolesExact
+}
+
+// UserWarnings reports user entries which are valid but likely a mistake: a
+// user with inventoryRolesMode exact and no inventoryRoles loses all of its
+// inventory access
+func (m *Manifest) UserWarnings() []string {
+	var warnings []string
+	for i, user := range m.Users {
+		if user.ExactInventoryRoles() && !user.Absent() && len(user.InventoryRoles) == 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"users[%d]: inventoryRolesMode exact without inventoryRoles removes all inventory roles of %q", i, user.Username))
+		}
+	}
+	return warnings
+}
+
+// Absent reports whether the user is to be deleted
+func (u UserSpec) Absent() bool {
+	return strings.TrimSpace(u.State) == UserStateAbsent
+}
+
+// MissingAction is what to do when the user does not exist: create (the
+// default), skip or fail
+func (u UserSpec) MissingAction() string {
+	if value := strings.TrimSpace(u.IfMissing); value != "" {
+		return value
+	}
+	return UserIfMissingCreate
+}
+
+// CreatesMissing reports whether a missing user is created
+func (u UserSpec) CreatesMissing() bool {
+	return !u.Absent() && u.MissingAction() == UserIfMissingCreate
+}
+
+// absentExtraFields lists the fields set on an entry besides userName (an
+// entry with state absent may only have userName)
+func (u UserSpec) absentExtraFields() []string {
+	var fields []string
+	add := func(set bool, name string) {
+		if set {
+			fields = append(fields, name)
+		}
+	}
+	add(u.IfMissing != "", "ifMissing")
+	add(u.Email != "", "email")
+	add(u.FirstName != "", "firstName")
+	add(u.LastName != "", "lastName")
+	add(u.Phone != "", "phone")
+	add(u.Enabled != nil, "enabled")
+	add(u.Password != "", "password")
+	add(u.PasswordFrom != nil, "passwordFrom")
+	add(u.SendPasswordResetEmail, "sendPasswordResetEmail")
+	add(u.GlobalRoles != nil, "globalRoles")
+	add(u.InventoryRoles != nil, "inventoryRoles")
+	add(u.InventoryRolesMode != "", "inventoryRolesMode")
+	return fields
 }
 
 // Source describes where artifacts come from. Exactly one of Path, URL or
@@ -1607,17 +1733,17 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)
-	groupNames := make(map[string]bool, len(m.UserGroups))
-	for i, group := range m.UserGroups {
+	groupNames := make(map[string]bool, len(m.GlobalRoles))
+	for i, group := range m.GlobalRoles {
 		if group.Name == "" {
-			errs = append(errs, fmt.Sprintf("userGroups[%d]: name is required", i))
+			errs = append(errs, fmt.Sprintf("globalRoles[%d]: name is required", i))
 		} else if groupNames[group.Name] {
-			errs = append(errs, fmt.Sprintf("userGroups[%d]: duplicate group name %q", i, group.Name))
+			errs = append(errs, fmt.Sprintf("globalRoles[%d]: duplicate global role name %q", i, group.Name))
 		}
 		groupNames[group.Name] = true
-		for j, role := range group.Roles {
-			if strings.TrimSpace(role) == "" {
-				errs = append(errs, fmt.Sprintf("userGroups[%d].roles[%d]: role must not be empty", i, j))
+		for j, permission := range group.Permissions {
+			if strings.TrimSpace(permission) == "" {
+				errs = append(errs, fmt.Sprintf("globalRoles[%d].permissions[%d]: permission must not be empty", i, j))
 			}
 		}
 	}
@@ -1629,6 +1755,30 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: duplicate inventory role name %q", i, role.Name))
 		}
 		roleNames[role.Name] = true
+		if role.State != "" && !slices.Contains(InventoryRoleStates, role.State) {
+			errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: unknown state %q: supported values are %s", i, role.State, strings.Join(InventoryRoleStates, ", ")))
+		}
+		if role.Absent() {
+			if role.Permissions != nil {
+				errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: a role with state absent must not have permissions", i))
+			}
+			if role.RenamedFrom != nil {
+				errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: a role with state absent must not have renamedFrom", i))
+			}
+		}
+		previousNames := make(map[string]bool, len(role.RenamedFrom))
+		for j, previous := range role.RenamedFrom {
+			prefix := fmt.Sprintf("inventoryRoles[%d].renamedFrom[%d]", i, j)
+			switch {
+			case strings.TrimSpace(previous) == "":
+				errs = append(errs, prefix+": previous name must not be empty")
+			case previous == role.Name:
+				errs = append(errs, fmt.Sprintf("%s: previous name %q is the name of the role", prefix, previous))
+			case previousNames[previous]:
+				errs = append(errs, fmt.Sprintf("%s: duplicate previous name %q", prefix, previous))
+			}
+			previousNames[previous] = true
+		}
 		permissionKeys := make(map[string]bool, len(role.Permissions))
 		for j, permission := range role.Permissions {
 			prefix := fmt.Sprintf("inventoryRoles[%d].permissions[%d]", i, j)
@@ -1648,6 +1798,29 @@ func (m *Manifest) Validate() error {
 			permissionKeys[permission.Key()] = true
 		}
 	}
+	// A previous name must not be declared as a role of its own (or be the
+	// previous name of two roles), and users must not reference a role
+	// which is deleted or renamed
+	absentRoles := map[string]bool{}
+	renamedTo := map[string]string{}
+	for i, role := range m.InventoryRoles {
+		if role.Absent() {
+			absentRoles[role.Name] = true
+		}
+		for j, previous := range role.RenamedFrom {
+			if strings.TrimSpace(previous) == "" || previous == role.Name {
+				continue
+			}
+			prefix := fmt.Sprintf("inventoryRoles[%d].renamedFrom[%d]", i, j)
+			if roleNames[previous] {
+				errs = append(errs, fmt.Sprintf("%s: previous name %q is also declared as an inventory role", prefix, previous))
+			}
+			if other, ok := renamedTo[previous]; ok && other != role.Name {
+				errs = append(errs, fmt.Sprintf("%s: previous name %q is also a previous name of %q", prefix, previous, other))
+			}
+			renamedTo[previous] = role.Name
+		}
+	}
 	usernames := make(map[string]bool, len(m.Users))
 	for i, user := range m.Users {
 		if user.PasswordFrom != nil {
@@ -1662,32 +1835,53 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("users[%d]: duplicate userName %q", i, user.Username))
 		}
 		usernames[user.Username] = true
-		if user.SendPasswordResetEmail && user.CreateEmail() == "" {
-			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
+		if user.State != "" && !slices.Contains(UserStates, user.State) {
+			errs = append(errs, fmt.Sprintf("users[%d]: unknown state %q: supported values are %s", i, user.State, strings.Join(UserStates, ", ")))
 		}
-		for j, group := range user.Groups {
-			if strings.TrimSpace(group) == "" {
-				errs = append(errs, fmt.Sprintf("users[%d].groups[%d]: group must not be empty", i, j))
+		if user.IfMissing != "" && !slices.Contains(UserIfMissingValues, user.IfMissing) {
+			errs = append(errs, fmt.Sprintf("users[%d]: unknown ifMissing %q: supported values are %s", i, user.IfMissing, strings.Join(UserIfMissingValues, ", ")))
+		}
+		if user.InventoryRolesMode != "" && !slices.Contains(UserInventoryRolesModes, user.InventoryRolesMode) {
+			errs = append(errs, fmt.Sprintf("users[%d]: unknown inventoryRolesMode %q: supported values are %s", i, user.InventoryRolesMode, strings.Join(UserInventoryRolesModes, ", ")))
+		}
+		if user.Absent() {
+			if extra := user.absentExtraFields(); len(extra) > 0 {
+				errs = append(errs, fmt.Sprintf("users[%d]: a user with state absent may only have userName (remove %s)", i, strings.Join(extra, ", ")))
 			}
 		}
-		assignedGroups := make(map[string]bool, len(user.InventoryAssignments))
-		for j, assignment := range user.InventoryAssignments {
-			prefix := fmt.Sprintf("users[%d].inventoryAssignments[%d]", i, j)
+		// The email is only needed when the user can be created
+		if user.SendPasswordResetEmail && user.CreatesMissing() && user.CreateEmail() == "" {
+			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
+		}
+		for j, group := range user.GlobalRoles {
+			if strings.TrimSpace(group) == "" {
+				errs = append(errs, fmt.Sprintf("users[%d].globalRoles[%d]: global role must not be empty", i, j))
+			}
+		}
+		assignedGroups := make(map[string]bool, len(user.InventoryRoles))
+		for j, assignment := range user.InventoryRoles {
+			prefix := fmt.Sprintf("users[%d].inventoryRoles[%d]", i, j)
 			group := strings.TrimSpace(assignment.Group)
 			if group == "" {
 				errs = append(errs, prefix+": group is required")
 			} else if slices.Contains(splitGroupPath(group), "") {
 				errs = append(errs, fmt.Sprintf("%s: invalid group path %q: empty group name", prefix, assignment.Group))
-			} else if assignedGroups[group] {
+			} else if key := strings.Join(splitGroupPath(group), "/"); assignedGroups[key] {
 				errs = append(errs, fmt.Sprintf("%s: duplicate group %q (list all roles of a group in one entry)", prefix, assignment.Group))
+			} else {
+				assignedGroups[key] = true
 			}
-			assignedGroups[group] = true
 			if len(assignment.Roles) == 0 {
 				errs = append(errs, prefix+": at least one role is required")
 			}
 			for k, role := range assignment.Roles {
-				if strings.TrimSpace(role) == "" {
+				switch {
+				case strings.TrimSpace(role) == "":
 					errs = append(errs, fmt.Sprintf("%s.roles[%d]: role must not be empty", prefix, k))
+				case absentRoles[role]:
+					errs = append(errs, fmt.Sprintf("%s.roles[%d]: inventory role %q has state absent in inventoryRoles", prefix, k, role))
+				case renamedTo[role] != "":
+					errs = append(errs, fmt.Sprintf("%s.roles[%d]: inventory role %q is renamed to %q in inventoryRoles", prefix, k, role, renamedTo[role]))
 				}
 			}
 		}

@@ -40,8 +40,8 @@ func newRootCmd() *cobra.Command {
 
 Describe the desired tenant state in a YAML file (software, firmware and configuration
 repositories, tenant options, feature toggles, retention rules, application subscriptions,
-users and user groups, SmartREST 2.0 templates, device profiles) and apply it idempotently
-to one or more tenants.
+users, global roles and inventory roles, SmartREST 2.0 templates, device profiles) and
+apply it idempotently to one or more tenants.
 
 The "run" command uses the active go-c8y-cli session.`,
 		Example: formatExamples(

@@ -289,7 +289,7 @@ Fields which hold secrets can reference their value instead of containing it:
 | `users[].passwordFrom` | `password` | `env`, `generate` |
 | `tenants[].adminPasswordFrom` | `adminPass` | `env`, `generate` |
 | `github.tokenFrom` (any GitHub source) | `github.token` | `env`, `generate` |
-| `loginOptions.sso.clientSecretFrom` | `loginOptions.sso.clientSecret` | `env`, `generate` |
+| `loginOptions.sso.clientSecretFrom` | `loginOptions.sso.clientSecret` | `env` (the provider issues the secret, so `generate` is refused) |
 
 ```yaml
 tenantOptions:
@@ -1243,7 +1243,9 @@ The tool sets `visibleOnLoginPage` of the login options accordingly. Changing th
 
 The SSO login option is generated from the OpenID Connect discovery document of the provider: the issuer, the authorization, token and logout requests, and the JWKS signature verification. The manifest only adds the client ID, the client secret, and the claim and access mappings. Register `https://<tenant domain>/tenant/oauth` as a redirect URI of the client at the provider.
 
-- The client secret is sent in the token and refresh request bodies (`client_secret_post`), or in an `Authorization` header when the provider only supports `client_secret_basic`. It is masked in all output, in every encoding.
+- The client secret is sent in the token and refresh request bodies (`client_secret_post`), or in an `Authorization` header when the provider only supports `client_secret_basic`. It is masked in all output, in every encoding. It comes from `clientSecret` (with `${VAR}` or sops) or `clientSecretFrom.env`; a generated value is refused, since the provider would not know it.
+- The endpoints of the discovery document must use https (http only for `localhost`), since the platform sends the client secret and authorization codes to them.
+- The generated requests (`authorizationRequest`, `tokenRequest`, `refreshRequest`, `logoutRequest`) and `signatureVerificationConfig` replace the tenant's values as a whole, so fields which are no longer generated, such as an old `Authorization` header, are removed. Fields the platform returns but does not accept, such as `_type` or `initRequest`, are not sent back.
 - `accessMappings.rules` reference user groups and applications by name. They are resolved to IDs when the manifest is applied, and an unknown name fails the SSO login option. A user who matches no rule is denied access.
 - `overrides` are merged last into the generated login option, for fields the section does not model (such as `externalTokenConfig`). Write the platform's placeholders as `$${code}`, since `${...}` is expanded from the environment.
 - Fields which are not declared are left as they are in the tenant. Each run compares the generated login option with the tenant's and only writes when they differ.

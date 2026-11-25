@@ -739,3 +739,90 @@ func TestSyncLoginOptionsDryRunComparesWithTenant(t *testing.T) {
 		assert.Empty(t, f.Requests(http.MethodGet, "/tenant/loginOptions"))
 	})
 }
+
+func TestLoginOptionsServiceUserRolesDoNotIncludeTenantAdmin(t *testing.T) {
+	assert.NotContains(t, serviceUserRequiredRoles, "ROLE_TENANT_ADMIN")
+	assert.Contains(t, sectionServiceUserRoles[SectionLoginOptions], "ROLE_TENANT_MANAGEMENT_ADMIN")
+}
+
+func TestLoginOptionsValidateRejectsGeneratedSecret(t *testing.T) {
+	p := newFakeOIDC(t)
+	spec := ssoSpec(p)
+	spec.ClientSecret = ""
+	spec.ClientSecretFrom = &SecretRef{Generate: "sso-secret"}
+	errs := strings.Join((&LoginOptionsSpec{SSO: spec}).validate(), "\n")
+	assert.Contains(t, errs, "clientSecretFrom: generate is not supported")
+
+	spec.ClientSecretFrom = &SecretRef{Env: "SSO_SECRET"}
+	assert.Empty(t, (&LoginOptionsSpec{SSO: spec}).validate())
+}
+
+func TestSyncLoginOptionsRejectsInsecureEndpoints(t *testing.T) {
+	for _, field := range []string{"token_endpoint", "authorization_endpoint", "jwks_uri", "end_session_endpoint"} {
+		t.Run(field, func(t *testing.T) {
+			p := newFakeOIDC(t)
+			p.discovery[field] = "http://idp.example.com/" + field
+			_, err := buildSSOLoginOption(context.Background(), ssoSpec(p), "")
+			assert.ErrorContains(t, err, field+": must be an https URL")
+		})
+	}
+}
+
+func TestSyncLoginOptionsReplacesGeneratedRequests(t *testing.T) {
+	p := newFakeOIDC(t)
+	f := newFakeC8y(t)
+	fakeSSOGroupsAndApps(f)
+	options := newFakeLoginOptions(f, defaultLoginOptions()...)
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{SSO: ssoSpec(p)}))
+	require.Equal(t, ActionCreated, loginResults(s)[LoginTypeSSO].Action)
+
+	// An old Authorization header (e.g. from client_secret_basic) and an
+	// extra request parameter are left in the tenant's option
+	sso := options.get(LoginTypeSSO)
+	sso["tokenRequest"].(map[string]any)["headers"].(map[string]any)["Authorization"] = "Basic b2xkOnNlY3JldA=="
+	sso["authorizationRequest"].(map[string]any)["requestParams"].(map[string]any)["prompt"] = "login"
+
+	s = newFakeSyncer(t, f)
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{SSO: ssoSpec(p)}))
+	result := loginResults(s)[LoginTypeSSO]
+	assert.Equal(t, ActionUpdated, result.Action, result.Err)
+	assert.Contains(t, result.Detail, "tokenRequest.headers.Authorization removed")
+	assert.Contains(t, result.Detail, `authorizationRequest.requestParams.prompt: "login" → (unset)`)
+	assert.NotContains(t, result.Detail, "b2xk")
+
+	updated := options.get(LoginTypeSSO)
+	assert.NotContains(t, updated["tokenRequest"].(map[string]any)["headers"], "Authorization")
+	assert.NotContains(t, updated["authorizationRequest"].(map[string]any)["requestParams"], "prompt")
+}
+
+func TestSyncLoginOptionsLeavesOutReadOnlyFields(t *testing.T) {
+	f := newFakeC8y(t)
+	initial := defaultLoginOptions()
+	for _, option := range initial {
+		option["_type"] = "OAuth2Config"
+		option["tfaSupported"] = true
+		option["initRequest"] = "https://t123/tenant/oauth?tenant_id=t123"
+		option["loginRedirectDomain"] = "t123.example.com"
+		option["greenMinLength"] = nil
+		option["tfaStrategy"] = "SMS"
+	}
+	newFakeLoginOptions(f, initial...)
+	s := newFakeSyncer(t, f)
+
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{
+		Preferred: LoginModeBasic,
+		OAISecure: &OAISecureLoginSpec{Session: &OAISecureSessionSpec{RenewalTimeout: "2h"}},
+	}))
+	assert.Equal(t, ActionUpdated, loginResults(s)[loginItemPreferred].Action, loginResults(s)[loginItemPreferred].Err)
+
+	puts := f.Requests(http.MethodPut, "/tenant/loginOptions/")
+	require.Len(t, puts, 3)
+	for _, put := range puts {
+		for _, field := range readOnlyLoginOptionFields {
+			assert.NotContains(t, put.Body, field, "%s %s", put.Path, field)
+		}
+		assert.Contains(t, put.Body, "type")
+		assert.Contains(t, put.Body, "visibleOnLoginPage")
+	}
+}

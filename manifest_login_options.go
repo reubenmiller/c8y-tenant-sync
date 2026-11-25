@@ -82,7 +82,7 @@ type SSOLoginSpec struct {
 	ClientID     string `yaml:"clientId" json:"clientId" jsonschema:"description=Client ID of Cumulocity at the provider"`
 	// ClientSecret supports ${VAR} expansion and sops-encrypted values
 	ClientSecret     string     `yaml:"clientSecret" json:"clientSecret,omitempty" jsonschema:"description=Client secret; supports ${VAR} expansion and sops-encrypted values; mutually exclusive with clientSecretFrom"`
-	ClientSecretFrom *SecretRef `yaml:"clientSecretFrom" json:"clientSecretFrom,omitempty" jsonschema:"description=Take the client secret from an environment variable (env) or a generated value (generate); mutually exclusive with clientSecret"`
+	ClientSecretFrom *SecretRef `yaml:"clientSecretFrom" json:"clientSecretFrom,omitempty" jsonschema:"description=Take the client secret from an environment variable (env; generate is not supported since the provider issues the secret); mutually exclusive with clientSecret"`
 
 	Scopes       []string `yaml:"scopes" json:"scopes,omitempty" jsonschema:"description=Scopes requested at login (default: openid profile email)"`
 	ProviderName string   `yaml:"providerName" json:"providerName,omitempty" jsonschema:"description=Name of the provider (default: the host of the issuer)"`
@@ -227,6 +227,10 @@ func (s *SSOLoginSpec) validate(preferred string) []string {
 		errs = append(errs, label+": clientSecret and clientSecretFrom are mutually exclusive")
 	case s.ClientSecret == "" && s.ClientSecretFrom == nil:
 		errs = append(errs, label+": one of clientSecret or clientSecretFrom is required")
+	case s.ClientSecretFrom != nil && s.ClientSecretFrom.Generate != "":
+		// A generated value is unknown to the provider: every login would
+		// fail at the token request
+		errs = append(errs, label+".clientSecretFrom: generate is not supported (the secret is issued by the provider); use env, clientSecret with ${VAR}, or a sops-encrypted clientSecret")
 	case s.ClientSecretFrom != nil:
 		errs = append(errs, s.ClientSecretFrom.validate(label+".clientSecretFrom")...)
 	}
@@ -263,6 +267,12 @@ func (s *SSOLoginSpec) validate(preferred string) []string {
 
 // validateDiscoveryURL requires an https URL (http only for local hosts)
 func validateDiscoveryURL(raw string) error {
+	return validateSecureURL(raw)
+}
+
+// validateSecureURL requires an https URL (http only for local hosts, e.g.
+// a provider running next to a test tenant)
+func validateSecureURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("invalid URL %q", raw)

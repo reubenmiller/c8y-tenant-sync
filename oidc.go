@@ -70,6 +70,22 @@ func discoverOIDCProvider(ctx context.Context, discoveryURL string) (oidcProvide
 		return provider, fmt.Errorf("discovery document %s is missing: %s", discoveryURL, strings.Join(missing, ", "))
 	}
 
+	// The platform sends the client secret and authorization codes to these
+	// endpoints, so they have to use TLS like the discovery document
+	for _, field := range []struct{ name, value string }{
+		{"authorization_endpoint", provider.AuthorizationEndpoint},
+		{"token_endpoint", provider.TokenEndpoint},
+		{"jwks_uri", provider.JWKSURI},
+		{"end_session_endpoint", provider.EndSessionEndpoint},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if err := validateSecureURL(field.value); err != nil {
+			return provider, fmt.Errorf("discovery document %s: %s: %w", discoveryURL, field.name, err)
+		}
+	}
+
 	if base, ok := strings.CutSuffix(discoveryURL, oidcDiscoverySuffix); ok {
 		if strings.TrimSuffix(provider.Issuer, "/") != strings.TrimSuffix(base, "/") {
 			return provider, fmt.Errorf("issuer %q of the discovery document does not match its URL %s", provider.Issuer, discoveryURL)

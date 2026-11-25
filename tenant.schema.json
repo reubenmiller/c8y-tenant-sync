@@ -1388,7 +1388,7 @@
         },
         "clientSecretFrom": {
           "$ref": "#/$defs/SecretRef",
-          "description": "Take the client secret from an environment variable (env) or a generated value (generate); mutually exclusive with clientSecret"
+          "description": "Take the client secret from an environment variable (env; generate is not supported since the provider issues the secret); mutually exclusive with clientSecret"
         },
         "scopes": {
           "items": {

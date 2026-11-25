@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -254,14 +256,157 @@ func (s *Syncer) SyncDigitalTwin(ctx context.Context, spec *DigitalTwinSpec) err
 		return nil
 	}
 
-	for _, item := range result.Data.Items {
-		detail := ""
-		if len(item.Changed) > 0 {
-			detail = "changed: " + strings.Join(item.Changed, ", ")
+	desired := map[string]dtm.Definition{}
+	for _, group := range digitalTwinGroups(model) {
+		for _, d := range group.definitions {
+			desired[group.kind+" "+definitionKey(d)] = d
 		}
-		s.record(SectionDigitalTwin, item.Kind+" "+item.Key, digitalTwinAction(item.Action), detail, digitalTwinErrorHint(item.Err))
+	}
+
+	for _, item := range result.Data.Items {
+		action, changed, err := digitalTwinAction(item.Action), item.Changed, item.Err
+		if d, ok := desired[item.Kind+" "+item.Key]; ok && err == nil && item.Action != dtm.ActionCreate {
+			// The SDK only compares the fields the manifest declares, so
+			// removing a field from a jsonSchema is not detected by Apply
+			removed, removeErr := s.removeUndeclaredSchemaFields(ctx, item.Kind, d, spec.ManagedBy)
+			if removeErr != nil {
+				err = removeErr
+			} else if len(removed) > 0 {
+				action = ActionUpdated
+				changed = append(slices.Clone(changed), "jsonSchema (removed: "+strings.Join(removed, ", ")+")")
+			}
+		}
+		detail := ""
+		if len(changed) > 0 {
+			detail = "changed: " + strings.Join(changed, ", ")
+		}
+		s.record(SectionDigitalTwin, item.Kind+" "+item.Key, action, detail, digitalTwinErrorHint(err))
 	}
 	return nil
+}
+
+// propertySchemaServerFields are top-level jsonSchema fields the server adds
+// to a stored property definition. They are never reported as removed, and
+// are kept when the schema is replaced.
+var propertySchemaServerFields = []string{"$schema", "additionalProperties", "type"}
+
+// assetSchemaFields are the only jsonSchema fields of an asset definition
+// which can be written; the server builds the rest (properties, definitions,
+// required, ...) from the composition.
+var assetSchemaFields = []string{"title", "description"}
+
+// schemaRemovals lists the fields of the stored jsonSchema which the desired
+// jsonSchema does not declare (as dotted paths), ignoring the fields the
+// server generates. Values of declared fields are compared by the SDK.
+func schemaRemovals(kind string, desired, stored map[string]any) []string {
+	var removed []string
+	if kind == dtm.KindAssetDefinition {
+		for _, key := range assetSchemaFields {
+			if _, declared := desired[key]; !declared {
+				if _, exists := stored[key]; exists {
+					removed = append(removed, key)
+				}
+			}
+		}
+		return removed
+	}
+	ignore := propertySchemaServerFields
+	var walk func(prefix string, want, have map[string]any, top bool)
+	walk = func(prefix string, want, have map[string]any, top bool) {
+		for key, value := range have {
+			if top && slices.Contains(ignore, key) {
+				continue
+			}
+			wantValue, declared := want[key]
+			if !declared {
+				removed = append(removed, prefix+key)
+				continue
+			}
+			wantMap, wantIsMap := wantValue.(map[string]any)
+			haveMap, haveIsMap := value.(map[string]any)
+			if wantIsMap && haveIsMap {
+				walk(prefix+key+".", wantMap, haveMap, false)
+			}
+		}
+	}
+	walk("", desired, stored, true)
+	slices.Sort(removed)
+	return removed
+}
+
+// removeUndeclaredSchemaFields replaces the jsonSchema of an existing
+// definition when it has fields the manifest no longer declares, and returns
+// those fields. Definitions without a jsonSchema in the manifest are left
+// alone.
+func (s *Syncer) removeUndeclaredSchemaFields(ctx context.Context, kind string, d dtm.Definition, managedBy string) ([]string, error) {
+	if d.JSONSchema == nil {
+		return nil, nil
+	}
+	svc := s.Client.DigitalTwin.Definitions.Properties
+	if kind == dtm.KindAssetDefinition {
+		svc = s.Client.DigitalTwin.Definitions.Assets
+	} else if kind != dtm.KindPropertyDefinition {
+		return nil, nil
+	}
+
+	existing, found := svc.Find(ctx, d.Identifier, d.Contexts)
+	if !found {
+		return nil, existing.Err
+	}
+	desiredSchema, err := normaliseJSON(d.JSONSchema)
+	if err != nil {
+		return nil, err
+	}
+	var storedSchema map[string]any
+	if err := json.Unmarshal([]byte(existing.Data.Get("jsonSchema").Raw), &storedSchema); err != nil {
+		return nil, nil
+	}
+	removed := schemaRemovals(kind, desiredSchema, storedSchema)
+	if len(removed) == 0 {
+		return nil, nil
+	}
+	if existing.Data.IsShared() || !existing.Data.CanEdit() {
+		return nil, fmt.Errorf("%w: jsonSchema has fields which are no longer declared: %s", dtm.ErrReadOnlyDefinition, strings.Join(removed, ", "))
+	}
+
+	// Replace the schema with the declared one (the PUT replaces the whole
+	// jsonSchema), keeping the top-level fields the server generated for a
+	// property definition
+	schema := maps.Clone(desiredSchema)
+	if kind == dtm.KindPropertyDefinition {
+		for _, key := range propertySchemaServerFields {
+			if _, declared := schema[key]; !declared {
+				if value, ok := storedSchema[key]; ok {
+					schema[key] = value
+				}
+			}
+		}
+	}
+	body := d
+	body.JSONSchema = schema
+	if managedBy != "" && !slices.Contains(body.Tags, managedBy) {
+		// Apply tags every definition it writes
+		body.Tags = append(slices.Clone(body.Tags), managedBy)
+	}
+	result := svc.Update(ctx, d.Identifier, body, dtm.UpdateDefinitionOptions{Contexts: d.Contexts})
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return removed, nil
+}
+
+// normaliseJSON round-trips a value through JSON, so manifest values (e.g.
+// YAML integers) compare like values read from the API
+func normaliseJSON(value map[string]any) (map[string]any, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // digitalTwinAction maps an SDK apply action to a sync action

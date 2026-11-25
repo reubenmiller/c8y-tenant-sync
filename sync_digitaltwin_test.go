@@ -300,3 +300,93 @@ digitalTwin:
 	assert.Equal(t, "1", def.Composition.AllowedProperties[0].MinOccurs)
 	assert.Contains(t, def.Extra, "icon")
 }
+
+func TestSchemaRemovals(t *testing.T) {
+	stored := map[string]any{
+		"$schema":              "http://json-schema.org/draft-07/schema#",
+		"additionalProperties": false,
+		"type":                 "number",
+		"title":                "Maximum flow",
+		"minimum":              0.0,
+		"maximum":              100.0,
+		"properties": map[string]any{
+			"a": map[string]any{"type": "string", "default": "x"},
+		},
+	}
+	desired := map[string]any{
+		"title":      "Maximum flow",
+		"properties": map[string]any{"a": map[string]any{"type": "string"}},
+	}
+	assert.Equal(t, []string{"maximum", "minimum", "properties.a.default"},
+		schemaRemovals(dtm.KindPropertyDefinition, desired, stored))
+
+	// Nothing removed
+	assert.Empty(t, schemaRemovals(dtm.KindPropertyDefinition,
+		map[string]any{"title": "x", "minimum": 1}, map[string]any{"$schema": "s", "title": "y", "minimum": 0}))
+
+	// Asset definitions: only title and description can be written; the
+	// rest is built by the server (as stored by a real tenant)
+	assetStored := map[string]any{
+		"$schema":              "http://json-schema.org/draft-07/schema#",
+		"additionalProperties": false,
+		"definitions":          map[string]any{"maxFlow": map[string]any{"type": "number", "minimum": 0}},
+		"description":          "Remove me",
+		"properties":           map[string]any{"maxFlow": map[string]any{"$ref": "#/definitions/maxFlow"}},
+		"title":                "Pump",
+		"type":                 "object",
+	}
+	assert.Equal(t, []string{"description"}, schemaRemovals(dtm.KindAssetDefinition, map[string]any{"title": "Pump"}, assetStored))
+	assert.Empty(t, schemaRemovals(dtm.KindAssetDefinition, map[string]any{"title": "Pump", "description": "Keep me"}, assetStored))
+}
+
+func TestSyncDigitalTwinRemovesUndeclaredSchemaFields(t *testing.T) {
+	f := newFakeC8y(t)
+	// maxFlow was synced with minimum and maximum, which the manifest no
+	// longer declares
+	f.JSON("GET /service/dtm/definitions/properties", http.StatusOK, map[string]any{"definitions": []any{
+		map[string]any{
+			"identifier": "maxFlow",
+			"contexts":   []any{"asset"},
+			"tags":       []any{"tenant-sync"},
+			"jsonSchema": map[string]any{
+				"$schema":              "http://json-schema.org/draft-07/schema#",
+				"additionalProperties": false,
+				"title":                "Maximum flow",
+				"type":                 "number",
+				"minimum":              0,
+				"maximum":              100,
+			},
+			"c8y_AvailableActions": map[string]any{"editAllowed": true, "deleteAllowed": true},
+		},
+	}})
+	f.Handle("PUT /service/dtm/definitions/properties/maxFlow", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	syncer := newFakeSyncer(t, f)
+
+	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{
+		ManagedBy: "tenant-sync",
+		PropertyDefinitions: []DigitalTwinDefinitionSpec{{
+			Identifier: "maxFlow",
+			Contexts:   []string{"asset"},
+			JSONSchema: map[string]any{"title": "Maximum flow", "type": "number"},
+		}},
+	}))
+
+	result := resultFor(t, syncer, SectionDigitalTwin)
+	assert.Equal(t, ActionUpdated, result.Action, "err: %v", result.Err)
+	assert.Equal(t, "changed: jsonSchema (removed: maximum, minimum)", result.Detail)
+
+	updates := f.Requests(http.MethodPut, "/service/dtm/definitions/properties/maxFlow")
+	require.Len(t, updates, 1)
+	schema := updates[0].Body["jsonSchema"].(map[string]any)
+	assert.NotContains(t, schema, "minimum")
+	assert.NotContains(t, schema, "maximum")
+	// Server generated fields are kept, and the managedBy tag is written
+	assert.Equal(t, "http://json-schema.org/draft-07/schema#", schema["$schema"])
+	assert.Equal(t, false, schema["additionalProperties"])
+	assert.Equal(t, []any{"tenant-sync"}, updates[0].Body["tags"])
+	assert.Equal(t, "contexts=asset", updates[0].Query)
+}

@@ -1032,7 +1032,8 @@ How the sync behaves:
 
 - **Matching**: property definitions are matched by `identifier` and `contexts` (in any order), asset definitions by `identifier`.
 - **Order**: property definitions are applied first, then asset definitions. An asset definition is applied after the asset definitions its composition allows as sub-assets.
-- **Idempotency**: a definition is only written when a declared field differs. Fields the manifest does not set, and fields the server generates (such as `$schema` or the default `minOccurs`), do not count as changes. Tags and contexts are compared as sets.
+- **Idempotency**: a definition is only written when a declared field differs. Fields the server generates (such as `$schema` or the default `minOccurs`) do not count as changes, and tags and contexts are compared as sets.
+- **Removed schema fields**: when a field is removed from a declared `jsonSchema` (for example `minimum`), it is also removed from the definition. Other top-level fields the manifest does not set (such as `tags` or `composition`) are left as they are. Asset definitions only accept `title` and `description` in their `jsonSchema`; the server builds the rest from the composition.
 - **Read-only definitions**: a definition shared from the enterprise tenant or the definition library which differs from the manifest fails without a write.
 - **URLs**: a `url` source is downloaded on each run, so it always applies the current content of that URL. Pin it to a tag or commit (instead of a branch) to control when definitions change.
 - **Pruning**: with `prune: true`, definitions tagged `managedBy` which no manifest entry declares are deleted (asset definitions first). Without `prune`, definitions are never deleted. When a source fails to load or download, the whole section is skipped, so a missing file never deletes definitions.

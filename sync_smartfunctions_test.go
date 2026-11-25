@@ -332,7 +332,11 @@ func TestSmartFunctionExpectedOutputForms(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal([]byte("expectedOutput: null\n"), &test))
 	assert.Nil(t, test.ExpectedOutput)
 
-	err := yaml.Unmarshal([]byte("inputs: []\nexpectedOutput: |\n  [{\"cumulocityType\": }]\n"), &test)
+	// Trailing commas and unquoted keys, as copied from JavaScript
+	require.NoError(t, yaml.Unmarshal([]byte("expectedOutput: |\n  [\n    {\n      cumulocityType: 'event',\n      \"payload\": {\"text\": \"hi\",},\n    },\n  ]\n"), &test))
+	assert.Equal(t, want, test.ExpectedOutput)
+
+	err := yaml.Unmarshal([]byte("inputs: []\nexpectedOutput: |\n  [{\"cumulocityType\": \"event\"}\n"), &test)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "line 2: expectedOutput: invalid JSON")
 

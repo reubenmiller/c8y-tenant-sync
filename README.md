@@ -1107,6 +1107,8 @@ smartFunctions:
             [{"cumulocityType": "event", "payload": {"type": "zephyr_Identify", "text": "Identify pressed"}}]
   ```
 
+  The string may also use what is common when copying from JavaScript: trailing commas, unquoted keys and single quotes.
+
   JSON written directly (without `|`) also works, since YAML reads JSON as it is, but then every line must be indented further than `expectedOutput:`.
 
 For rules with several tests, a package folder is usually easier to maintain: it is the format the Data Preparation application exports, and each test is its own file.

@@ -229,11 +229,25 @@ func (o *SmartFunctionExpectedOutput) UnmarshalYAML(node *yaml.Node) error {
 	return fmt.Errorf("line %d: expectedOutput must be a list, an object or a JSON string", node.Line)
 }
 
-// parseExpectedOutputJSON parses a JSON array of objects, or a single object
+// parseExpectedOutputJSON parses a JSON array of objects, or a single object.
+// Text which is not strict JSON is read as YAML, which also accepts what is
+// common when copying from JavaScript: trailing commas, unquoted keys and
+// single quotes.
 func parseExpectedOutputJSON(text string) (SmartFunctionExpectedOutput, error) {
 	var value any
 	if err := json.Unmarshal([]byte(text), &value); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		jsonErr := err
+		if err := yaml.Unmarshal([]byte(text), &value); err != nil {
+			return nil, fmt.Errorf("invalid JSON: %w", jsonErr)
+		}
+		// Normalise the YAML values like JSON values
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON: %w", jsonErr)
+		}
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, fmt.Errorf("invalid JSON: %w", jsonErr)
+		}
 	}
 	switch v := value.(type) {
 	case map[string]any:

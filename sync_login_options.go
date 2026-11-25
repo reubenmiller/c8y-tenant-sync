@@ -260,7 +260,7 @@ func (s *Syncer) SyncLoginOptions(ctx context.Context, spec *LoginOptionsSpec) e
 
 // loginOptions reads the login options of the tenant
 func (s *Syncer) loginOptions(ctx context.Context) (loginOptionState, error) {
-	result := s.loginReadClient().LoginOptions.List(ctx, loginoptions.ListOptions{})
+	result := s.readClient().LoginOptions.List(ctx, loginoptions.ListOptions{})
 	if result.Err != nil {
 		return nil, result.Err
 	}
@@ -455,8 +455,8 @@ func (s *Syncer) setLoginOptionVisible(ctx context.Context, state loginOptionSta
 	return nil
 }
 
-// dryRunReader is the client which reads the login options in dry-run mode:
-// only for the current tenant (the credentials of other tenants are not
+// dryRunReader is the client which reads the tenant in dry-run mode: only
+// for the current tenant (the credentials of other tenants are not
 // resolved in a dry run), and only when a session is available
 func (s *Syncer) dryRunReader() *api.Client {
 	if s.DryRunReader == nil || (s.activeTarget != nil && !s.activeTarget.Current) {
@@ -465,9 +465,10 @@ func (s *Syncer) dryRunReader() *api.Client {
 	return s.DryRunReader
 }
 
-// loginReadClient is the client used to read the tenant's login options,
-// global roles and applications (the read-only client in dry-run mode)
-func (s *Syncer) loginReadClient() *api.Client {
+// readClient is the client used to read the tenant before comparing it with
+// the manifest (the read-only client in dry-run mode, nil when the dry run
+// cannot read the tenant)
+func (s *Syncer) readClient() *api.Client {
 	if s.DryRun {
 		return s.dryRunReader()
 	}
@@ -755,7 +756,7 @@ func (s *Syncer) resolveSSOAccessMappings(ctx context.Context, spec *SSOLoginSpe
 		for _, name := range rule.GlobalRoles {
 			id, ok := groupIDs[name]
 			if !ok {
-				group := s.loginReadClient().UserGroups.GetByName(ctx, usergroups.GetByNameOptions{GroupName: name})
+				group := s.readClient().UserGroups.GetByName(ctx, usergroups.GetByNameOptions{GroupName: name})
 				if group.Err != nil {
 					return fmt.Errorf("rules[%d]: global role %q: %w", i, name, group.Err)
 				}
@@ -770,7 +771,7 @@ func (s *Syncer) resolveSSOAccessMappings(ctx context.Context, spec *SSOLoginSpe
 		for _, name := range rule.Applications {
 			id, ok := appIDs[name]
 			if !ok {
-				apps := s.loginReadClient().Applications
+				apps := s.readClient().Applications
 				resolved, err := apps.ResolveID(ctx, apps.ByName(name, ""), nil)
 				if err != nil {
 					return fmt.Errorf("rules[%d]: application %q: %w", i, name, err)

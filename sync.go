@@ -137,8 +137,9 @@ type Syncer struct {
 	Secrets *SecretStore
 
 	// DryRunReader is a client for read-only lookups in dry-run mode (nil
-	// without a session). Only the loginOptions section uses it, to compare
-	// the desired login options with the tenant's; it never writes.
+	// without a session). The loginOptions, inventoryRoles and users
+	// sections use it to compare the manifest with the tenant; it never
+	// writes.
 	DryRunReader *api.Client
 
 	// Targets overrides the manifest targets section (set from CLI flags)
@@ -148,6 +149,9 @@ type Syncer struct {
 
 	// activeTarget is the tenant currently being applied
 	activeTarget *Target
+	// dryRunPending holds the objects a dry run would create in the active
+	// target, so later sections can refer to them (reset per target)
+	dryRunPending *dryRunPending
 	// multiTarget is set when the run covers tenants other than the current
 	// one, enabling per-tenant labels in the output
 	multiTarget bool
@@ -395,6 +399,7 @@ func (s *Syncer) Apply(ctx context.Context, manifest *Manifest, only []string) e
 // of the current tenant (used by the sections that address the target tenant
 // by ID from the parent).
 func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, only []string) error {
+	s.dryRunPending = nil
 	if err := s.runHooks(ctx, "pre", manifest.Hooks.Pre); err != nil {
 		return err
 	}

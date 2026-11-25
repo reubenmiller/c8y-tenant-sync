@@ -1154,6 +1154,8 @@ For existing users only the fields set in the manifest are compared and updated 
 - **`password` is only used when creating the user** and never updated afterwards, so re-running the sync doesn't reset credentials. Use `${VAR}` expansion to keep secrets out of the manifest, or prefer `sendPasswordResetEmail: true` to avoid handling passwords entirely.
 - **`enabled` defaults to true** and is always managed: a user disabled in the UI is re-enabled on the next sync unless the manifest says `enabled: false`.
 
+A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add per device group. A user who is already in the desired state is `unchanged`.
+
 ### Inventory roles and device group access
 
 Global roles grant permissions on the whole tenant. For least-privilege access, Cumulocity has *inventory roles*: a set of permissions (for example "read measurements" or "manage alarms") which a user gets only on the devices of specific device groups. The `inventoryRoles` section defines the roles, and `users[].inventoryRoles` gives a user roles on a device group:
@@ -1197,6 +1199,21 @@ A user's inventory roles are applied in the `users` section, after the user is c
 - Missing roles are added to the user's existing assignment for the group, or a new assignment is created. Roles and assignments which are not in the manifest are never removed.
 
 The `inventoryRoles` section is applied after `globalRoles` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
+
+A dry run (`--dry`) reads the inventory roles, device groups and assignments of the tenant and reports what a real run would change, without writing anything:
+
+```
+→ [inventoryRoles] Site operator (planned): permissions: +OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ
+→ [inventoryRoles] Reader (planned): create with permissions: *:*:READ
+✓ [inventoryRoles] Restart only (unchanged)
+→ [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: +Site operator, +Reader (new role)
+```
+
+- A role to update lists the permissions it gains (`+`) and loses (`-`), and the old and new description.
+- A role or device group which the same dry run would create (declared in `inventoryRoles` or `deviceGroups` but not in the tenant yet) is marked `(new role)` or `(new group)` instead of failing with "not found".
+- A user who does not exist yet shows the inventory roles they would get when created.
+
+A real run reports the same details. Without an active session, and for tenants other than the current one in a dry run with `targets`, the dry run lists the desired roles and assignments without comparing them.
 
 ### Login options
 
@@ -1277,7 +1294,7 @@ A broken login configuration can lock everyone out of the tenant, so the section
 - **The preferred mode is switched last**, after the other login options are configured. The option of the new mode is made visible before the others are hidden, the result is read back, and if it does not match, the previous visibility is restored.
 - **`validate` refuses** an unknown mode, `preferred: sso` without an `sso` section or without any access mapping rule, `preferred: basic` with `forbiddenClients: [WEB_BROWSERS]`, and OAI-Secure sessions shorter than 15 minutes.
 - **The run refuses** to forbid basic authentication for web browsers while basic is the preferred mode, to make basic preferred while web browsers are forbidden from it, to hide the SSO button while SSO is the preferred mode, and to add a forbidden user agent which matches this tool's own `User-Agent`. Restrictions which are lifted are applied before the preferred mode changes, and new restrictions after it.
-- **`--dry` shows the change**: unlike the other sections, a dry run reads the tenant's login options (and the global roles and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
+- **`--dry` shows the change**: like the `inventoryRoles` and `users` sections, a dry run reads the tenant's login options (and the global roles and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
 
 If the SSO provider stops working while `sso` is the preferred mode, users can still reach the tenant with basic authentication through the API (unless it is restricted), for example to set `preferred: oaiSecure` again with this tool.
 
@@ -1521,7 +1538,7 @@ globalRoles:
 ```
 
 ```bash
-c8y tenant-sync run -f customer-a.yaml --dry   # preview (no API calls)
+c8y tenant-sync run -f customer-a.yaml --dry   # preview, nothing is written
 c8y tenant-sync run -f customer-a.yaml
 ```
 

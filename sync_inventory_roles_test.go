@@ -166,7 +166,7 @@ func TestInventoryRolesSectionOrder(t *testing.T) {
 	assert.Equal(t, index(SectionInventoryRoles)+1, index(SectionUsers))
 }
 
-func TestSyncInventoryRolesDryRun(t *testing.T) {
+func TestSyncInventoryRolesDryRunWithoutSession(t *testing.T) {
 	f := newFakeC8y(t)
 	s := newFakeSyncer(t, f)
 	s.DryRun = true
@@ -249,7 +249,7 @@ func TestSyncInventoryRoleUpdatePermissions(t *testing.T) {
 	r := resultFor(t, s, SectionInventoryRoles)
 	require.NoError(t, r.Err)
 	assert.Equal(t, ActionUpdated, r.Action)
-	assert.Equal(t, "updated permissions", r.Detail)
+	assert.Equal(t, "permissions: +ALARM:*:ADMIN, +MANAGED_OBJECT:*:READ, +MEASUREMENT:*:READ, +OPERATION:*:ADMIN, -ALARM:*:READ, -EVENT:*:ADMIN", r.Detail)
 	updates := f.Requests(http.MethodPut, "/user/inventoryroles/7")
 	require.Len(t, updates, 1)
 	assert.NotContains(t, updates[0].Body, "description", "an unchanged description is not sent")
@@ -268,7 +268,7 @@ func TestSyncInventoryRoleUpdateDescriptionOnly(t *testing.T) {
 
 	r := resultFor(t, s, SectionInventoryRoles)
 	assert.Equal(t, ActionUpdated, r.Action)
-	assert.Equal(t, "updated description", r.Detail)
+	assert.Equal(t, `description: "old" → "new"`, r.Detail)
 	updates := f.Requests(http.MethodPut, "/user/inventoryroles/7")
 	require.Len(t, updates, 1)
 	assert.NotContains(t, updates[0].Body, "permissions")
@@ -309,7 +309,7 @@ func TestInventoryAssignmentCreate(t *testing.T) {
 
 	require.NoError(t, r.Err)
 	assert.Equal(t, ActionUpdated, r.Action)
-	assert.Equal(t, "inventory roles on Plant Berlin: Site operator, Reader", r.Detail)
+	assert.Equal(t, "inventory roles on Plant Berlin: +Site operator, +Reader", r.Detail)
 	created := f.Requests(http.MethodPost, "/user/t123/users/u1/roles/inventory")
 	require.Len(t, created, 1)
 	assert.Equal(t, "100", created[0].Body["managedObject"])
@@ -332,7 +332,7 @@ func TestInventoryAssignmentAddsMissingRole(t *testing.T) {
 
 	require.NoError(t, r.Err)
 	assert.Equal(t, ActionUpdated, r.Action)
-	assert.Equal(t, "inventory roles on Plant Berlin: Site operator", r.Detail)
+	assert.Equal(t, "inventory roles on Plant Berlin: +Site operator", r.Detail)
 	updates := f.Requests(http.MethodPut, "/user/t123/users/u1/roles/inventory/31")
 	require.Len(t, updates, 1)
 	assert.Equal(t, []any{
@@ -488,7 +488,7 @@ users:
 	})
 	require.NoError(t, runErr, stdout)
 	assert.Contains(t, stdout, "[inventoryRoles] Site operator (created)")
-	assert.Contains(t, stdout, "[users] berlin-ops@example.com (updated): inventory roles on Plant Berlin: Site operator")
+	assert.Contains(t, stdout, "[users] berlin-ops@example.com (updated): inventory roles on Plant Berlin: +Site operator")
 	created := f.Requests(http.MethodPost, "/user/t123/users/u1/roles/inventory")
 	require.Len(t, created, 1)
 	assert.Equal(t, []any{map[string]any{"id": float64(7)}}, created[0].Body["roles"])

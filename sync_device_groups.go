@@ -63,6 +63,9 @@ func (s *Syncer) syncDeviceGroup(ctx context.Context, parentID, parentPath strin
 			detail = "ensure group in " + parentPath
 		}
 		s.record(SectionDeviceGroups, path, ActionPlanned, detail, nil)
+		// Users of the same dry run can be given inventory roles on it
+		s.pending().deviceGroups[path] = true
+		s.pending().deviceGroups[spec.Name] = true
 		for _, child := range spec.Groups {
 			s.syncDeviceGroup(ctx, "", path, child)
 		}

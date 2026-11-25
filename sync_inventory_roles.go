@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -20,85 +21,187 @@ import (
 // owns the definition of the role); a role without permissions in the
 // manifest keeps its permissions. Roles absent from the manifest are never
 // touched.
+//
+// A dry run reads the roles of the tenant (when it can) and reports the same
+// changes as a real run, without writing them.
 func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSpec) error {
 	if len(specs) == 0 {
 		return nil
 	}
 
-	var existing map[string][]jsonmodels.InventoryRole
-	if !s.DryRun {
-		var err error
-		existing, err = s.listInventoryRoles(ctx)
-		if err != nil {
-			for _, spec := range specs {
-				s.record(SectionInventoryRoles, spec.Name, ActionFailed, "list inventory roles", err)
-			}
-			return nil
-		}
-	}
-
-	for _, spec := range specs {
-		desired := normalizedPermissions(spec.Permissions)
-
-		if s.DryRun {
+	if s.DryRun && s.dryRunReader() == nil {
+		// The tenant cannot be read: list the desired roles without
+		// comparing them
+		for _, spec := range specs {
 			detail := "ensure inventory role"
-			if len(desired) > 0 {
+			if desired := normalizedPermissions(spec.Permissions); len(desired) > 0 {
 				detail += " with permissions: " + strings.Join(permissionKeys(desired), ", ")
 			}
 			s.record(SectionInventoryRoles, spec.Name, ActionPlanned, detail, nil)
+		}
+		return nil
+	}
+
+	existing, err := s.listInventoryRoles(ctx)
+	if err != nil {
+		for _, spec := range specs {
+			s.record(SectionInventoryRoles, spec.Name, ActionFailed, "list inventory roles", err)
+		}
+		return nil
+	}
+
+	for _, spec := range specs {
+		plan := planInventoryRole(spec, existing[spec.Name])
+		if plan.err != nil {
+			s.record(SectionInventoryRoles, spec.Name, ActionFailed, "", plan.err)
 			continue
 		}
 
-		matches := existing[spec.Name]
-		switch len(matches) {
-		case 0:
-			body := map[string]any{"name": spec.Name}
-			if spec.Description != "" {
-				body["description"] = spec.Description
+		if s.DryRun {
+			switch plan.action {
+			case ActionCreated:
+				s.pending().inventoryRoles[spec.Name] = true
+				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
+			case ActionUpdated:
+				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
+			default:
+				s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, "", nil)
 			}
-			if spec.Permissions != nil {
-				body["permissions"] = permissionsBody(desired)
-			}
-			created := s.Client.InventoryRoles.Create(ctx, body)
+			continue
+		}
+
+		switch plan.action {
+		case ActionCreated:
+			created := s.Client.InventoryRoles.Create(ctx, plan.body)
 			if created.Err != nil {
 				s.record(SectionInventoryRoles, spec.Name, ActionFailed, "create inventory role", created.Err)
 				continue
 			}
 			s.record(SectionInventoryRoles, spec.Name, ActionCreated, "", nil)
-		case 1:
-			role := matches[0]
-			var changes []string
-			body := map[string]any{"name": spec.Name}
-			if spec.Description != "" && role.Description() != spec.Description {
-				body["description"] = spec.Description
-				changes = append(changes, "description")
-			}
-			if spec.Permissions != nil && !samePermissions(desired, existingPermissions(role)) {
-				body["permissions"] = permissionsBody(desired)
-				changes = append(changes, "permissions")
-			}
-			if len(changes) == 0 {
-				s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, "", nil)
-				continue
-			}
-			result := s.Client.InventoryRoles.Update(ctx, role.ID(), body)
+		case ActionUpdated:
+			result := s.Client.InventoryRoles.Update(ctx, plan.roleID, plan.body)
 			if result.Err != nil {
 				s.record(SectionInventoryRoles, spec.Name, ActionFailed, "update inventory role", result.Err)
 				continue
 			}
-			s.record(SectionInventoryRoles, spec.Name, ActionUpdated, "updated "+strings.Join(changes, ", "), nil)
+			s.record(SectionInventoryRoles, spec.Name, ActionUpdated, plan.describe(), nil)
 		default:
-			s.record(SectionInventoryRoles, spec.Name, ActionFailed, "",
-				fmt.Errorf("ambiguous inventory role name: %d roles are named %q", len(matches), spec.Name))
+			s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, "", nil)
 		}
 	}
 	return nil
 }
 
+// inventoryRolePlan is the change an inventory role needs: shared by the dry
+// run (which reports it) and the real run (which applies it)
+type inventoryRolePlan struct {
+	// action is created, updated or unchanged
+	action Action
+	// roleID is the ID of the existing role (updates only)
+	roleID int64
+	// body is the request body of the create or update
+	body map[string]any
+	// permissions are the desired permissions (normalized)
+	permissions []InventoryRolePermissionSpec
+	// changes describe an update, e.g. "permissions: +ALARM:*:ADMIN"
+	changes []string
+	err     error
+}
+
+// planInventoryRole compares the role of the manifest with the roles of the
+// tenant with the same name
+func planInventoryRole(spec InventoryRoleSpec, matches []jsonmodels.InventoryRole) inventoryRolePlan {
+	desired := normalizedPermissions(spec.Permissions)
+	switch len(matches) {
+	case 0:
+		body := map[string]any{"name": spec.Name}
+		if spec.Description != "" {
+			body["description"] = spec.Description
+		}
+		if spec.Permissions != nil {
+			body["permissions"] = permissionsBody(desired)
+		}
+		return inventoryRolePlan{action: ActionCreated, body: body, permissions: desired}
+	case 1:
+		role := matches[0]
+		plan := inventoryRolePlan{action: ActionUnchanged, roleID: role.ID(), permissions: desired}
+		body := map[string]any{"name": spec.Name}
+		if spec.Description != "" && role.Description() != spec.Description {
+			body["description"] = spec.Description
+			plan.changes = append(plan.changes, fmt.Sprintf("description: %q → %q", role.Description(), spec.Description))
+		}
+		if spec.Permissions != nil {
+			if diff := permissionDiff(existingPermissions(role), desired); diff != "" {
+				body["permissions"] = permissionsBody(desired)
+				plan.changes = append(plan.changes, "permissions: "+diff)
+			}
+		}
+		if len(plan.changes) > 0 {
+			plan.action = ActionUpdated
+			plan.body = body
+		}
+		return plan
+	default:
+		return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role name: %d roles are named %q", len(matches), spec.Name)}
+	}
+}
+
+// describe returns the detail reported for the plan: the permissions of a
+// role to create, or the changes of an update
+func (p inventoryRolePlan) describe() string {
+	switch p.action {
+	case ActionCreated:
+		if len(p.permissions) == 0 {
+			return "create"
+		}
+		return "create with permissions: " + strings.Join(permissionKeys(p.permissions), ", ")
+	case ActionUpdated:
+		return strings.Join(p.changes, "; ")
+	}
+	return ""
+}
+
+// permissionDiff describes the difference of two normalized permission sets,
+// e.g. "+OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ" (empty when they match)
+func permissionDiff(current, desired []InventoryRolePermissionSpec) string {
+	currentKeys := permissionKeys(current)
+	desiredKeys := permissionKeys(desired)
+	var parts []string
+	for _, key := range desiredKeys {
+		if !slices.Contains(currentKeys, key) {
+			parts = append(parts, "+"+key)
+		}
+	}
+	for _, key := range currentKeys {
+		if !slices.Contains(desiredKeys, key) {
+			parts = append(parts, "-"+key)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// dryRunPending holds the objects which a dry run would create in the active
+// target: a later section of the same dry run can refer to them, although
+// the tenant does not have them yet
+type dryRunPending struct {
+	// inventoryRoles by name
+	inventoryRoles map[string]bool
+	// deviceGroups by path and by name
+	deviceGroups map[string]bool
+}
+
+// pending returns the objects a dry run would create in the active target
+func (s *Syncer) pending() *dryRunPending {
+	if s.dryRunPending == nil {
+		s.dryRunPending = &dryRunPending{inventoryRoles: map[string]bool{}, deviceGroups: map[string]bool{}}
+	}
+	return s.dryRunPending
+}
+
 // listInventoryRoles returns the inventory roles of the tenant by name
 func (s *Syncer) listInventoryRoles(ctx context.Context) (map[string][]jsonmodels.InventoryRole, error) {
 	roles := map[string][]jsonmodels.InventoryRole{}
-	result := s.Client.InventoryRoles.List(ctx, inventoryroles.ListOptions{
+	result := s.readClient().InventoryRoles.List(ctx, inventoryroles.ListOptions{
 		PaginationOptions: pagination.PaginationOptions{PageSize: 2000},
 	})
 	for role, err := range result.Items() {
@@ -140,11 +243,6 @@ func existingPermissions(role jsonmodels.InventoryRole) []InventoryRolePermissio
 	return normalizedPermissions(permissions)
 }
 
-// samePermissions compares two normalized permission sets
-func samePermissions(a, b []InventoryRolePermissionSpec) bool {
-	return slices.Equal(permissionKeys(a), permissionKeys(b))
-}
-
 func permissionKeys(permissions []InventoryRolePermissionSpec) []string {
 	keys := make([]string, 0, len(permissions))
 	for _, permission := range permissions {
@@ -172,6 +270,10 @@ type inventoryAssignmentCache struct {
 	groupIDs map[string]string
 }
 
+// errNotFound marks a lookup of a device group or an inventory role which
+// found nothing
+var errNotFound = errors.New("not found")
+
 // describeInventoryAssignments describes the assignments for the dry-run
 // output, e.g. "Site operator on Plant Berlin"
 func describeInventoryAssignments(assignments []InventoryAssignmentSpec) string {
@@ -182,12 +284,60 @@ func describeInventoryAssignments(assignments []InventoryAssignmentSpec) string 
 	return strings.Join(parts, "; ")
 }
 
-// ensureInventoryAssignments adds the missing inventory roles to the user's
-// assignment of each group, creating the assignment when the user has none
-// for the group. It returns a description of the changes. Roles and
-// assignments not in the manifest are never removed. For a freshly created
-// user the lookup of existing assignments is skipped (it has none yet).
-func (s *Syncer) ensureInventoryAssignments(ctx context.Context, userID string, created bool, assignments []InventoryAssignmentSpec, cache *inventoryAssignmentCache) ([]string, error) {
+// inventoryRoleRef is an inventory role to add to an assignment
+type inventoryRoleRef struct {
+	id   int64
+	name string
+	// pending is set in a dry run for a role the inventoryRoles section
+	// would create (it has no ID yet)
+	pending bool
+}
+
+// inventoryAssignmentChange is the change of a user's assignment on one
+// device group: shared by the dry run (which reports it) and the real run
+// (which applies it)
+type inventoryAssignmentChange struct {
+	// group is the group as written in the manifest
+	group string
+	// groupID is the managed object ID of the group (empty for a pending
+	// group)
+	groupID string
+	// pendingGroup is set in a dry run for a group the deviceGroups section
+	// would create
+	pendingGroup bool
+	// assignmentID is the ID of the user's existing assignment on the
+	// group (0 when there is none), and currentRoles its role IDs
+	assignmentID int64
+	currentRoles []int64
+	// add are the roles to add
+	add []inventoryRoleRef
+}
+
+// describe describes the change, e.g. "inventory roles on Plant Berlin: +Site operator"
+func (c inventoryAssignmentChange) describe() string {
+	parts := make([]string, 0, len(c.add))
+	for _, role := range c.add {
+		part := "+" + role.name
+		if role.pending {
+			part += " (new role)"
+		}
+		parts = append(parts, part)
+	}
+	group := c.group
+	if c.pendingGroup {
+		group += " (new group)"
+	}
+	return "inventory roles on " + group + ": " + strings.Join(parts, ", ")
+}
+
+// planInventoryAssignments compares the user's inventory roles in the
+// manifest with the user's assignments in the tenant and returns the changes
+// needed to add the missing roles. Roles and assignments not in the manifest
+// are never removed. For a user which does not exist (yet) the lookup of
+// existing assignments is skipped. A group or role which cannot be resolved
+// fails its assignment only: the changes of the other assignments are still
+// returned, together with the joined errors.
+func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, exists bool, assignments []InventoryAssignmentSpec, cache *inventoryAssignmentCache) ([]inventoryAssignmentChange, error) {
 	if len(assignments) == 0 {
 		return nil, nil
 	}
@@ -209,8 +359,8 @@ func (s *Syncer) ensureInventoryAssignments(ctx context.Context, userID string, 
 		roles []int64
 	}
 	existing := map[string]*existingAssignment{}
-	if !created {
-		result := s.Client.DevicePermissions.ListInventoryRoleAssignments(ctx, devicepermissions.ListInventoryRoleAssignmentOptions{
+	if exists {
+		result := s.readClient().DevicePermissions.ListInventoryRoleAssignments(ctx, devicepermissions.ListInventoryRoleAssignmentOptions{
 			UserScopedOptions: devicepermissions.UserScopedOptions{UserID: userID},
 			PaginationOptions: pagination.PaginationOptions{PageSize: 2000},
 		})
@@ -227,56 +377,92 @@ func (s *Syncer) ensureInventoryAssignments(ctx context.Context, userID string, 
 		}
 	}
 
-	var details []string
+	var changes []inventoryAssignmentChange
+	var errs []error
 	for _, assignment := range assignments {
-		groupID, err := s.resolveDeviceGroup(ctx, strings.TrimSpace(assignment.Group), cache.groupIDs)
-		if err != nil {
-			return details, err
-		}
-
-		var missingIDs []int64
-		var missingNames []string
-		for _, roleName := range assignment.Roles {
-			roleID, err := cache.roleID(roleName)
-			if err != nil {
-				return details, err
+		ref := strings.TrimSpace(assignment.Group)
+		change := inventoryAssignmentChange{group: assignment.Group}
+		groupID, err := s.resolveDeviceGroup(ctx, ref, cache.groupIDs)
+		switch {
+		case err == nil:
+			change.groupID = groupID
+			if current, ok := existing[groupID]; ok {
+				change.assignmentID = current.id
+				change.currentRoles = current.roles
 			}
-			if current, ok := existing[groupID]; ok && slices.Contains(current.roles, roleID) {
-				continue
-			}
-			if slices.Contains(missingIDs, roleID) {
-				continue
-			}
-			missingIDs = append(missingIDs, roleID)
-			missingNames = append(missingNames, roleName)
-		}
-		if len(missingIDs) == 0 {
+		case s.DryRun && errors.Is(err, errNotFound) && s.pending().deviceGroups[ref]:
+			change.pendingGroup = true
+		default:
+			errs = append(errs, err)
 			continue
 		}
 
-		if current, ok := existing[groupID]; ok {
-			roleIDs := append(slices.Clone(current.roles), missingIDs...)
+		var roleErr error
+		for _, roleName := range assignment.Roles {
+			roleID, err := cache.roleID(roleName)
+			if err != nil {
+				if s.DryRun && errors.Is(err, errNotFound) && s.pending().inventoryRoles[roleName] {
+					if !slices.ContainsFunc(change.add, func(r inventoryRoleRef) bool { return r.pending && r.name == roleName }) {
+						change.add = append(change.add, inventoryRoleRef{name: roleName, pending: true})
+					}
+					continue
+				}
+				roleErr = err
+				break
+			}
+			if slices.Contains(change.currentRoles, roleID) {
+				continue
+			}
+			if slices.ContainsFunc(change.add, func(r inventoryRoleRef) bool { return !r.pending && r.id == roleID }) {
+				continue
+			}
+			change.add = append(change.add, inventoryRoleRef{id: roleID, name: roleName})
+		}
+		if roleErr != nil {
+			errs = append(errs, roleErr)
+			continue
+		}
+		if len(change.add) > 0 {
+			changes = append(changes, change)
+		}
+	}
+	return changes, errors.Join(errs...)
+}
+
+// applyInventoryAssignments writes the changes of the user's assignments and
+// returns the descriptions of the changes made. A failed write does not stop
+// the other changes; the errors are joined.
+func (s *Syncer) applyInventoryAssignments(ctx context.Context, userID string, changes []inventoryAssignmentChange) ([]string, error) {
+	var details []string
+	var errs []error
+	for _, change := range changes {
+		addIDs := make([]int64, 0, len(change.add))
+		for _, role := range change.add {
+			addIDs = append(addIDs, role.id)
+		}
+		if change.assignmentID != 0 {
+			roleIDs := append(slices.Clone(change.currentRoles), addIDs...)
 			result := s.Client.DevicePermissions.UpdateInventoryRoleAssignment(ctx, devicepermissions.GetInventoryRoleAssignmentOptions{
 				UserScopedOptions: devicepermissions.UserScopedOptions{UserID: userID},
-				ID:                current.id,
+				ID:                change.assignmentID,
 			}, map[string]any{"roles": roleRefs(roleIDs)})
 			if result.Err != nil {
-				return details, fmt.Errorf("inventory assignment for group %q: %w", assignment.Group, result.Err)
+				errs = append(errs, fmt.Errorf("inventory assignment for group %q: %w", change.group, result.Err))
+				continue
 			}
-			current.roles = roleIDs
 		} else {
 			result := s.Client.DevicePermissions.AssignInventoryRole(ctx, devicepermissions.UserScopedOptions{UserID: userID}, map[string]any{
-				"managedObject": groupID,
-				"roles":         roleRefs(missingIDs),
+				"managedObject": change.groupID,
+				"roles":         roleRefs(addIDs),
 			})
 			if result.Err != nil {
-				return details, fmt.Errorf("inventory assignment for group %q: %w", assignment.Group, result.Err)
+				errs = append(errs, fmt.Errorf("inventory assignment for group %q: %w", change.group, result.Err))
+				continue
 			}
-			existing[groupID] = &existingAssignment{id: result.Data.ID(), roles: missingIDs}
 		}
-		details = append(details, "inventory roles on "+assignment.Group+": "+strings.Join(missingNames, ", "))
+		details = append(details, change.describe())
 	}
-	return details, nil
+	return details, errors.Join(errs...)
 }
 
 // roleID resolves an inventory role name to its ID
@@ -284,7 +470,7 @@ func (c *inventoryAssignmentCache) roleID(name string) (int64, error) {
 	matches := c.roles[name]
 	switch len(matches) {
 	case 0:
-		return 0, fmt.Errorf("inventory role %q: not found", name)
+		return 0, fmt.Errorf("inventory role %q: %w", name, errNotFound)
 	case 1:
 		return matches[0].ID(), nil
 	default:
@@ -333,7 +519,7 @@ func (s *Syncer) resolveDeviceGroup(ctx context.Context, ref string, cache map[s
 
 	switch len(groups) {
 	case 0:
-		return "", fmt.Errorf("device group %q: not found", ref)
+		return "", fmt.Errorf("device group %q: %w", ref, errNotFound)
 	case 1:
 		cache[ref] = groups[0].ID()
 		return groups[0].ID(), nil
@@ -381,7 +567,7 @@ func (s *Syncer) findDeviceGroupPath(ctx context.Context, names []string) ([]jso
 
 // findDeviceGroups returns the device groups with exactly the given name
 func (s *Syncer) findDeviceGroups(ctx context.Context, name string, withParents bool) ([]jsonmodels.ManagedObject, error) {
-	result := s.Client.ManagedObjects.List(ctx, managedobjects.ListOptions{
+	result := s.readClient().ManagedObjects.List(ctx, managedobjects.ListOptions{
 		Query:             fmt.Sprintf("has(c8y_IsDeviceGroup) and name eq '%s'", escapeQueryValue(name)),
 		GetOptions:        managedobjects.GetOptions{WithParents: withParents},
 		PaginationOptions: pagination.PaginationOptions{PageSize: 2000},

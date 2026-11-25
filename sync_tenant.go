@@ -181,6 +181,8 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 			detail := "subscribe"
 			if !spec.IsSubscribed() {
 				detail = "unsubscribe"
+			} else if spec.isHostedWithSource() {
+				detail = "create tenant-owned copy if missing, upload the source when its version differs, then subscribe"
 			} else if spec.Source != nil {
 				detail = "create/upload if missing, then subscribe"
 			}
@@ -304,6 +306,9 @@ func subscriptionErrorHint(err error, tenantID string) error {
 // Successful results are cached by name so that the create/upload work (and
 // its result records) happen only once when applying to multiple tenants.
 func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (string, bool) {
+	if spec.isHostedWithSource() {
+		return s.ensureHostedApplication(ctx, spec)
+	}
 	if selfLink, ok := s.appSelfLinks[spec.Name]; ok {
 		return selfLink, true
 	}
@@ -338,9 +343,13 @@ func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (s
 			contextPath = spec.Name
 		}
 
+		key := spec.Key
+		if key == "" {
+			key = spec.Name + "-application-key"
+		}
 		createResult := s.Client.Applications.Create(ctx, map[string]any{
 			"name":        spec.Name,
-			"key":         spec.Name + "-application-key",
+			"key":         key,
 			"type":        appType,
 			"contextPath": contextPath,
 		})

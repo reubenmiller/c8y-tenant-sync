@@ -841,6 +841,37 @@ applications:
       path: ./build/my-microservice.zip
 ```
 
+#### Web applications from releases (cloning built-in applications)
+
+A `type: HOSTED` entry with a `source` keeps a web application, owned by the tenant running the sync, at the version of its source. This is how a tenant clones a built-in application such as Device Management and keeps the clone up to date with the releases published at [Cumulocity-IoT/devicemanagement](https://github.com/Cumulocity-IoT/devicemanagement/releases):
+
+```yaml
+applications:
+  - name: devicemanagement
+    type: HOSTED
+    source:
+      github:
+        repo: Cumulocity-IoT/devicemanagement
+        tags: ["v1025.*"]          # stay on the 1025 release line
+        includePrereleases: true   # the releases are published as prereleases
+        assets: ["devicemanagement-*.zip"]
+```
+
+On each run:
+
+- Only an application owned by the tenant running the sync counts as existing. The built-in `devicemanagement` application owned by the `management` tenant is left alone, and a tenant-owned copy with the same name and context path is created. That copy then replaces the subscribed application for the tenant. Its key defaults to `<tenant>-<name>-application-key`, since the built-in application already uses `<name>-application-key`; set `key` to choose another.
+- The release is listed without downloading it and its version (from the asset filename such as `devicemanagement-1025.15.3.zip`, otherwise the release tag) is compared with the `manifest.version` of the application. The archive is only downloaded and uploaded when the versions differ, so a scheduled run picks up new releases without `--force`:
+
+  ```
+    ↻ [applications] devicemanagement (updated): version 1025.14.0 -> 1025.15.3 (uploaded devicemanagement-1025.15.3.zip)
+  ```
+
+- `--force` re-uploads the archive even when the version is already active. When no version can be read from the source, an existing application is only re-uploaded with `--force`.
+
+Uploading a new archive replaces the application binary only. The plugins installed into the application through the Administration application are stored in the application `config` and are kept.
+
+The source must resolve to exactly one zip file; narrow it down with `github.assets` and `github.tags` (the repository publishes several release lines, such as `v1023.*` and `v1025.*`). The copy is owned by the tenant running the sync, so with a [targets section](#target-tenants) it is created once in that tenant and only the subscription is applied to the target tenants.
+
 ### Device groups
 
 The `deviceGroups` section creates a tree of device groups, so every tenant has the same structure (regions, sites, production lines, customers) and dashboards, inventory roles and bulk operations can target the groups consistently.

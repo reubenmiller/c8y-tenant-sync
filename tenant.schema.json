@@ -20,13 +20,17 @@
           "type": "boolean",
           "description": "Desired subscription state (defaults to true when omitted); false unsubscribes the application from the target tenant"
         },
+        "key": {
+          "type": "string",
+          "description": "Application key used when creating the application (defaults to \u003cname\u003e-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"
+        },
         "contextPath": {
           "type": "string",
           "description": "Context path used when creating the application (defaults to the name)"
         },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the application binary (zip) comes from; must resolve to a single file"
+          "description": "Where the application binary (zip) comes from; must resolve to a single file. For type HOSTED the application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"
         }
       },
       "additionalProperties": false,

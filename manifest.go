@@ -404,13 +404,21 @@ type ApplicationSpec struct {
 	// tenant (and never created/uploaded, even when a source is given).
 	Subscribed *bool `yaml:"subscribed" json:"subscribed,omitempty" jsonschema:"description=Desired subscription state (defaults to true when omitted); false unsubscribes the application from the target tenant"`
 
+	// Key used when creating the application (defaults to
+	// <name>-application-key, prefixed with the tenant ID when a HOSTED
+	// application of the same name owned by another tenant exists)
+	Key string `yaml:"key" json:"key,omitempty" jsonschema:"description=Application key used when creating the application (defaults to <name>-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"`
+
 	// ContextPath used when creating the application (defaults to the name)
 	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=Context path used when creating the application (defaults to the name)"`
 
 	// Source provides the application binary (a single zip file). The
 	// application is created if missing and the binary uploaded on creation
-	// (or on every run with --force).
-	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the application binary (zip) comes from; must resolve to a single file"`
+	// (or on every run with --force). For HOSTED applications, only an
+	// application owned by the tenant running the sync counts (a built-in
+	// application of the same name is replaced by a tenant-owned copy) and the
+	// binary is uploaded whenever its version differs from manifest.version.
+	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the application binary (zip) comes from; must resolve to a single file. For type HOSTED the application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"`
 }
 
 func (a ApplicationSpec) IsSubscribed() bool {

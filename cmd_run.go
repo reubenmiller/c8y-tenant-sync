@@ -246,14 +246,25 @@ func runSync(opts *runOptions, args []string) (err error) {
 	}
 	defer os.RemoveAll(workDir)
 
+	// In dry-run mode the login options are still read (never written), so
+	// the preview shows what would change. Without a session the dry run
+	// lists the desired settings only.
+	var dryRunReader *api.Client
+	if dryRun && manifest.LoginOptions != nil && sectionEnabled(onlySections, SectionLoginOptions) {
+		if reader, err := runtime.NewClient(opts.debug); err == nil {
+			dryRunReader = reader
+		}
+	}
+
 	syncer := &Syncer{
-		Client:      client,
-		Resolver:    NewSourceResolver(manifestBaseDir(manifestPath), workDir, dryRun),
-		DryRun:      dryRun,
-		Force:       opts.force,
-		Concurrency: opts.concurrency,
-		Targets:     targets,
-		Secrets:     secrets,
+		Client:       client,
+		DryRunReader: dryRunReader,
+		Resolver:     NewSourceResolver(manifestBaseDir(manifestPath), workDir, dryRun),
+		DryRun:       dryRun,
+		Force:        opts.force,
+		Concurrency:  opts.concurrency,
+		Targets:      targets,
+		Secrets:      secrets,
 	}
 
 	startTime := time.Now()
@@ -329,6 +340,7 @@ func manifestSecretValues(manifest *Manifest) []string {
 	for _, tenant := range manifest.Tenants {
 		values = append(values, tenant.AdminPass)
 	}
+	values = append(values, ssoSecretForms(manifest.ssoLogin())...)
 	for _, source := range manifest.allSources() {
 		if source.GitHub != nil {
 			values = append(values, source.GitHub.Token)

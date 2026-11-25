@@ -51,6 +51,7 @@ const (
 	SectionUserGroups             = "userGroups"
 	SectionInventoryRoles         = "inventoryRoles"
 	SectionUsers                  = "users"
+	SectionLoginOptions           = "loginOptions"
 	SectionSoftware               = "software"
 	SectionFirmware               = "firmware"
 	SectionConfiguration          = "configuration"
@@ -65,6 +66,8 @@ const (
 // before users so users can be assigned to groups created in the same run;
 // inventory roles are synced after user groups and before users so the
 // users' inventory assignments can reference roles created in the same run;
+// login options follow the users, so the user groups of SSO access mappings
+// exist and the login changes come after the users who log in;
 // repositories are synced before device profiles so profiles can reference
 // the synced items; custom commands run last so they can build on everything
 // the manifest declares. Device groups are synced before user groups and
@@ -91,6 +94,7 @@ var SectionOrder = []string{
 	SectionUserGroups,
 	SectionInventoryRoles,
 	SectionUsers,
+	SectionLoginOptions,
 	SectionSoftware,
 	SectionFirmware,
 	SectionConfiguration,
@@ -131,6 +135,11 @@ type Syncer struct {
 	Concurrency int
 	// Secrets holds the generated values (${generate:NAME}), if any
 	Secrets *SecretStore
+
+	// DryRunReader is a client for read-only lookups in dry-run mode (nil
+	// without a session). Only the loginOptions section uses it, to compare
+	// the desired login options with the tenant's; it never writes.
+	DryRunReader *api.Client
 
 	// Targets overrides the manifest targets section (set from CLI flags)
 	Targets *TargetsSpec
@@ -434,6 +443,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncInventoryRoles(ctx, manifest.InventoryRoles)
 		case SectionUsers:
 			err = s.SyncUsers(ctx, manifest.Users)
+		case SectionLoginOptions:
+			err = s.SyncLoginOptions(ctx, manifest.LoginOptions)
 		case SectionSoftware:
 			err = s.SyncSoftware(ctx, manifest.Software)
 		case SectionFirmware:

@@ -46,9 +46,11 @@ type Manifest struct {
 	// groups through users[].inventoryAssignments
 	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"`
 	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and assign to user groups (additive: existing memberships are never removed)"`
-	Software       []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
-	Firmware       []FirmwareSpec      `yaml:"firmware" json:"firmware,omitempty" jsonschema:"description=Firmware (OS images) to sync into the firmware repository"`
-	Configuration  []ConfigurationSpec `yaml:"configuration" json:"configuration,omitempty" jsonschema:"description=Configuration files to sync into the configuration repository"`
+	// LoginOptions configures how users log in (basic, OAI-Secure, SSO)
+	LoginOptions  *LoginOptionsSpec   `yaml:"loginOptions" json:"loginOptions,omitempty" jsonschema:"description=Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"`
+	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
+	Firmware      []FirmwareSpec      `yaml:"firmware" json:"firmware,omitempty" jsonschema:"description=Firmware (OS images) to sync into the firmware repository"`
+	Configuration []ConfigurationSpec `yaml:"configuration" json:"configuration,omitempty" jsonschema:"description=Configuration files to sync into the configuration repository"`
 
 	SmartRestTemplates []SmartRestTemplateSpec `yaml:"smartrestTemplates" json:"smartrestTemplates,omitempty" jsonschema:"description=SmartREST 2.0 template collections to sync from exported JSON files (one collection per file)"`
 
@@ -1751,6 +1753,7 @@ func (m *Manifest) Validate() error {
 	}
 	errs = append(errs, validateSmartFunctions(m.SmartFunctions)...)
 	errs = append(errs, m.DigitalTwin.validate()...)
+	errs = append(errs, m.LoginOptions.validate()...)
 	for i, profile := range m.DeviceProfiles {
 		if profile.Name == "" {
 			errs = append(errs, fmt.Sprintf("deviceProfiles[%d]: name is required", i))

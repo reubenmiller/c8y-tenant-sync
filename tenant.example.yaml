@@ -270,6 +270,33 @@ users:
   - userName: old-account@example.com
     enabled: false # keep the account but disable it
 
+# Login options: the preferred login mode of the login page (oaiSecure, basic
+# or sso) and the settings of each login option. Login options are never
+# deleted; the preferred mode is switched last, only once the new option is
+# configured and checked (see "Login options" in the README). The values
+# below are the defaults of a new tenant.
+loginOptions:
+  preferred: oaiSecure
+  oaiSecure:
+    session:
+      absoluteTimeout: 336h
+      renewalTimeout: 24h
+  # Single sign-on generated from the provider's OpenID Connect discovery
+  # document: only the client ID, the secret and the mappings are declared
+  # sso:
+  #   discoveryUrl: https://idp.example.com/realms/acme/.well-known/openid-configuration
+  #   clientId: cumulocity
+  #   clientSecretFrom:
+  #     env: SSO_CLIENT_SECRET
+  #   userIdClaim: preferred_username
+  #   accessMappings:
+  #     rules:
+  #       - when:
+  #           - claim: groups
+  #             operator: IN
+  #             value: c8y-admins
+  #         groups: [admins]
+
 # Sync software packages. Name, version, architecture and software type are
 # parsed from the filenames (same logic as the software-uploader example).
 software:

@@ -35,6 +35,7 @@ var ExportSections = []string{
 	SectionApplications,
 	SectionDeviceGroups,
 	SectionInventoryRoles,
+	SectionLoginOptions,
 	SectionDigitalTwin,
 	SectionSmartFunctions,
 }
@@ -70,6 +71,9 @@ Exported sections: ` + strings.Join(ExportSections, ", ") + `.
   and the devices in the groups are not exported)
 - inventoryRoles: all inventory roles with their permissions (users' inventory assignments
   are not exported)
+- loginOptions: the preferred login mode, the basic restrictions, the OAI-Secure session
+  and the SSO login option (its client secret is never exported: it is replaced by a
+  clientSecretFrom reference to the SSO_CLIENT_SECRET environment variable)
 - digitalTwin: the tenant's own property and asset definitions (library definitions and
   definitions shared from the enterprise tenant are not exported)
 - smartFunctions: the deployed Data Preparation rules as inline rules with their code and
@@ -208,6 +212,7 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 			return
 		}},
 		{SectionInventoryRoles, func() (err error) { manifest.InventoryRoles, err = e.inventoryRoles(ctx); return }},
+		{SectionLoginOptions, func() (err error) { manifest.LoginOptions, err = e.loginOptions(ctx); return }},
 		{SectionDigitalTwin, func() (err error) { manifest.DigitalTwin, err = e.digitalTwin(ctx); return }},
 		{SectionSmartFunctions, func() (err error) { manifest.SmartFunctions, err = e.smartFunctions(ctx); return }},
 	}

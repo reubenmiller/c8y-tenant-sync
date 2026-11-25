@@ -26,7 +26,7 @@ jobs:
         with:
           showTenant: false
           extensions: |
-            reubenmiller/c8y-tenant-sync@v0.11.0
+            reubenmiller/c8y-tenant-sync@v0.11.1
       - run: c8y tenant-sync run -f tenant.yaml
         env:
           C8Y_HOST: ${{ vars.C8Y_HOST }}
@@ -77,7 +77,7 @@ jobs:
         with:
           showVersion: false
           showTenant: false
-          extensions: reubenmiller/c8y-tenant-sync@v0.11.0
+          extensions: reubenmiller/c8y-tenant-sync@v0.11.1
       # No tenant access needed, so this also runs for pull requests from forks
       - run: |
           for manifest in tenants/*.yaml; do
@@ -110,7 +110,7 @@ jobs:
       - uses: reubenmiller/setup-go-c8y-cli@main
         with:
           showVersion: false
-          extensions: reubenmiller/c8y-tenant-sync@v0.11.0
+          extensions: reubenmiller/c8y-tenant-sync@v0.11.1
 
       - name: Preview changes
         if: github.event_name == 'pull_request'
@@ -165,7 +165,7 @@ The tenant-sync binary also runs on its own with the same `C8Y_*` variables. Dow
       - uses: actions/setup-go@v6
         with:
           go-version: stable
-      - run: go run github.com/reubenmiller/c8y-tenant-sync@v0.11.0 run -f tenant.yaml
+      - run: go run github.com/reubenmiller/c8y-tenant-sync@v0.11.1 run -f tenant.yaml
         env:
           C8Y_HOST: ${{ vars.C8Y_HOST }}
           C8Y_USER: ${{ secrets.C8Y_USER }}

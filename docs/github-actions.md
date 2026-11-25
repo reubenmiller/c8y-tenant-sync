@@ -27,7 +27,7 @@ jobs:
           showTenant: false
           extensions: |
             reubenmiller/c8y-tenant-sync@v0.11.0
-      - run: c8y tenant-sync run -f tenant.yaml </dev/null
+      - run: c8y tenant-sync run -f tenant.yaml
         env:
           C8Y_HOST: ${{ vars.C8Y_HOST }}
           C8Y_USER: ${{ secrets.C8Y_USER }}
@@ -35,7 +35,6 @@ jobs:
 ```
 
 - Pin the extension to a release tag, so a new tenant-sync release doesn't change what your workflow does. Update the tag in a pull request, where the dry run shows the effect. Binary extensions need go-c8y-cli v2.57.0 or later, which the default `version: latest` gives you.
-- `</dev/null` closes stdin. go-c8y-cli reads piped input from stdin, and on GitHub runners stdin is not a terminal.
 - The `C8Y_*` variables form the session, no `c8y sessions` file is needed. See [Session and authentication](../README.md#session-and-authentication) for the other variables, such as `C8Y_TOKEN`.
 
 ## Store the credentials in environments
@@ -82,7 +81,7 @@ jobs:
       # No tenant access needed, so this also runs for pull requests from forks
       - run: |
           for manifest in tenants/*.yaml; do
-            c8y tenant-sync validate "$manifest" --check-sources </dev/null
+            c8y tenant-sync validate "$manifest" --check-sources
           done
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -115,15 +114,15 @@ jobs:
 
       - name: Preview changes
         if: github.event_name == 'pull_request'
-        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry --report report.json </dev/null
+        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry --report report.json
 
       - name: Check for drift
         if: github.event_name == 'schedule'
-        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry --fail-on-change --report report.json </dev/null
+        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry --fail-on-change --report report.json
 
       - name: Apply
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --report report.json </dev/null
+        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --report report.json
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -149,7 +148,7 @@ A manifest encrypted with [SOPS](sops.md) needs the `sops` executable and the pr
         run: |
           sudo curl -fsSL -o /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
           sudo chmod +x /usr/local/bin/sops
-      - run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --secrets-encryption sops </dev/null
+      - run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --secrets-encryption sops
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
 ```
@@ -179,5 +178,4 @@ The tenant-sync binary also runs on its own with the same `C8Y_*` variables. Dow
 |---------|---------------|
 | `unknown command "tenant-sync" for "c8y"` | The extension isn't installed, or the go-c8y-cli version is older than v2.57.0. Check the `extensions` input of setup-go-c8y-cli and its log of installed extensions. |
 | `API rate limit exceeded` while installing the extension or resolving GitHub sources | Pass a token: setup-go-c8y-cli uses `github.token` by default (`token` input); tenant-sync reads `GITHUB_TOKEN` or `GH_TOKEN`. |
-| The job hangs or c8y reports unexpected piped input | Add `</dev/null` to the `c8y` command, or `exec 0</dev/null` at the start of the step. |
 | `401 Unauthorized` | Check `C8Y_HOST`, `C8Y_USER` and `C8Y_PASSWORD` in the environment the job uses. Users of some tenants need the tenant ID as a prefix: `t12345/user`. |

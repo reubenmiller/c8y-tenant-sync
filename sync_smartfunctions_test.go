@@ -190,3 +190,122 @@ func TestSyncSmartFunctionsFromURL(t *testing.T) {
 	assert.Equal(t, ActionCreated, result.Action, "err: %v", result.Err)
 	assert.Len(t, f.Requests(http.MethodPut, "/service/dataprep/v1/rules/inlet/deployed"), 1)
 }
+
+// testInlineSmartFunction is an inline rule as declared in a manifest
+func testInlineSmartFunction() SmartFunctionSpec {
+	return SmartFunctionSpec{
+		Name:        "inline-events",
+		Description: "inline test rule",
+		Tags:        []string{"test"},
+		Input:       &SmartFunctionInputSpec{TopicPattern: "te/device/*///e/*"},
+		Code:        testSmartFunctionCode,
+		Tests: map[string]SmartFunctionTestSpec{
+			"identify": {
+				Inputs: []SmartFunctionTestInputSpec{{
+					Topic:    "te/device/dev01///e/zephyr_Identify",
+					ClientID: "dev01",
+					// An object is sent as JSON
+					Payload: map[string]any{"text": "Identify"},
+					// Normalised to the format the server returns
+					Time: "2026-10-06T10:15:00+02:00",
+				}},
+				ExpectedOutput: []map[string]any{{"cumulocityType": "event"}},
+			},
+		},
+	}
+}
+
+func TestBuildInlineSmartFunction(t *testing.T) {
+	rule, err := buildInlineSmartFunction(testInlineSmartFunction(), "")
+	require.NoError(t, err)
+	assert.Equal(t, testSmartFunctionCode, string(rule.SmartFunction))
+	assert.Equal(t, "inline test rule", rule.Config.Description)
+	assert.Equal(t, dataprep.TransportMQTT, rule.Config.Input.Transport)
+	assert.Equal(t, "te/device/*///e/*", rule.Config.Input.TopicPattern)
+
+	input := rule.Tests["identify"].Inputs[0]
+	assert.Equal(t, `{"text":"Identify"}`, input.Payload)
+	assert.Equal(t, dataprep.PayloadFormatJSON, input.PayloadFormat)
+	assert.Equal(t, "2026-10-06T08:15:00.000Z", input.Time)
+
+	// Code from a file, relative to the manifest directory
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "events.js"), []byte(testSmartFunctionCode), 0o644))
+	spec := testInlineSmartFunction()
+	spec.Code, spec.CodeFile = "", "events.js"
+	rule, err = buildInlineSmartFunction(spec, dir)
+	require.NoError(t, err)
+	assert.Equal(t, testSmartFunctionCode, string(rule.SmartFunction))
+
+	// The package format is validated
+	spec = testInlineSmartFunction()
+	spec.Input.TopicPattern = "te/#"
+	_, err = buildInlineSmartFunction(spec, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MQTT wildcards")
+}
+
+func TestTestPayload(t *testing.T) {
+	for _, tc := range []struct {
+		value       any
+		format      string
+		wantPayload string
+		wantFormat  string
+	}{
+		{`{"a":1}`, "", `{"a":1}`, dataprep.PayloadFormatJSON},
+		{"hello", "", "hello", dataprep.PayloadFormatText},
+		{map[string]any{"a": 1}, "", `{"a":1}`, dataprep.PayloadFormatJSON},
+		{42, "", "42", dataprep.PayloadFormatJSON},
+		{"aGVsbG8=", dataprep.PayloadFormatBase64, "aGVsbG8=", dataprep.PayloadFormatBase64},
+		{nil, "", "", dataprep.PayloadFormatText},
+	} {
+		payload, format, err := testPayload(tc.value, tc.format)
+		require.NoError(t, err)
+		assert.Equal(t, tc.wantPayload, payload, "%v", tc.value)
+		assert.Equal(t, tc.wantFormat, format, "%v", tc.value)
+	}
+}
+
+func TestSyncInlineSmartFunctionDeploys(t *testing.T) {
+	f := newFakeC8y(t)
+	f.JSON("GET /service/dataprep/v1/rules/inline-events/deployed", http.StatusNotFound, map[string]any{"error": "not found"})
+	f.Handle("PUT /service/dataprep/v1/rules/inline-events/deployed", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	syncer := newFakeSyncer(t, f)
+	spec := testInlineSmartFunction()
+	spec.WaitTimeout = "0s"
+
+	require.NoError(t, syncer.SyncSmartFunctions(context.Background(), []SmartFunctionSpec{spec}))
+
+	result := resultFor(t, syncer, SectionSmartFunctions)
+	assert.Equal(t, "inline-events", result.Item)
+	assert.Equal(t, ActionCreated, result.Action, "err: %v", result.Err)
+	assert.Equal(t, "inline", result.Detail)
+
+	uploads := f.Requests(http.MethodPut, "/service/dataprep/v1/rules/inline-events/deployed")
+	require.Len(t, uploads, 1)
+	pkg, err := dataprep.PackageFromArchive(bytesReader(uploads[0].RawBody))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"identify"}, pkg.TestNames())
+}
+
+func TestValidateInlineSmartFunctions(t *testing.T) {
+	errs := validateSmartFunctions([]SmartFunctionSpec{
+		testInlineSmartFunction(),
+		{},
+		{Name: "both", Input: &SmartFunctionInputSpec{TopicPattern: "x/*"}, Code: "c", CodeFile: "f.js"},
+		{Name: "no-time", Input: &SmartFunctionInputSpec{TopicPattern: "x/*"}, Code: "c", Tests: map[string]SmartFunctionTestSpec{
+			"t": {Inputs: []SmartFunctionTestInputSpec{{Topic: "x/1", ClientID: "c"}}},
+		}},
+		{Source: Source{Path: "./rules"}, Code: "c"},
+	})
+	assert.Equal(t, []string{
+		"smartFunctions[1]: input.topicPattern is required for an inline rule",
+		"smartFunctions[1]: name is required for an inline rule (or set a source)",
+		"smartFunctions[1]: one of code or codeFile is required for an inline rule (or set a source)",
+		"smartFunctions[2]: code and codeFile are mutually exclusive",
+		"smartFunctions[3].tests.t.inputs[0]: time is required",
+		"smartFunctions[4]: description, tags, disabled, input, code, codeFile and tests only apply to inline rules (without a source)",
+	}, errs)
+}

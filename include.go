@@ -310,6 +310,12 @@ func (m *Manifest) rebase(dir, rootDir string) {
 	}
 	for i := range m.SmartFunctions {
 		rebasePath(&m.SmartFunctions[i].Source)
+		if file := m.SmartFunctions[i].CodeFile; file != "" && !filepath.IsAbs(file) {
+			// Same as a source path: relative to the main manifest directory
+			code := Source{Path: file}
+			rebasePath(&code)
+			m.SmartFunctions[i].CodeFile = code.Path
+		}
 	}
 	if m.DigitalTwin != nil {
 		for _, defs := range [][]DigitalTwinDefinitionSpec{m.DigitalTwin.PropertyDefinitions, m.DigitalTwin.AssetDefinitions} {

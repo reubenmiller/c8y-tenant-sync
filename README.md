@@ -1071,6 +1071,38 @@ A rule is only deployed when its smart function code, configuration (description
 
 A `url` source (for example a release asset or any other download link to a `.tar.gz`) is downloaded before the package is read. Dry-run mode does not download it, so the package is only validated in a real run.
 
+#### Inline rules
+
+An entry without a `source` declares the rule in the manifest. It takes the fields of `data-prep.yaml`, the code (inline with `code`, or from a local file with `codeFile`) and optional tests:
+
+```yaml
+smartFunctions:
+  - name: tiny-edge-events
+    description: tiny-edge events to Cumulocity events
+    tags: [tiny-edge, event]
+    disabled: false
+    input:
+      topicPattern: "te/device/*///e/*" # transport defaults to mqtt
+    codeFile: ./smartfunctions/events.js # or code: |
+    tests:
+      identify:
+        inputs:
+          - topic: te/device/dev01///e/zephyr_Identify
+            clientID: dev01
+            payload: {text: Identify pressed} # objects are sent as JSON
+            time: "2026-10-06T08:15:00Z"
+        expectedOutput:
+          - cumulocityType: event
+            payload: {type: zephyr_Identify, text: Identify pressed, time: "2026-10-06T08:15:00.000Z"}
+            externalSource: [{externalId: dev01, type: c8y_Serial}]
+```
+
+- `name`, `input.topicPattern` and one of `code` or `codeFile` are required. A relative `codeFile` is resolved against the directory of the manifest file that declares it.
+- A test input `payload` can be a string, which is sent as it is, with `payloadFormat` defaulting to `json` when the string holds JSON and `text` otherwise. It can also be an object, list or number, which is sent as JSON. Set `payloadFormat: base64` for binary payloads.
+- `time` is required on every test input. It is stored in UTC with milliseconds, the format the server returns, so a rule whose tests use another format or time zone still counts as unchanged on the next run.
+
+For rules with several tests, a package folder is usually easier to maintain: it is the format the Data Preparation application exports, and each test is its own file.
+
 ### Target tenants
 
 By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead — run once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):

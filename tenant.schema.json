@@ -1054,15 +1054,80 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "SmartFunctionInputSpec": {
+      "properties": {
+        "transport": {
+          "type": "string",
+          "description": "Transport type (default mqtt; the only supported value)",
+          "examples": [
+            "mqtt"
+          ]
+        },
+        "topicPattern": {
+          "type": "string",
+          "description": "Topic filter; * matches zero or more characters (MQTT wildcards + and # are not supported)",
+          "examples": [
+            "te/device/*///e/*"
+          ]
+        },
+        "clientIDPattern": {
+          "type": "string",
+          "description": "Device client ID filter; * is a wildcard"
+        },
+        "transportID": {
+          "type": "string",
+          "description": "Transport connection (defaults to the transport)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "topicPattern"
+      ]
+    },
     "SmartFunctionSpec": {
       "properties": {
         "name": {
           "type": "string",
-          "description": "Rule name (defaults to the package folder name or the archive filename without .tar.gz/.tgz; only sensible for sources with a single package)"
+          "description": "Rule name: required for an inline rule; for a source it defaults to the package folder name or the archive filename without .tar.gz/.tgz (only sensible for sources with a single package)"
         },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the rule packages come from: a package folder with data-prep.yaml or a folder of package folders and archives or a .tar.gz archive or GitHub release assets (directories are scanned for data-prep.yaml and *.tar.gz/*.tgz by default)"
+          "description": "Where the rule packages come from: a package folder with data-prep.yaml or a folder of package folders and archives or a .tar.gz archive or a url or GitHub release assets (directories are scanned for data-prep.yaml and *.tar.gz/*.tgz by default); without a source the entry declares an inline rule"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of an inline rule"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Tags of an inline rule"
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "Deploy an inline rule in the disabled state"
+        },
+        "input": {
+          "$ref": "#/$defs/SmartFunctionInputSpec",
+          "description": "Which messages an inline rule receives"
+        },
+        "code": {
+          "type": "string",
+          "description": "JavaScript code of an inline rule (exporting onMessage); mutually exclusive with codeFile"
+        },
+        "codeFile": {
+          "type": "string",
+          "description": "Local file with the JavaScript code of an inline rule (relative paths are resolved against the directory of the manifest file which declares it); mutually exclusive with code"
+        },
+        "tests": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SmartFunctionTestSpec"
+          },
+          "type": "object",
+          "description": "Tests of an inline rule by name: input messages and optionally the expected output"
         },
         "waitTimeout": {
           "type": "string",
@@ -1073,9 +1138,73 @@
         }
       },
       "additionalProperties": false,
+      "type": "object"
+    },
+    "SmartFunctionTestInputSpec": {
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "MQTT topic of the message",
+          "examples": [
+            "te/device/dev01///e/zephyr_Identify"
+          ]
+        },
+        "clientID": {
+          "type": "string",
+          "description": "Client ID of the device",
+          "examples": [
+            "dev01"
+          ]
+        },
+        "payload": {
+          "description": "Message payload: a string or an object/array/number (sent as JSON)"
+        },
+        "payloadFormat": {
+          "type": "string",
+          "enum": [
+            "json",
+            "text",
+            "base64"
+          ],
+          "description": "Payload format (default: json when the payload is JSON or text otherwise)"
+        },
+        "time": {
+          "type": "string",
+          "description": "Message time as an ISO 8601 timestamp with a time zone",
+          "examples": [
+            "2026-01-01T00:00:00Z"
+          ]
+        }
+      },
+      "additionalProperties": false,
       "type": "object",
       "required": [
-        "source"
+        "topic",
+        "clientID",
+        "time"
+      ]
+    },
+    "SmartFunctionTestSpec": {
+      "properties": {
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/SmartFunctionTestInputSpec"
+          },
+          "type": "array",
+          "description": "Device messages fed to the smart function"
+        },
+        "expectedOutput": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array",
+          "description": "Expected Cumulocity objects of all inputs in order (stored with the rule)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "inputs"
       ]
     },
     "SmartRestTemplateSpec": {

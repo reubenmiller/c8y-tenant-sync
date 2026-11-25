@@ -138,6 +138,9 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 		}
 	}
 	for i, spec := range manifest.SmartFunctions {
+		if spec.IsInline() {
+			continue // no source to resolve
+		}
 		check(SectionSmartFunctions, i, spec.resolvedSource())
 	}
 	for i, spec := range manifest.TrustedCertificates {

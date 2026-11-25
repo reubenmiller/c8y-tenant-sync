@@ -813,18 +813,59 @@ type SmartRestTemplateSpec struct {
 // by the Data Preparation application. A rule is only deployed when its code,
 // configuration or tests differ from the deployed rule.
 type SmartFunctionSpec struct {
-	// Name overrides the rule name, which defaults to the package folder
-	// name or the archive name without .tar.gz/.tgz
-	Name string `yaml:"name" json:"name,omitempty" jsonschema:"description=Rule name (defaults to the package folder name or the archive filename without .tar.gz/.tgz; only sensible for sources with a single package)"`
+	// Name is the rule name. For sources it overrides the name, which
+	// defaults to the package folder name or the archive name without
+	// .tar.gz/.tgz; inline rules require it.
+	Name string `yaml:"name" json:"name,omitempty" jsonschema:"description=Rule name: required for an inline rule; for a source it defaults to the package folder name or the archive filename without .tar.gz/.tgz (only sensible for sources with a single package)"`
 
 	// Source provides the packages. Directories are scanned for
 	// data-prep.yaml files (each marks a package folder) and .tar.gz/.tgz
 	// archives by default.
-	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the rule packages come from: a package folder with data-prep.yaml or a folder of package folders and archives or a .tar.gz archive or GitHub release assets (directories are scanned for data-prep.yaml and *.tar.gz/*.tgz by default)"`
+	Source Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the rule packages come from: a package folder with data-prep.yaml or a folder of package folders and archives or a .tar.gz archive or a url or GitHub release assets (directories are scanned for data-prep.yaml and *.tar.gz/*.tgz by default); without a source the entry declares an inline rule"`
+
+	// Inline rule (without a source)
+
+	Description string                           `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of an inline rule"`
+	Tags        []string                         `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Tags of an inline rule"`
+	Disabled    bool                             `yaml:"disabled" json:"disabled,omitempty" jsonschema:"description=Deploy an inline rule in the disabled state"`
+	Input       *SmartFunctionInputSpec          `yaml:"input" json:"input,omitempty" jsonschema:"description=Which messages an inline rule receives"`
+	Code        string                           `yaml:"code" json:"code,omitempty" jsonschema:"description=JavaScript code of an inline rule (exporting onMessage); mutually exclusive with codeFile"`
+	CodeFile    string                           `yaml:"codeFile" json:"codeFile,omitempty" jsonschema:"description=Local file with the JavaScript code of an inline rule (relative paths are resolved against the directory of the manifest file which declares it); mutually exclusive with code"`
+	Tests       map[string]SmartFunctionTestSpec `yaml:"tests" json:"tests,omitempty" jsonschema:"description=Tests of an inline rule by name: input messages and optionally the expected output"`
 
 	// WaitTimeout is how long to wait for the deployment to finish so
 	// deployment errors are reported
 	WaitTimeout string `yaml:"waitTimeout" json:"waitTimeout,omitempty" jsonschema:"description=How long to wait for each deployment to finish so engine errors are reported (Go duration; default 60s; 0 does not wait),example=2m"`
+}
+
+// IsInline reports whether the entry declares an inline rule (no source)
+func (spec SmartFunctionSpec) IsInline() bool {
+	return !spec.Source.IsSet()
+}
+
+// SmartFunctionInputSpec selects the messages an inline rule receives (the
+// input block of data-prep.yaml)
+type SmartFunctionInputSpec struct {
+	Transport       string `yaml:"transport" json:"transport,omitempty" jsonschema:"description=Transport type (default mqtt; the only supported value),example=mqtt"`
+	TopicPattern    string `yaml:"topicPattern" json:"topicPattern" jsonschema:"description=Topic filter; * matches zero or more characters (MQTT wildcards + and # are not supported),example=te/device/*///e/*"`
+	ClientIDPattern string `yaml:"clientIDPattern" json:"clientIDPattern,omitempty" jsonschema:"description=Device client ID filter; * is a wildcard"`
+	TransportID     string `yaml:"transportID" json:"transportID,omitempty" jsonschema:"description=Transport connection (defaults to the transport)"`
+}
+
+// SmartFunctionTestSpec is a test of an inline rule
+type SmartFunctionTestSpec struct {
+	Inputs         []SmartFunctionTestInputSpec `yaml:"inputs" json:"inputs" jsonschema:"description=Device messages fed to the smart function"`
+	ExpectedOutput []map[string]any             `yaml:"expectedOutput" json:"expectedOutput,omitempty" jsonschema:"description=Expected Cumulocity objects of all inputs in order (stored with the rule)"`
+}
+
+// SmartFunctionTestInputSpec is a device message of a test
+type SmartFunctionTestInputSpec struct {
+	Topic    string `yaml:"topic" json:"topic" jsonschema:"description=MQTT topic of the message,example=te/device/dev01///e/zephyr_Identify"`
+	ClientID string `yaml:"clientID" json:"clientID" jsonschema:"description=Client ID of the device,example=dev01"`
+	// Payload is a string, or a value which is sent as JSON
+	Payload       any    `yaml:"payload" json:"payload,omitempty" jsonschema:"description=Message payload: a string or an object/array/number (sent as JSON)"`
+	PayloadFormat string `yaml:"payloadFormat" json:"payloadFormat,omitempty" jsonschema:"description=Payload format (default: json when the payload is JSON or text otherwise),enum=json,enum=text,enum=base64"`
+	Time          string `yaml:"time" json:"time" jsonschema:"description=Message time as an ISO 8601 timestamp with a time zone,example=2026-01-01T00:00:00Z"`
 }
 
 // DefaultSmartFunctionWaitTimeout is how long a deployment is awaited when

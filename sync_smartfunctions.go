@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,6 +105,10 @@ func (p smartFunctionPackage) load() (*dataprep.RulePackage, error) {
 // (--force always deploys).
 func (s *Syncer) SyncSmartFunctions(ctx context.Context, specs []SmartFunctionSpec) error {
 	for index, spec := range specs {
+		if spec.IsInline() {
+			s.syncInlineSmartFunction(ctx, spec)
+			continue
+		}
 		files, ok := s.resolveSource(SectionSmartFunctions, fmt.Sprintf("smartFunctions[%d]", index), spec.resolvedSource())
 		if !ok {
 			continue
@@ -142,25 +148,146 @@ func (s *Syncer) syncSmartFunction(ctx context.Context, spec SmartFunctionSpec, 
 		return
 	}
 
+	s.deploySmartFunction(ctx, spec, pkg.Name, pkg.Origin, rule)
+}
+
+// syncInlineSmartFunction deploys a rule declared in the manifest
+func (s *Syncer) syncInlineSmartFunction(ctx context.Context, spec SmartFunctionSpec) {
+	origin := "inline"
+	if spec.CodeFile != "" {
+		origin = spec.CodeFile
+	}
+	rule, err := buildInlineSmartFunction(spec, s.Resolver.BaseDir)
+	if err != nil {
+		s.record(SectionSmartFunctions, spec.Name, ActionFailed, origin, err)
+		return
+	}
+	s.deploySmartFunction(ctx, spec, spec.Name, origin, rule)
+}
+
+// deploySmartFunction deploys a validated rule package when it differs from
+// the deployed rule (always with --force)
+func (s *Syncer) deploySmartFunction(ctx context.Context, spec SmartFunctionSpec, name, origin string, rule *dataprep.RulePackage) {
 	if s.DryRun {
-		// The package was read and validated locally, without API calls
-		s.record(SectionSmartFunctions, pkg.Name, ActionPlanned, "deploy rule from "+pkg.Origin, nil)
+		// The package was built and validated locally, without API calls
+		s.record(SectionSmartFunctions, name, ActionPlanned, "deploy rule from "+origin, nil)
 		return
 	}
 
 	wait := dataprep.WaitOptions{Timeout: spec.waitTimeout()}
 	var result op.Result[jsonmodels.DataPrepRule]
 	if s.Force {
-		result = s.Client.DataPreparation.Rules.Deploy(ctx, pkg.Name, dataprep.DeployOptions{Package: rule, Wait: wait})
+		result = s.Client.DataPreparation.Rules.Deploy(ctx, name, dataprep.DeployOptions{Package: rule, Wait: wait})
 	} else {
-		result = s.Client.DataPreparation.Rules.Apply(ctx, pkg.Name, dataprep.ApplyOptions{Package: rule, Wait: wait})
+		result = s.Client.DataPreparation.Rules.Apply(ctx, name, dataprep.ApplyOptions{Package: rule, Wait: wait})
 	}
 
-	detail := pkg.Origin
+	detail := origin
 	if changed, ok := result.Meta["changed"].([]string); ok && len(changed) > 0 {
 		detail += " (changed: " + strings.Join(changed, ", ") + ")"
 	}
-	s.record(SectionSmartFunctions, pkg.Name, actionFromResult(result.Status, nil), detail, smartFunctionErrorHint(result.Err))
+	s.record(SectionSmartFunctions, name, actionFromResult(result.Status, nil), detail, smartFunctionErrorHint(result.Err))
+}
+
+// testTimeLayout is how the server returns test input times; manifest times
+// are written the same way so stored tests compare equal on the next run
+const testTimeLayout = "2006-01-02T15:04:05.000Z"
+
+// buildInlineSmartFunction builds and validates the rule package of an
+// inline rule. Relative code files are resolved against baseDir.
+func buildInlineSmartFunction(spec SmartFunctionSpec, baseDir string) (*dataprep.RulePackage, error) {
+	code := spec.Code
+	if spec.CodeFile != "" {
+		path := spec.CodeFile
+		if !filepath.IsAbs(path) && baseDir != "" {
+			path = filepath.Join(baseDir, path)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read codeFile: %w", err)
+		}
+		code = string(raw)
+	}
+
+	input := dataprep.Input{Transport: dataprep.TransportMQTT}
+	if spec.Input != nil {
+		input.TopicPattern = spec.Input.TopicPattern
+		input.ClientIDPattern = spec.Input.ClientIDPattern
+		input.TransportID = spec.Input.TransportID
+		if spec.Input.Transport != "" {
+			input.Transport = spec.Input.Transport
+		}
+	}
+	rule := dataprep.NewPackage(dataprep.RuleConfig{
+		SmartFunctionFile: dataprep.ExportedSmartFunctionFile,
+		Description:       spec.Description,
+		Tags:              spec.Tags,
+		Disabled:          spec.Disabled,
+		Input:             input,
+	}).WithSmartFunction(code)
+
+	for name, test := range spec.Tests {
+		tc := dataprep.TestCase{ExpectedOutput: test.ExpectedOutput}
+		for i, in := range test.Inputs {
+			payload, format, err := testPayload(in.Payload, in.PayloadFormat)
+			if err != nil {
+				return nil, fmt.Errorf("test %q input %d: %w", name, i, err)
+			}
+			tc.Inputs = append(tc.Inputs, dataprep.TestInput{
+				Topic:         in.Topic,
+				ClientID:      in.ClientID,
+				Payload:       payload,
+				PayloadFormat: format,
+				Time:          normaliseTestTime(in.Time),
+			})
+		}
+		rule.WithTest(name, tc)
+	}
+
+	if err := rule.Validate(); err != nil {
+		return nil, err
+	}
+	return rule, nil
+}
+
+// testPayload turns a manifest payload into the package payload: strings are
+// sent as they are (json when they hold JSON, text otherwise), other values
+// as JSON
+func testPayload(value any, format string) (string, string, error) {
+	switch v := value.(type) {
+	case nil:
+		if format == "" {
+			format = dataprep.PayloadFormatText
+		}
+		return "", format, nil
+	case string:
+		if format == "" {
+			format = dataprep.PayloadFormatText
+			if json.Valid([]byte(v)) {
+				format = dataprep.PayloadFormatJSON
+			}
+		}
+		return v, format, nil
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return "", "", fmt.Errorf("payload: %w", err)
+		}
+		if format == "" {
+			format = dataprep.PayloadFormatJSON
+		}
+		return string(raw), format, nil
+	}
+}
+
+// normaliseTestTime writes an RFC 3339 time like the server returns it (UTC
+// with milliseconds); other values are kept for validation to report
+func normaliseTestTime(value string) string {
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	return t.UTC().Format(testTimeLayout)
 }
 
 // smartFunctionErrorHint explains common deployment failures
@@ -184,17 +311,57 @@ func validateSmartFunctions(specs []SmartFunctionSpec) []string {
 	var errs []string
 	for i, spec := range specs {
 		label := fmt.Sprintf("smartFunctions[%d]", i)
+		if spec.WaitTimeout != "" {
+			if d, err := time.ParseDuration(spec.WaitTimeout); err != nil || d < 0 {
+				errs = append(errs, fmt.Sprintf("%s: invalid waitTimeout %q (use a Go duration such as 90s or 2m)", label, spec.WaitTimeout))
+			}
+		}
+		if spec.IsInline() {
+			errs = append(errs, validateInlineSmartFunction(label, spec)...)
+			continue
+		}
+		if spec.Description != "" || len(spec.Tags) > 0 || spec.Disabled || spec.Input != nil ||
+			spec.Code != "" || spec.CodeFile != "" || len(spec.Tests) > 0 {
+			errs = append(errs, label+": description, tags, disabled, input, code, codeFile and tests only apply to inline rules (without a source)")
+		}
 		if err := spec.Source.Validate(); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
 		}
 		if spec.Source.Cloudsmith != nil {
 			errs = append(errs, label+": cloudsmith sources are not supported (use path or github)")
 		}
-		if spec.WaitTimeout != "" {
-			if d, err := time.ParseDuration(spec.WaitTimeout); err != nil || d < 0 {
-				errs = append(errs, fmt.Sprintf("%s: invalid waitTimeout %q (use a Go duration such as 90s or 2m)", label, spec.WaitTimeout))
+	}
+	return errs
+}
+
+// validateInlineSmartFunction checks an inline rule (the package itself is
+// validated when it is built, as the code may come from a file)
+func validateInlineSmartFunction(label string, spec SmartFunctionSpec) []string {
+	var errs []string
+	if spec.Name == "" {
+		errs = append(errs, label+": name is required for an inline rule (or set a source)")
+	}
+	if spec.Input == nil || spec.Input.TopicPattern == "" {
+		errs = append(errs, label+": input.topicPattern is required for an inline rule")
+	}
+	switch {
+	case spec.Code == "" && spec.CodeFile == "":
+		errs = append(errs, label+": one of code or codeFile is required for an inline rule (or set a source)")
+	case spec.Code != "" && spec.CodeFile != "":
+		errs = append(errs, label+": code and codeFile are mutually exclusive")
+	}
+	for name, test := range spec.Tests {
+		if len(test.Inputs) == 0 {
+			errs = append(errs, fmt.Sprintf("%s.tests.%s: needs at least one input", label, name))
+		}
+		for j, in := range test.Inputs {
+			if in.Time == "" {
+				errs = append(errs, fmt.Sprintf("%s.tests.%s.inputs[%d]: time is required", label, name, j))
+			} else if _, err := time.Parse(time.RFC3339, in.Time); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.tests.%s.inputs[%d]: time %q is not an ISO 8601 timestamp with a time zone", label, name, j, in.Time))
 			}
 		}
 	}
+	slices.Sort(errs)
 	return errs
 }

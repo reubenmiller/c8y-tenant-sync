@@ -57,7 +57,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree and inventory roles)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, Digital Twin Manager definitions and smart functions)
 
 ## Installation
 
@@ -354,6 +354,8 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `applications` | Applications the tenant is subscribed to but does not own, such as the built-in microservices (`--application-type MICROSERVICE,HOSTED` also exports web applications) |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
 | `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
+| `digitalTwin` | The tenant's own property and asset definitions. Library definitions and definitions shared from the enterprise tenant are not exported, and neither are fields the server generates (such as `$schema`) or maintains (such as `lastUpdated`). Other custom fields, such as an asset definition's `icon`, are exported as `fragments` |
+| `smartFunctions` | The deployed Data Preparation rules as [inline rules](#inline-rules), with their code and tests. Drafts and the AI chat history are not exported |
 
 | Flag | Description |
 |------|-------------|
@@ -363,7 +365,11 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | `--application-type` | Types of subscribed applications to export (default: `MICROSERVICE`) |
 | `--force` | Overwrite the output file |
 
-`$` in exported values is written as `$$`, so values are not expanded as environment variables when the manifest is loaded. Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
+`$` in exported values is written as `$$`, so values are not expanded as environment variables when the manifest is loaded. This includes smart function code: a JavaScript template literal such as `${data.name}` appears as `$${data.name}` in the manifest and is deployed unchanged.
+
+A tenant without the Digital Twin Manager or Data Preparation skips that section with a note, so a full export also works there.
+
+Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
 
 ## The Manifest
 

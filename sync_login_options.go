@@ -466,7 +466,7 @@ func (s *Syncer) dryRunReader() *api.Client {
 }
 
 // loginReadClient is the client used to read the tenant's login options,
-// user groups and applications (the read-only client in dry-run mode)
+// global roles and applications (the read-only client in dry-run mode)
 func (s *Syncer) loginReadClient() *api.Client {
 	if s.DryRun {
 		return s.dryRunReader()
@@ -611,7 +611,7 @@ func (o *ssoLoginOption) describe() string {
 }
 
 // buildSSOLoginOption checks the provider and generates the SSO login option.
-// The access mapping rules reference groups and applications by name; they
+// The access mapping rules reference global roles and applications by name; they
 // are resolved to IDs by resolveSSOAccessMappings.
 func buildSSOLoginOption(ctx context.Context, spec *SSOLoginSpec, preferred string) (*ssoLoginOption, error) {
 	if strings.TrimSpace(spec.ClientSecret) == "" {
@@ -752,16 +752,16 @@ func (s *Syncer) resolveSSOAccessMappings(ctx context.Context, spec *SSOLoginSpe
 	var mappings []any
 	for i, rule := range spec.Access.Rules {
 		var groups, apps []any
-		for _, name := range rule.Groups {
+		for _, name := range rule.GlobalRoles {
 			id, ok := groupIDs[name]
 			if !ok {
 				group := s.loginReadClient().UserGroups.GetByName(ctx, usergroups.GetByNameOptions{GroupName: name})
 				if group.Err != nil {
-					return fmt.Errorf("rules[%d]: user group %q: %w", i, name, group.Err)
+					return fmt.Errorf("rules[%d]: global role %q: %w", i, name, group.Err)
 				}
 				var err error
 				if id, err = strconv.Atoi(group.Data.ID()); err != nil {
-					return fmt.Errorf("rules[%d]: user group %q: invalid id %q", i, name, group.Data.ID())
+					return fmt.Errorf("rules[%d]: global role %q: invalid id %q", i, name, group.Data.ID())
 				}
 				groupIDs[name] = id
 			}

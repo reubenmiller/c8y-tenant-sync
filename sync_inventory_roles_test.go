@@ -99,7 +99,7 @@ inventoryRoles:
       - {scope: OPERATION, type: c8y_Restart, permission: ALL}
 users:
   - email: berlin-ops@example.com
-    inventoryAssignments:
+    inventoryRoles:
       - group: Europe/Plant Berlin
         roles: [Site operator, Existing role]
 `)
@@ -110,8 +110,8 @@ users:
 	assert.Equal(t, "Site operator", manifest.InventoryRoles[0].Name)
 	assert.Equal(t, "OPERATION:c8y_Restart:*", manifest.InventoryRoles[0].Permissions[1].Key(), "ALL is an alias of *")
 	assert.Equal(t, "ALARM:*:ADMIN", manifest.InventoryRoles[0].Permissions[0].Key(), "type defaults to *")
-	require.Len(t, manifest.Users[0].InventoryAssignments, 1)
-	assert.Equal(t, []string{"Site operator", "Existing role"}, manifest.Users[0].InventoryAssignments[0].Roles,
+	require.Len(t, manifest.Users[0].InventoryRoles, 1)
+	assert.Equal(t, []string{"Site operator", "Existing role"}, manifest.Users[0].InventoryRoles[0].Roles,
 		"roles not declared in the manifest are allowed")
 }
 
@@ -128,11 +128,11 @@ func TestValidateInventoryRoles(t *testing.T) {
 		{"unknown permission", "inventoryRoles:\n  - name: a\n    permissions: [{scope: ALARM, permission: WRITE}]\n", `inventoryRoles[0].permissions[0]: unknown permission "WRITE"`},
 		{"missing permission", "inventoryRoles:\n  - name: a\n    permissions: [{scope: ALARM}]\n", "inventoryRoles[0].permissions[0]: permission is required"},
 		{"duplicate permission", "inventoryRoles:\n  - name: a\n    permissions: [{scope: ALARM, permission: ALL}, {scope: ALARM, type: '*', permission: '*'}]\n", "inventoryRoles[0].permissions[1]: duplicate permission ALARM:*:*"},
-		{"assignment without group", "users:\n  - email: a@example.com\n    inventoryAssignments: [{roles: [x]}]\n", "users[0].inventoryAssignments[0]: group is required"},
-		{"assignment without roles", "users:\n  - email: a@example.com\n    inventoryAssignments: [{group: g}]\n", "users[0].inventoryAssignments[0]: at least one role is required"},
-		{"assignment with empty role", "users:\n  - email: a@example.com\n    inventoryAssignments: [{group: g, roles: ['']}]\n", "users[0].inventoryAssignments[0].roles[0]: role must not be empty"},
-		{"assignment with empty path segment", "users:\n  - email: a@example.com\n    inventoryAssignments: [{group: 'Europe//Berlin', roles: [x]}]\n", `invalid group path "Europe//Berlin"`},
-		{"duplicate group", "users:\n  - email: a@example.com\n    inventoryAssignments: [{group: g, roles: [x]}, {group: g, roles: [y]}]\n", `users[0].inventoryAssignments[1]: duplicate group "g"`},
+		{"assignment without group", "users:\n  - email: a@example.com\n    inventoryRoles: [{roles: [x]}]\n", "users[0].inventoryRoles[0]: group is required"},
+		{"assignment without roles", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: g}]\n", "users[0].inventoryRoles[0]: at least one role is required"},
+		{"assignment with empty role", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: g, roles: ['']}]\n", "users[0].inventoryRoles[0].roles[0]: role must not be empty"},
+		{"assignment with empty path segment", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: 'Europe//Berlin', roles: [x]}]\n", `invalid group path "Europe//Berlin"`},
+		{"duplicate group", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: g, roles: [x]}, {group: g, roles: [y]}]\n", `users[0].inventoryRoles[1]: duplicate group "g"`},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestSchemaRejectsInvalidInventoryRoles(t *testing.T) {
 	for _, content := range []string{
 		"inventoryRoles:\n  - name: a\n    permissions: [{scope: DEVICE, permission: READ}]\n",
 		"inventoryRoles:\n  - name: a\n    permissions: [{scope: ALARM}]\n",
-		"users:\n  - email: a@example.com\n    inventoryAssignments: [{group: g}]\n",
+		"users:\n  - email: a@example.com\n    inventoryRoles: [{group: g}]\n",
 	} {
 		assert.Error(t, validateYAML(t, schema, []byte(content)), content)
 	}
@@ -162,7 +162,7 @@ func TestInventoryRolesSectionOrder(t *testing.T) {
 		}
 		return -1
 	}
-	assert.Equal(t, index(SectionUserGroups)+1, index(SectionInventoryRoles))
+	assert.Equal(t, index(SectionGlobalRoles)+1, index(SectionInventoryRoles))
 	assert.Equal(t, index(SectionInventoryRoles)+1, index(SectionUsers))
 }
 
@@ -174,7 +174,7 @@ func TestSyncInventoryRolesDryRun(t *testing.T) {
 	require.NoError(t, s.SyncInventoryRoles(context.Background(), []InventoryRoleSpec{siteOperatorSpec, {Name: "Empty"}}))
 	require.NoError(t, s.SyncUsers(context.Background(), []UserSpec{{
 		Username: "berlin-ops@example.com",
-		InventoryAssignments: []InventoryAssignmentSpec{
+		InventoryRoles: []InventoryAssignmentSpec{
 			{Group: "Plant Berlin", Roles: []string{"Site operator"}},
 			{Group: "Europe/Plant Paris", Roles: []string{"Site operator", "Reader"}},
 		},
@@ -293,8 +293,8 @@ func syncBerlinOps(t *testing.T, f *fakeC8y, assignments ...InventoryAssignmentS
 	t.Helper()
 	s := newFakeSyncer(t, f)
 	require.NoError(t, s.SyncUsers(context.Background(), []UserSpec{{
-		Username:             "berlin-ops@example.com",
-		InventoryAssignments: assignments,
+		Username:       "berlin-ops@example.com",
+		InventoryRoles: assignments,
 	}}))
 	return resultFor(t, s, SectionUsers)
 }
@@ -477,7 +477,7 @@ inventoryRoles:
       - {scope: ALARM, permission: ADMIN}
 users:
   - email: berlin-ops@example.com
-    inventoryAssignments:
+    inventoryRoles:
       - group: Plant Berlin
         roles: [Site operator]
 `), 0o644))

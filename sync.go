@@ -48,7 +48,7 @@ const (
 	SectionExtensions             = "extensions"
 	SectionApplications           = "applications"
 	SectionDeviceGroups           = "deviceGroups"
-	SectionUserGroups             = "userGroups"
+	SectionGlobalRoles            = "globalRoles"
 	SectionInventoryRoles         = "inventoryRoles"
 	SectionUsers                  = "users"
 	SectionLoginOptions           = "loginOptions"
@@ -62,15 +62,15 @@ const (
 	SectionCommands               = "commands"
 )
 
-// SectionOrder is the order sections are applied in. User groups are synced
-// before users so users can be assigned to groups created in the same run;
-// inventory roles are synced after user groups and before users so the
-// users' inventory assignments can reference roles created in the same run;
-// login options follow the users, so the user groups of SSO access mappings
+// SectionOrder is the order sections are applied in. Global roles are synced
+// before users so users can be given global roles created in the same run;
+// inventory roles are synced after global roles and before users so the
+// users' inventory roles can reference roles created in the same run;
+// login options follow the users, so the global roles of SSO access mappings
 // exist and the login changes come after the users who log in;
 // repositories are synced before device profiles so profiles can reference
 // the synced items; custom commands run last so they can build on everything
-// the manifest declares. Device groups are synced before user groups and
+// the manifest declares. Device groups are synced before global roles and
 // users so roles and permissions can later be assigned on groups created in
 // the same run. UI extensions are uploaded before the web applications so
 // the applications can install extensions uploaded in the same run.
@@ -91,7 +91,7 @@ var SectionOrder = []string{
 	SectionExtensions,
 	SectionApplications,
 	SectionDeviceGroups,
-	SectionUserGroups,
+	SectionGlobalRoles,
 	SectionInventoryRoles,
 	SectionUsers,
 	SectionLoginOptions,
@@ -437,8 +437,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncApplications(baseCtx, manifest.Applications)
 		case SectionDeviceGroups:
 			err = s.SyncDeviceGroups(ctx, manifest.DeviceGroups)
-		case SectionUserGroups:
-			err = s.SyncUserGroups(ctx, manifest.UserGroups)
+		case SectionGlobalRoles:
+			err = s.SyncGlobalRoles(ctx, manifest.GlobalRoles)
 		case SectionInventoryRoles:
 			err = s.SyncInventoryRoles(ctx, manifest.InventoryRoles)
 		case SectionUsers:

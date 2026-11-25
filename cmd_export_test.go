@@ -208,7 +208,7 @@ func TestExportAllSections(t *testing.T) {
 				ManageRolesOnlyFromAccessMapping: true,
 				Rules: []SSOAccessRuleSpec{{
 					When:         []SSOConditionSpec{{Claim: "groups", Operator: "IN", Value: "c8y-admins"}},
-					Groups:       []string{"admins"},
+					GlobalRoles:  []string{"admins"},
 					Applications: []string{"smartrule"},
 				}},
 			},
@@ -273,6 +273,8 @@ func TestExportedManifestRoundTrip(t *testing.T) {
 
 	assert.Contains(t, text, "/home/$$USER", "$ is escaped")
 	assert.NotContains(t, text, "top-secret-value", "the SSO client secret is never exported")
+	assert.Contains(t, text, "globalRoles:\n", "SSO access rules list global roles (thenGroups in the API)")
+	assert.NotContains(t, text, "thenGroups")
 
 	// The escaped value is not expanded, even when the variable is set
 	t.Setenv("USER", "someone")

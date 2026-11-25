@@ -38,13 +38,13 @@ var sectionServiceUserRoles = map[string][]string{
 	SectionExtensions:             nil, // base credentials
 	SectionApplications:           nil, // base credentials
 	SectionDeviceGroups:           {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
-	SectionUserGroups:             {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
+	SectionGlobalRoles:            {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
 	SectionInventoryRoles:         {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
 	// Users are also assigned inventory roles on device groups
 	SectionUsers: {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN", "ROLE_INVENTORY_READ"},
 	// The login options API accepts ROLE_TENANT_MANAGEMENT_ADMIN (as well as
 	// ROLE_TENANT_ADMIN, which is deliberately not requested); SSO access
-	// mappings reference user groups and applications by name
+	// mappings reference global roles and applications by name
 	SectionLoginOptions:  {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_TENANT_MANAGEMENT_ADMIN", "ROLE_USER_MANAGEMENT_READ", "ROLE_APPLICATION_MANAGEMENT_READ"},
 	SectionSoftware:      {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
 	SectionFirmware:      {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},

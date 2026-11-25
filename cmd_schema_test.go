@@ -192,9 +192,9 @@ certificateRevocationLists:
 `,
 		},
 		{
-			name: "user group without name",
+			name: "global role without name",
 			content: `
-userGroups:
+globalRoles:
   - description: missing name
 `,
 		},

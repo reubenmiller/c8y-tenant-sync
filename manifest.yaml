@@ -103,37 +103,39 @@ microservices:
       path: ./build/my-microservice.zip
       optional: true # skip instead of failing when the file does not exist
 
-# Create user groups (called "global roles" in the UI) with roles assigned.
-# Role assignments are additive: roles already on a group but absent from the
-# manifest are kept, so built-in groups can be extended safely.
-userGroups:
+# Create global roles (user groups in the Cumulocity API) with permissions
+# assigned. Permission assignments are additive: permissions already on a
+# global role but absent from the manifest are kept, so built-in global roles
+# can be extended safely.
+globalRoles:
   - name: operators
     description: Read-only access for the operations team
-    roles:
+    permissions:
       - ROLE_INVENTORY_READ
       - ROLE_ALARM_READ
       - ROLE_EVENT_READ
 
   - name: admins
     description: Device power users
-    roles:
-      # add to existing admins group
+    permissions:
+      # add to the existing admins global role
       - ROLE_REMOTE_ACCESS_ADMIN
 
-# Create users and assign them to user groups. The password is only used when
-# creating a user (never updated afterwards); group memberships are additive.
+# Create users and give them global roles and inventory roles. The password is
+# only used when creating a user (never updated afterwards); roles are
+# additive.
 users:
   # - userName: jdoe@example.com
   #   email: jdoe@example.com
   #   firstName: Jane
   #   lastName: Doe
   #   sendPasswordResetEmail: true # email a reset link instead of setting a password
-  #   groups: [operators]
+  #   globalRoles: [operators]
 
   - userName: svc-dashboard
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
     email: ${DASHBOARD_USER_EMAIL}
-    groups: [operators]
+    globalRoles: [operators]
 
   - userName: old-account@example.com
     enabled: false # keep the account but disable it

@@ -97,7 +97,7 @@ type SSOLoginSpec struct {
 	UseIDToken  *bool                 `yaml:"useIdToken" json:"useIdToken,omitempty" jsonschema:"description=Read the user ID and user data from the ID token instead of the access token (default: true)"`
 	UserIDClaim string                `yaml:"userIdClaim" json:"userIdClaim,omitempty" jsonschema:"description=Claim used as the Cumulocity username (default: sub),example=preferred_username"`
 	UserData    *SSOUserDataSpec      `yaml:"userData" json:"userData,omitempty" jsonschema:"description=Claims holding the user data (defaults: email / given_name / family_name)"`
-	Access      *SSOAccessMappingSpec `yaml:"accessMappings" json:"accessMappings,omitempty" jsonschema:"description=Dynamic access mapping: which user groups and applications users get based on their token claims"`
+	Access      *SSOAccessMappingSpec `yaml:"accessMappings" json:"accessMappings,omitempty" jsonschema:"description=Dynamic access mapping: which global roles and applications users get based on their token claims"`
 
 	// Overrides are merged last into the generated login option, for fields
 	// which are not modelled. Placeholders of the platform must be escaped
@@ -116,17 +116,18 @@ type SSOUserDataSpec struct {
 // SSOAccessMappingSpec is the dynamic access mapping of the SSO login option
 type SSOAccessMappingSpec struct {
 	MapRolesOnlyForNewUser           bool `yaml:"mapRolesOnlyForNewUser" json:"mapRolesOnlyForNewUser,omitempty" jsonschema:"description=Only map the roles when a user logs in for the first time"`
-	ManageRolesOnlyFromAccessMapping bool `yaml:"manageRolesOnlyFromAccessMapping" json:"manageRolesOnlyFromAccessMapping,omitempty" jsonschema:"description=Only manage the groups and applications listed in the rules; others assigned in Cumulocity are kept"`
+	ManageRolesOnlyFromAccessMapping bool `yaml:"manageRolesOnlyFromAccessMapping" json:"manageRolesOnlyFromAccessMapping,omitempty" jsonschema:"description=Only manage the global roles and applications listed in the rules; others assigned in Cumulocity are kept"`
 	// MapFromIDToken defaults to useIdToken
 	MapFromIDToken *bool               `yaml:"mapFromIdToken" json:"mapFromIdToken,omitempty" jsonschema:"description=Evaluate the rules against the ID token instead of the access token (default: useIdToken)"`
-	Rules          []SSOAccessRuleSpec `yaml:"rules" json:"rules,omitempty" jsonschema:"description=Rules which assign user groups and applications when their conditions match"`
+	Rules          []SSOAccessRuleSpec `yaml:"rules" json:"rules,omitempty" jsonschema:"description=Rules which assign global roles and applications when their conditions match"`
 }
 
-// SSOAccessRuleSpec assigns groups and applications when its conditions match
+// SSOAccessRuleSpec assigns global roles and applications when its conditions
+// match. GlobalRoles is sent to Cumulocity as thenGroups.
 type SSOAccessRuleSpec struct {
 	Match        string             `yaml:"match" json:"match,omitempty" jsonschema:"enum=all,enum=any,description=Whether all (default) or any of the conditions must match"`
 	When         []SSOConditionSpec `yaml:"when" json:"when" jsonschema:"description=Conditions on token claims"`
-	Groups       []string           `yaml:"groups" json:"groups,omitempty" jsonschema:"description=User group names to assign"`
+	GlobalRoles  []string           `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global role names to assign (sent to Cumulocity as the user groups of the rule),example=operators"`
 	Applications []string           `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Application names to give access to"`
 }
 
@@ -254,8 +255,8 @@ func (s *SSOLoginSpec) validate(preferred string) []string {
 					errs = append(errs, fmt.Sprintf("%s.when[%d].operator: unknown operator %q: supported values are %s", ruleLabel, j, cond.Operator, strings.Join(SSOPredicateOperators, ", ")))
 				}
 			}
-			if len(rule.Groups) == 0 && len(rule.Applications) == 0 {
-				errs = append(errs, ruleLabel+" requires groups or applications")
+			if len(rule.GlobalRoles) == 0 && len(rule.Applications) == 0 {
+				errs = append(errs, ruleLabel+" requires globalRoles or applications")
 			}
 		}
 	}

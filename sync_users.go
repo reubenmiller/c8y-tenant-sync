@@ -16,21 +16,22 @@ import (
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/op"
 )
 
-// SyncUserGroups ensures user groups (called "global roles" in the Cumulocity
-// UI) exist with the desired description and roles. Role assignments are
-// additive: roles already on the group but absent from the manifest are left
-// alone, so built-in groups (admins, business, ...) can be extended safely.
-func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) error {
+// SyncGlobalRoles ensures global roles (user groups in the Cumulocity API)
+// exist with the desired description and permissions. Permission assignments
+// are additive: permissions already on the role but absent from the manifest
+// are left alone, so built-in global roles (admins, business, ...) can be
+// extended safely.
+func (s *Syncer) SyncGlobalRoles(ctx context.Context, specs []GlobalRoleSpec) error {
 	// Role self links are shared by all groups of the target tenant
 	roleSelfLinks := map[string]string{}
 
 	for _, spec := range specs {
 		if s.DryRun {
-			detail := "ensure group"
-			if len(spec.Roles) > 0 {
-				detail += " with roles: " + strings.Join(spec.Roles, ", ")
+			detail := "ensure global role"
+			if len(spec.Permissions) > 0 {
+				detail += " with permissions: " + strings.Join(spec.Permissions, ", ")
 			}
-			s.record(SectionUserGroups, spec.Name, ActionPlanned, detail, nil)
+			s.record(SectionGlobalRoles, spec.Name, ActionPlanned, detail, nil)
 			continue
 		}
 
@@ -48,7 +49,7 @@ func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) erro
 			}
 			created := s.Client.UserGroups.Create(ctx, body)
 			if created.Err != nil {
-				s.record(SectionUserGroups, spec.Name, ActionFailed, "create group", created.Err)
+				s.record(SectionGlobalRoles, spec.Name, ActionFailed, "create global role", created.Err)
 				continue
 			}
 			groupID = created.Data.ID()
@@ -61,7 +62,7 @@ func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) erro
 					"description": spec.Description,
 				})
 				if result.Err != nil {
-					s.record(SectionUserGroups, spec.Name, ActionFailed, "update group", result.Err)
+					s.record(SectionGlobalRoles, spec.Name, ActionFailed, "update global role", result.Err)
 					continue
 				}
 				action = ActionUpdated
@@ -69,18 +70,18 @@ func (s *Syncer) SyncUserGroups(ctx context.Context, specs []UserGroupSpec) erro
 			}
 		}
 
-		assigned, err := s.ensureGroupRoles(ctx, groupID, action == ActionCreated, spec.Roles, roleSelfLinks)
+		assigned, err := s.ensureGroupRoles(ctx, groupID, action == ActionCreated, spec.Permissions, roleSelfLinks)
 		if err != nil {
-			s.record(SectionUserGroups, spec.Name, ActionFailed, "assign roles", err)
+			s.record(SectionGlobalRoles, spec.Name, ActionFailed, "assign permissions", err)
 			continue
 		}
 		if len(assigned) > 0 {
 			if action == ActionUnchanged {
 				action = ActionUpdated
 			}
-			details = append(details, "assigned roles: "+strings.Join(assigned, ", "))
+			details = append(details, "assigned permissions: "+strings.Join(assigned, ", "))
 		}
-		s.record(SectionUserGroups, spec.Name, action, strings.Join(details, "; "), nil)
+		s.record(SectionGlobalRoles, spec.Name, action, strings.Join(details, "; "), nil)
 	}
 	return nil
 }
@@ -135,10 +136,10 @@ func (s *Syncer) ensureGroupRoles(ctx context.Context, groupID string, created b
 	return assigned, nil
 }
 
-// SyncUsers ensures users exist with the desired profile fields and group
-// memberships. The password is only used when creating a user (existing
-// passwords are never overwritten); group memberships are additive: groups
-// the user belongs to but which are absent from the manifest are kept.
+// SyncUsers ensures users exist with the desired profile fields, global roles
+// and inventory roles. The password is only used when creating a user
+// (existing passwords are never overwritten); global roles are additive:
+// global roles the user has but which are absent from the manifest are kept.
 func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 	// Group IDs are resolved once and shared by all users of the target tenant
 	groupIDs := map[string]string{}
@@ -148,11 +149,11 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 	for _, spec := range specs {
 		if s.DryRun {
 			detail := "ensure user"
-			if len(spec.Groups) > 0 {
-				detail += " in groups: " + strings.Join(spec.Groups, ", ")
+			if len(spec.GlobalRoles) > 0 {
+				detail += " with global roles: " + strings.Join(spec.GlobalRoles, ", ")
 			}
-			if len(spec.InventoryAssignments) > 0 {
-				detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryAssignments)
+			if len(spec.InventoryRoles) > 0 {
+				detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryRoles)
 			}
 			s.record(SectionUsers, spec.Username, ActionPlanned, detail, nil)
 			continue
@@ -200,19 +201,19 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 			}
 		}
 
-		assigned, err := s.ensureUserGroups(ctx, userID, userSelf, action == ActionCreated, spec.Groups, groupIDs)
+		assigned, err := s.ensureUserGroups(ctx, userID, userSelf, action == ActionCreated, spec.GlobalRoles, groupIDs)
 		if err != nil {
-			s.record(SectionUsers, spec.Username, ActionFailed, "assign groups", err)
+			s.record(SectionUsers, spec.Username, ActionFailed, "assign global roles", err)
 			continue
 		}
 		if len(assigned) > 0 {
 			if action == ActionUnchanged {
 				action = ActionUpdated
 			}
-			details = append(details, "assigned to groups: "+strings.Join(assigned, ", "))
+			details = append(details, "assigned global roles: "+strings.Join(assigned, ", "))
 		}
 
-		inventoryChanges, err := s.ensureInventoryAssignments(ctx, userID, action == ActionCreated, spec.InventoryAssignments, inventory)
+		inventoryChanges, err := s.ensureInventoryAssignments(ctx, userID, action == ActionCreated, spec.InventoryRoles, inventory)
 		if len(inventoryChanges) > 0 {
 			if action == ActionUnchanged {
 				action = ActionUpdated

@@ -34,7 +34,7 @@ func TestManifestPathsFromArgs(t *testing.T) {
 func TestLoadManifestsMergesInOrder(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"common.yaml": "userGroups:\n  - name: operators\n    roles: [ROLE_A]\n",
+		"common.yaml": "globalRoles:\n  - name: operators\n    permissions: [ROLE_A]\n",
 		"base.yaml": `
 include: [common.yaml]
 targets:
@@ -47,9 +47,9 @@ software:
 		"envs/prod.yaml": `
 retentionRules:
   - {dataType: ALARM, maximumAge: 90}
-userGroups:
+globalRoles:
   - name: operators
-    roles: [ROLE_B]
+    permissions: [ROLE_B]
 software:
   - source: {path: packages}
 hooks:
@@ -67,8 +67,8 @@ hooks:
 	assert.Equal(t, []string{"common.yaml"}, manifest.IncludedFiles, "only files reached via include are listed")
 	require.Len(t, manifest.RetentionRules, 1)
 	assert.Equal(t, int64(90), manifest.RetentionRules[0].MaximumAge, "later files win")
-	require.Len(t, manifest.UserGroups, 1)
-	assert.Equal(t, []string{"ROLE_B"}, manifest.UserGroups[0].Roles)
+	require.Len(t, manifest.GlobalRoles, 1)
+	assert.Equal(t, []string{"ROLE_B"}, manifest.GlobalRoles[0].Permissions)
 	require.NotNil(t, manifest.Targets, "sections the later file does not set are kept")
 	assert.True(t, manifest.Targets.AllChildren)
 
@@ -90,7 +90,7 @@ hooks:
 	manifest, err = LoadManifestsWith([]string{base, prod, base, filepath.Join(dir, "common.yaml")}, LoadOptions{})
 	require.NoError(t, err)
 	assert.Len(t, manifest.Software, 2)
-	assert.Equal(t, []string{"ROLE_B"}, manifest.UserGroups[0].Roles)
+	assert.Equal(t, []string{"ROLE_B"}, manifest.GlobalRoles[0].Permissions)
 
 	// Errors name the file
 	_, err = LoadManifestsWith([]string{base, filepath.Join(dir, "missing.yaml")}, LoadOptions{})

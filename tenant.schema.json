@@ -776,6 +776,36 @@
         "repo"
       ]
     },
+    "GlobalRoleSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the global role",
+          "examples": [
+            "operators"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the global role"
+        },
+        "permissions": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "ROLE_INVENTORY_READ"
+            ]
+          },
+          "type": "array",
+          "description": "Permission names (ROLE_*) assigned to the global role (additive; permissions not listed are never removed)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
     "HookSpec": {
       "properties": {
         "name": {
@@ -1280,7 +1310,7 @@
         },
         "manageRolesOnlyFromAccessMapping": {
           "type": "boolean",
-          "description": "Only manage the groups and applications listed in the rules; others assigned in Cumulocity are kept"
+          "description": "Only manage the global roles and applications listed in the rules; others assigned in Cumulocity are kept"
         },
         "mapFromIdToken": {
           "type": "boolean",
@@ -1291,7 +1321,7 @@
             "$ref": "#/$defs/SSOAccessRuleSpec"
           },
           "type": "array",
-          "description": "Rules which assign user groups and applications when their conditions match"
+          "description": "Rules which assign global roles and applications when their conditions match"
         }
       },
       "additionalProperties": false,
@@ -1314,12 +1344,15 @@
           "type": "array",
           "description": "Conditions on token claims"
         },
-        "groups": {
+        "globalRoles": {
           "items": {
-            "type": "string"
+            "type": "string",
+            "examples": [
+              "operators"
+            ]
           },
           "type": "array",
-          "description": "User group names to assign"
+          "description": "Global role names to assign (sent to Cumulocity as the user groups of the rule)"
         },
         "applications": {
           "items": {
@@ -1438,7 +1471,7 @@
         },
         "accessMappings": {
           "$ref": "#/$defs/SSOAccessMappingSpec",
-          "description": "Dynamic access mapping: which user groups and applications users get based on their token claims"
+          "description": "Dynamic access mapping: which global roles and applications users get based on their token claims"
         },
         "overrides": {
           "type": "object",
@@ -2197,36 +2230,6 @@
         "source"
       ]
     },
-    "UserGroupSpec": {
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Name of the user group",
-          "examples": [
-            "operators"
-          ]
-        },
-        "description": {
-          "type": "string",
-          "description": "Description of the user group"
-        },
-        "roles": {
-          "items": {
-            "type": "string",
-            "examples": [
-              "ROLE_INVENTORY_READ"
-            ]
-          },
-          "type": "array",
-          "description": "Role names assigned to the group (additive; roles not listed are never removed)"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "name"
-      ]
-    },
     "UserSpec": {
       "anyOf": [
         {
@@ -2280,7 +2283,7 @@
           "type": "boolean",
           "description": "Send a password reset email when creating the user (requires email; alternative to password)"
         },
-        "groups": {
+        "globalRoles": {
           "items": {
             "type": "string",
             "examples": [
@@ -2288,9 +2291,9 @@
             ]
           },
           "type": "array",
-          "description": "User group names the user is assigned to (additive; memberships not listed are never removed)"
+          "description": "Global role names the user is assigned to (additive; global roles not listed are never removed)"
         },
-        "inventoryAssignments": {
+        "inventoryRoles": {
           "items": {
             "$ref": "#/$defs/InventoryAssignmentSpec"
           },
@@ -2308,7 +2311,7 @@
         "$ref": "#/$defs/IncludeSpec"
       },
       "type": "array",
-      "description": "Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or user group name) and the targets and certificateAuthority sections of a later file replace earlier ones"
+      "description": "Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or global role name) and the targets and certificateAuthority sections of a later file replace earlier ones"
     },
     "targets": {
       "$ref": "#/$defs/TargetsSpec",
@@ -2388,26 +2391,26 @@
       "type": "array",
       "description": "Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"
     },
-    "userGroups": {
+    "globalRoles": {
       "items": {
-        "$ref": "#/$defs/UserGroupSpec"
+        "$ref": "#/$defs/GlobalRoleSpec"
       },
       "type": "array",
-      "description": "User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"
+      "description": "Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed)"
     },
     "inventoryRoles": {
       "items": {
         "$ref": "#/$defs/InventoryRoleSpec"
       },
       "type": "array",
-      "description": "Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"
+      "description": "Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryRoles"
     },
     "users": {
       "items": {
         "$ref": "#/$defs/UserSpec"
       },
       "type": "array",
-      "description": "Users to create/update and assign to user groups (additive: existing memberships are never removed)"
+      "description": "Users to create/update and give global roles and inventory roles (additive: existing roles are never removed)"
     },
     "loginOptions": {
       "$ref": "#/$defs/LoginOptionsSpec",

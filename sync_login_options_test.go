@@ -166,7 +166,7 @@ func ssoSpec(p *fakeOIDC) *SSOLoginSpec {
 		UserIDClaim:  "preferred_username",
 		Access: &SSOAccessMappingSpec{Rules: []SSOAccessRuleSpec{{
 			When:         []SSOConditionSpec{{Claim: "groups", Operator: "IN", Value: "c8y-admins"}},
-			Groups:       []string{"admins"},
+			GlobalRoles:  []string{"admins"},
 			Applications: []string{"devicemanagement"},
 		}}},
 	}
@@ -244,7 +244,7 @@ func TestLoginOptionsValidate(t *testing.T) {
 			s := ssoSpec(p)
 			s.Access.Rules = append(s.Access.Rules, SSOAccessRuleSpec{Match: "some", When: []SSOConditionSpec{{Operator: "LIKE"}}})
 			return s
-		}()}, []string{`match: unknown value "some"`, "when[0].claim is required", `unknown operator "LIKE"`, "requires groups or applications"}},
+		}()}, []string{`match: unknown value "some"`, "when[0].claim is required", `unknown operator "LIKE"`, "requires globalRoles or applications"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -428,7 +428,7 @@ func TestSyncLoginOptionsUnknownGroupKeepsMode(t *testing.T) {
 
 	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{Preferred: LoginModeSSO, SSO: ssoSpec(p)}))
 	results := loginResults(s)
-	assert.ErrorContains(t, results[LoginTypeSSO].Err, `user group "admins"`)
+	assert.ErrorContains(t, results[LoginTypeSSO].Err, `global role "admins"`)
 	assert.ErrorContains(t, results[loginItemPreferred].Err, "kept login mode oaiSecure")
 	assert.Empty(t, writes(f))
 }
@@ -708,7 +708,7 @@ func TestSyncLoginOptionsDryRunComparesWithTenant(t *testing.T) {
 
 		require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{Preferred: LoginModeSSO, SSO: ssoSpec(p)}))
 		results := loginResults(s)
-		assert.ErrorContains(t, results[LoginTypeSSO].Err, `user group "admins"`)
+		assert.ErrorContains(t, results[LoginTypeSSO].Err, `global role "admins"`)
 		assert.ErrorContains(t, results[loginItemPreferred].Err, "kept login mode oaiSecure")
 	})
 
@@ -901,7 +901,7 @@ func TestExportLoginOptionsKeepsManifestValid(t *testing.T) {
 		f := fakeExportTenant(t)
 		f.JSON("GET /user/t123/groups/3", http.StatusForbidden, map[string]any{"error": "security/Forbidden", "message": "denied"})
 		_, err := (&Exporter{Client: f.Client()}).loginOptions(context.Background())
-		assert.ErrorContains(t, err, "sso access mapping: user group 3")
+		assert.ErrorContains(t, err, "sso access mapping: global role 3")
 	})
 
 	t.Run("an unreadable application fails the export", func(t *testing.T) {

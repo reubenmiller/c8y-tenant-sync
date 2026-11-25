@@ -90,7 +90,7 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	printSectionCount(SectionExtensions, len(manifest.Extensions))
 	printSectionCount(SectionApplications, len(manifest.Applications))
 	printSectionCount(SectionDeviceGroups, len(manifest.DeviceGroups))
-	printSectionCount(SectionUserGroups, len(manifest.UserGroups))
+	printSectionCount(SectionGlobalRoles, len(manifest.GlobalRoles))
 	printSectionCount(SectionInventoryRoles, len(manifest.InventoryRoles))
 	printSectionCount(SectionUsers, len(manifest.Users))
 	loginCount := 0

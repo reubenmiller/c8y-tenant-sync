@@ -206,19 +206,20 @@ deviceGroups:
           - name: Line 1
           - name: Line 2
 
-# Create user groups (called "global roles" in the UI) with roles assigned.
-# Role assignments are additive: roles already on a group but absent from the
-# manifest are kept, so built-in groups can be extended safely.
-userGroups:
+# Create global roles (user groups in the Cumulocity API) with permissions
+# assigned. Permission assignments are additive: permissions already on a
+# global role but absent from the manifest are kept, so built-in global roles
+# can be extended safely.
+globalRoles:
   - name: operators
     description: Read-only access for the operations team
-    roles:
+    permissions:
       - ROLE_INVENTORY_READ
       - ROLE_ALARM_READ
       - ROLE_EVENT_READ
 
 # Create inventory roles: permissions which users get only on the devices of
-# specific device groups (see users[].inventoryAssignments). Roles are matched
+# specific device groups (see users[].inventoryRoles). Roles are matched
 # by name; the permissions are replaced when the set differs. scope: ALARM,
 # AUDIT, EVENT, MANAGED_OBJECT, MEASUREMENT, OPERATION or *; type defaults to
 # *; permission: READ, ADMIN or * (ALL)
@@ -234,8 +235,9 @@ inventoryRoles:
     permissions:
       - {scope: OPERATION, type: c8y_Restart, permission: ADMIN}
 
-# Create users and assign them to user groups. The password is only used when
-# creating a user (never updated afterwards); group memberships are additive.
+# Create users and give them global roles and inventory roles. The password is
+# only used when creating a user (never updated afterwards); roles are
+# additive.
 users:
   # The userName defaults to the email (and the email to an email-like
   # userName when the user is created)
@@ -243,12 +245,12 @@ users:
     firstName: Jane
     lastName: Doe
     sendPasswordResetEmail: true # email a reset link instead of setting a password
-    groups: [operators]
+    globalRoles: [operators]
 
   - userName: svc-dashboard
     email: ops@example.com # required to create a user whose userName is not an email
     password: ${DASHBOARD_USER_PASSWORD} # injected from the environment
-    groups: [operators]
+    globalRoles: [operators]
 
   # A random initial password, stored in tenant.secrets.yaml (encrypted with
   # sops when a .sops.yaml is found) and masked in the output. passwordFrom
@@ -256,14 +258,14 @@ users:
   - email: svc-monitoring@example.invalid
     passwordFrom:
       generate: svc-monitoring-password # or: env: MONITORING_PASSWORD
-    groups: [operators]
+    globalRoles: [operators]
 
   # A site operator who only sees the devices of one site. The device group is
   # looked up by name (or by a path such as Europe/Plant Berlin) and must
   # exist; missing roles are added, existing ones are never removed
   - email: berlin-ops@example.com
     sendPasswordResetEmail: true
-    inventoryAssignments:
+    inventoryRoles:
       - group: Plant Berlin
         roles: [Site operator, Restart only]
 
@@ -295,7 +297,7 @@ loginOptions:
   #           - claim: groups
   #             operator: IN
   #             value: c8y-admins
-  #         groups: [admins]
+  #         globalRoles: [admins]
 
 # Sync software packages. Name, version, architecture and software type are
 # parsed from the filenames (same logic as the software-uploader example).

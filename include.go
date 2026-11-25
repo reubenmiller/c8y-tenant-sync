@@ -674,7 +674,7 @@ func mergeManifests(base, over *Manifest) *Manifest {
 	out.Extensions = mergeByKey(base.Extensions, over.Extensions, func(e ExtensionSpec) string { return e.Name })
 	out.Applications = mergeByKey(base.Applications, over.Applications, func(a ApplicationSpec) string { return a.Name })
 	out.DeviceGroups = mergeByKey(base.DeviceGroups, over.DeviceGroups, func(g DeviceGroupSpec) string { return g.Name })
-	out.UserGroups = mergeByKey(base.UserGroups, over.UserGroups, func(g UserGroupSpec) string { return g.Name })
+	out.GlobalRoles = mergeByKey(base.GlobalRoles, over.GlobalRoles, func(g GlobalRoleSpec) string { return g.Name })
 	out.InventoryRoles = mergeByKey(base.InventoryRoles, over.InventoryRoles, func(r InventoryRoleSpec) string { return r.Name })
 	out.Users = mergeByKey(base.Users, over.Users, func(u UserSpec) string { return u.Username })
 	out.DeviceProfiles = mergeByKey(base.DeviceProfiles, over.DeviceProfiles, func(p DeviceProfileSpec) string { return p.Name })

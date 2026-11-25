@@ -99,15 +99,15 @@ software:
 #     groups:
 #       - name: Plant Berlin
 
-# userGroups:
+# globalRoles:
 #   - name: operators
-#     roles: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]
+#     permissions: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]
 
 # users:
 #   - userName: jdoe@example.com
 #     email: jdoe@example.com
 #     sendPasswordResetEmail: true
-#     groups: [operators]
+#     globalRoles: [operators]
 
 # deviceProfiles:
 #   - name: base-profile

@@ -21,7 +21,7 @@ import (
 // profiles) can reference items created by earlier ones (firmware, software,
 // configuration).
 type Manifest struct {
-	Include []IncludeSpec `yaml:"include" json:"include,omitempty" jsonschema:"description=Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or user group name) and the targets and certificateAuthority sections of a later file replace earlier ones"`
+	Include []IncludeSpec `yaml:"include" json:"include,omitempty" jsonschema:"description=Other manifest files merged before this file's content: paths or glob patterns relative to this file. List sections are concatenated (includes first); entries with the same identity (e.g. tenant option category+key or global role name) and the targets and certificateAuthority sections of a later file replace earlier ones"`
 
 	Targets *TargetsSpec `yaml:"targets" json:"targets,omitempty" jsonschema:"description=Which tenants the manifest is applied to (defaults to the current tenant); applying to other tenants requires parent/management tenant credentials"`
 
@@ -41,11 +41,11 @@ type Manifest struct {
 	Extensions    []ExtensionSpec    `yaml:"extensions" json:"extensions,omitempty" jsonschema:"description=UI extensions (plugin packages) to upload into the tenant running the sync; a version is only uploaded when it is not on the extension yet. Install them into web applications with applications[].extensions; the Extensions page of the Administration application"`
 	Applications  []ApplicationSpec  `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Web applications to subscribe to the target tenant (optionally kept at the version of a source and with UI extensions installed); the Applications page of the Administration application. Microservices are listed under microservices"`
 	DeviceGroups  []DeviceGroupSpec  `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
-	UserGroups    []UserGroupSpec    `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
+	GlobalRoles   []GlobalRoleSpec   `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed)"`
 	// InventoryRoles are permission sets which users get on specific device
-	// groups through users[].inventoryAssignments
-	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"`
-	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and assign to user groups (additive: existing memberships are never removed)"`
+	// groups through users[].inventoryRoles
+	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryRoles"`
+	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and give global roles and inventory roles (additive: existing roles are never removed)"`
 	// LoginOptions configures how users log in (basic, OAI-Secure, SSO)
 	LoginOptions  *LoginOptionsSpec   `yaml:"loginOptions" json:"loginOptions,omitempty" jsonschema:"description=Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"`
 	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
@@ -545,22 +545,23 @@ type DeviceGroupSpec struct {
 	Groups []DeviceGroupSpec `yaml:"groups" json:"groups,omitempty" jsonschema:"description=Child groups linked to this group as child assets"`
 }
 
-// UserGroupSpec ensures a user group (called "global role" in the Cumulocity
-// UI) exists with the given description and roles. Role assignments are
-// additive: roles already on the group but absent from the manifest are left
-// alone.
-type UserGroupSpec struct {
-	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the user group,example=operators"`
-	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the user group"`
+// GlobalRoleSpec ensures a global role (a user group in the Cumulocity API)
+// exists with the given description and permissions. Permission assignments
+// are additive: permissions already on the role but absent from the manifest
+// are left alone.
+type GlobalRoleSpec struct {
+	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the global role,example=operators"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the global role"`
 
-	// Roles lists role names assigned to the group. Missing roles are
-	// assigned; roles not listed are never removed.
-	Roles []string `yaml:"roles" json:"roles,omitempty" jsonschema:"description=Role names assigned to the group (additive; roles not listed are never removed),example=ROLE_INVENTORY_READ"`
+	// Permissions lists the ROLE_* permission names assigned to the global
+	// role. Missing permissions are assigned; permissions not listed are
+	// never removed.
+	Permissions []string `yaml:"permissions" json:"permissions,omitempty" jsonschema:"description=Permission names (ROLE_*) assigned to the global role (additive; permissions not listed are never removed),example=ROLE_INVENTORY_READ"`
 }
 
-// UserSpec ensures a user exists with the desired profile fields and group
-// memberships. The password is only used when creating the user (existing
-// passwords are never overwritten) and group memberships are additive.
+// UserSpec ensures a user exists with the desired profile fields, global
+// roles and inventory roles. The password is only used when creating the user
+// (existing passwords are never overwritten) and roles are additive.
 type UserSpec struct {
 	Username  string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
 	Email     string `yaml:"email" json:"email,omitempty" jsonschema:"description=Email address of the user (required to create a user; defaults to the userName when it is an email address)"`
@@ -583,14 +584,15 @@ type UserSpec struct {
 	// link on creation instead of (or in addition to) setting a password
 	SendPasswordResetEmail bool `yaml:"sendPasswordResetEmail" json:"sendPasswordResetEmail,omitempty" jsonschema:"description=Send a password reset email when creating the user (requires email; alternative to password)"`
 
-	// Groups lists user group names the user is assigned to. Missing
-	// memberships are added; memberships not listed are never removed.
-	Groups []string `yaml:"groups" json:"groups,omitempty" jsonschema:"description=User group names the user is assigned to (additive; memberships not listed are never removed),example=operators"`
+	// GlobalRoles lists the global roles (user groups in the API) the user
+	// is assigned to. Missing roles are added; roles not listed are never
+	// removed.
+	GlobalRoles []string `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global role names the user is assigned to (additive; global roles not listed are never removed),example=operators"`
 
-	// InventoryAssignments give the user inventory roles on device groups.
+	// InventoryRoles give the user inventory roles on device groups.
 	// Missing roles are added; roles and assignments not listed are never
 	// removed.
-	InventoryAssignments []InventoryAssignmentSpec `yaml:"inventoryAssignments" json:"inventoryAssignments,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"`
+	InventoryRoles []InventoryAssignmentSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"`
 }
 
 // InventoryRoleScopes are the scopes of inventory role permissions
@@ -1607,17 +1609,17 @@ func (m *Manifest) Validate() error {
 		}
 	}
 	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)
-	groupNames := make(map[string]bool, len(m.UserGroups))
-	for i, group := range m.UserGroups {
+	groupNames := make(map[string]bool, len(m.GlobalRoles))
+	for i, group := range m.GlobalRoles {
 		if group.Name == "" {
-			errs = append(errs, fmt.Sprintf("userGroups[%d]: name is required", i))
+			errs = append(errs, fmt.Sprintf("globalRoles[%d]: name is required", i))
 		} else if groupNames[group.Name] {
-			errs = append(errs, fmt.Sprintf("userGroups[%d]: duplicate group name %q", i, group.Name))
+			errs = append(errs, fmt.Sprintf("globalRoles[%d]: duplicate global role name %q", i, group.Name))
 		}
 		groupNames[group.Name] = true
-		for j, role := range group.Roles {
-			if strings.TrimSpace(role) == "" {
-				errs = append(errs, fmt.Sprintf("userGroups[%d].roles[%d]: role must not be empty", i, j))
+		for j, permission := range group.Permissions {
+			if strings.TrimSpace(permission) == "" {
+				errs = append(errs, fmt.Sprintf("globalRoles[%d].permissions[%d]: permission must not be empty", i, j))
 			}
 		}
 	}
@@ -1665,14 +1667,14 @@ func (m *Manifest) Validate() error {
 		if user.SendPasswordResetEmail && user.CreateEmail() == "" {
 			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
 		}
-		for j, group := range user.Groups {
+		for j, group := range user.GlobalRoles {
 			if strings.TrimSpace(group) == "" {
-				errs = append(errs, fmt.Sprintf("users[%d].groups[%d]: group must not be empty", i, j))
+				errs = append(errs, fmt.Sprintf("users[%d].globalRoles[%d]: global role must not be empty", i, j))
 			}
 		}
-		assignedGroups := make(map[string]bool, len(user.InventoryAssignments))
-		for j, assignment := range user.InventoryAssignments {
-			prefix := fmt.Sprintf("users[%d].inventoryAssignments[%d]", i, j)
+		assignedGroups := make(map[string]bool, len(user.InventoryRoles))
+		for j, assignment := range user.InventoryRoles {
+			prefix := fmt.Sprintf("users[%d].inventoryRoles[%d]", i, j)
 			group := strings.TrimSpace(assignment.Group)
 			if group == "" {
 				errs = append(errs, prefix+": group is required")

@@ -34,9 +34,9 @@ tenantOptions:
   - {category: base, key: b, value: "1"}
 retentionRules:
   - {dataType: ALARM, maximumAge: 30}
-userGroups:
+globalRoles:
   - name: operators
-    roles: [ROLE_INVENTORY_READ]
+    permissions: [ROLE_INVENTORY_READ]
 trustedCertificates:
   - source: {path: certs/base.pem}
 hooks:
@@ -62,9 +62,9 @@ tenantOptions:
   - {category: own, key: c, value: "3"}
 retentionRules:
   - {dataType: ALARM, maximumAge: 90}
-userGroups:
+globalRoles:
   - name: operators
-    roles: [ROLE_ALARM_READ]
+    permissions: [ROLE_ALARM_READ]
   - name: viewers
 trustedCertificates:
   - source: {path: certs/own.pem}
@@ -95,9 +95,9 @@ hooks:
 	require.Len(t, manifest.RetentionRules, 1)
 	assert.Equal(t, int64(90), manifest.RetentionRules[0].MaximumAge)
 
-	require.Len(t, manifest.UserGroups, 2)
-	assert.Equal(t, []string{"ROLE_ALARM_READ"}, manifest.UserGroups[0].Roles, "the whole group definition is replaced")
-	assert.Equal(t, "viewers", manifest.UserGroups[1].Name)
+	require.Len(t, manifest.GlobalRoles, 2)
+	assert.Equal(t, []string{"ROLE_ALARM_READ"}, manifest.GlobalRoles[0].Permissions, "the whole group definition is replaced")
+	assert.Equal(t, "viewers", manifest.GlobalRoles[1].Name)
 
 	// Entries without an identity are concatenated
 	require.Len(t, manifest.TrustedCertificates, 2)
@@ -191,10 +191,10 @@ func TestIncludeSharedFileMergedOnce(t *testing.T) {
 func TestIncludeGlob(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"common/20-groups.yaml": "userGroups:\n  - name: second\n",
-		"common/10-groups.yaml": "userGroups:\n  - name: first\n",
+		"common/20-groups.yaml": "globalRoles:\n  - name: second\n",
+		"common/10-groups.yaml": "globalRoles:\n  - name: first\n",
 		"common/readme.txt":     "not matched",
-		"tenant.yaml":           "include: ['common/*.yaml']\nuserGroups:\n  - name: own\n",
+		"tenant.yaml":           "include: ['common/*.yaml']\nglobalRoles:\n  - name: own\n",
 		"all.yaml":              "include: ['*.yaml']\nfeatures:\n  - key: f\n",
 		"none.yaml":             "include: ['missing/*.yaml']\n",
 		"none-optional.yaml":    "include:\n  - path: 'missing/*.yaml'\n    optional: true\n",
@@ -206,7 +206,7 @@ func TestIncludeGlob(t *testing.T) {
 	manifest, err := LoadManifest(filepath.Join(dir, "tenant.yaml"))
 	require.NoError(t, err)
 	var names []string
-	for _, group := range manifest.UserGroups {
+	for _, group := range manifest.GlobalRoles {
 		names = append(names, group.Name)
 	}
 	assert.Equal(t, []string{"first", "second", "own"}, names, "glob matches are merged sorted by name")

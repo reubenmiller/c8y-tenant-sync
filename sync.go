@@ -156,6 +156,10 @@ type Syncer struct {
 	// inventoryRoles section found; they are deleted after the users section
 	// (reset per target)
 	roleDeletes []roleDelete
+	// globalRoleDeletes are the global roles with state absent which the
+	// globalRoles section found; they are deleted after the inventory roles
+	// (reset per target)
+	globalRoleDeletes []globalRoleDelete
 	// multiTarget is set when the run covers tenants other than the current
 	// one, enabling per-tenant labels in the output
 	multiTarget bool
@@ -405,6 +409,8 @@ func (s *Syncer) Apply(ctx context.Context, manifest *Manifest, only []string) e
 func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, only []string) error {
 	s.dryRunPending = nil
 	s.roleDeletes = nil
+	s.globalRoleDeletes = nil
+	deleteAfter := deferredDeleteSection(only)
 	if err := s.runHooks(ctx, "pre", manifest.Hooks.Pre); err != nil {
 		return err
 	}
@@ -473,12 +479,13 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncCommands(ctx, manifest.Commands)
 		}
 
-		// Inventory roles with state absent are deleted once the users
-		// section has revoked them (or right after inventoryRoles when the
-		// users section does not run), since Cumulocity refuses to delete
-		// a role which is still assigned
-		if err == nil && (section == SectionUsers || (section == SectionInventoryRoles && !sectionEnabled(only, SectionUsers))) {
-			s.DeleteInventoryRoles(ctx)
+		// Inventory roles, global roles and device groups with state
+		// absent are deleted once the users section has run (or after the
+		// last of these sections which --only selects), since Cumulocity
+		// refuses to delete an inventory role which is still assigned and
+		// the users may still use the roles and groups until then
+		if err == nil && section == deleteAfter {
+			s.runDeferredDeletes(ctx)
 		}
 
 		s.runHooks(ctx, "sections."+section+".post", sectionHooks.Post)

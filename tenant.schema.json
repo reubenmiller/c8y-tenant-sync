@@ -785,6 +785,14 @@
             "operators"
           ]
         },
+        "state": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "description": "present (default) creates or updates the global role; absent deletes the global role if it exists"
+        },
         "description": {
           "type": "string",
           "description": "Description of the global role"

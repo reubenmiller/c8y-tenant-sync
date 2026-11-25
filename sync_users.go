@@ -23,12 +23,20 @@ import (
 // exist with the desired description and permissions. Permission assignments
 // are additive: permissions already on the role but absent from the manifest
 // are left alone, so built-in global roles (admins, business, ...) can be
-// extended safely.
+// extended safely. A global role with state absent is deleted after the
+// users section (see DeleteGlobalRoles).
 func (s *Syncer) SyncGlobalRoles(ctx context.Context, specs []GlobalRoleSpec) error {
 	// Role self links are shared by all groups of the target tenant
 	roleSelfLinks := map[string]string{}
+	// The global roles of the user running the sync are only looked up when
+	// a global role is deleted
+	syncUserGroups := &syncUserGroupsCache{}
 
 	for _, spec := range specs {
+		if spec.Absent() {
+			s.planGlobalRoleDelete(ctx, spec, syncUserGroups)
+			continue
+		}
 		if s.DryRun {
 			detail := "ensure global role"
 			if len(spec.Permissions) > 0 {

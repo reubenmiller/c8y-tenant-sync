@@ -1024,6 +1024,15 @@ composition:
 
 Model files accept the kinds `PropertyDefinition`, `AssetDefinition`, `MeasurementDefinition`, `EventDefinition` and `AlarmDefinition`. Assets (`kind: Asset`) are not synced, and a file containing them fails.
 
+Definition files without a `kind` field, such as the JSON bodies posted to the DTM API, can be used as they are by setting `kind` on the source. A `kind` inside a document still wins:
+
+```yaml
+digitalTwin:
+  sources:
+    - path: ./cumulocity/dtm # e.g. tiny-edge's parameter sets
+      kind: PropertyDefinition
+```
+
 How the sync behaves:
 
 - **Matching**: property definitions are matched by `identifier` and `contexts` (in any order), all other kinds by `identifier`.

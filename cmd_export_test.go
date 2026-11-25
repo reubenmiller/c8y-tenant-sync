@@ -19,6 +19,7 @@ func stats() map[string]any {
 // fakeExportTenant registers the endpoints read by export
 func fakeExportTenant(t *testing.T) *fakeC8y {
 	f := newFakeC8y(t)
+	stubExportDiscovery(t, nil)
 	f.JSON("GET /tenant/currentTenant", http.StatusOK, map[string]any{"name": "t123", "domainName": "example.c8y.io"})
 	f.JSON("GET /tenant/options", http.StatusOK, map[string]any{
 		"options": []map[string]any{
@@ -85,6 +86,15 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 	f.JSON("GET /user/t123/groups/3", http.StatusOK, map[string]any{"id": 3, "name": "admins"})
 	f.JSON("GET /application/applications/11", http.StatusOK, map[string]any{"id": "11", "name": "smartrule", "type": "MICROSERVICE"})
 	return f
+}
+
+// stubExportDiscovery replaces the check of exported SSO discovery URLs
+// (the fake tenant's provider does not exist)
+func stubExportDiscovery(t *testing.T, err error) {
+	t.Helper()
+	original := exportDiscoverOIDC
+	exportDiscoverOIDC = func(ctx context.Context, url string) error { return err }
+	t.Cleanup(func() { exportDiscoverOIDC = original })
 }
 
 // exportLoginOptions are the login options of the exported fake tenant:

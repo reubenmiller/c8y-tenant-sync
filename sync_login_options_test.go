@@ -826,3 +826,103 @@ func TestSyncLoginOptionsLeavesOutReadOnlyFields(t *testing.T) {
 		assert.Contains(t, put.Body, "visibleOnLoginPage")
 	}
 }
+
+// exportSSOTenant is a fake tenant in SSO mode with the given SSO option
+func exportSSOTenant(t *testing.T, sso map[string]any) *fakeC8y {
+	t.Helper()
+	f := fakeExportTenant(t)
+	options := exportLoginOptions()
+	options[1]["visibleOnLoginPage"] = false // OAI-Secure hidden: sso mode
+	if sso == nil {
+		options = options[:2]
+	} else {
+		options[2] = sso
+	}
+	f.JSON("GET /tenant/loginOptions", http.StatusOK, map[string]any{"loginOptions": options, "statistics": stats()})
+	return f
+}
+
+func TestExportLoginOptionsKeepsManifestValid(t *testing.T) {
+	t.Run("sso without issuer is left out", func(t *testing.T) {
+		f := exportSSOTenant(t, map[string]any{"id": "s1", "type": "OAUTH2", "visibleOnLoginPage": true, "clientId": "c"})
+		var spec *LoginOptionsSpec
+		var err error
+		_, stderr := captureStdio(t, func() {
+			spec, err = (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+		})
+		require.NoError(t, err)
+		assert.Nil(t, spec.SSO)
+		assert.Empty(t, spec.Preferred, "preferred sso without an sso section would not validate")
+		assert.Contains(t, stderr, "has no issuer")
+		assert.Contains(t, stderr, "preferred: sso is not exported")
+		assert.Empty(t, spec.validate())
+	})
+
+	t.Run("sso mode without rules leaves preferred out", func(t *testing.T) {
+		sso := exportLoginOptions()[2]
+		delete(sso, "onNewUser")
+		f := exportSSOTenant(t, sso)
+		var spec *LoginOptionsSpec
+		var err error
+		captureStdio(t, func() {
+			spec, err = (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+		})
+		require.NoError(t, err)
+		require.NotNil(t, spec.SSO)
+		assert.Empty(t, spec.Preferred)
+		assert.Empty(t, spec.validate())
+	})
+
+	t.Run("sso mode with rules keeps preferred", func(t *testing.T) {
+		f := exportSSOTenant(t, exportLoginOptions()[2])
+		spec, err := (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, LoginModeSSO, spec.Preferred)
+		assert.Empty(t, spec.validate())
+	})
+
+	t.Run("a discovery URL which does not work is flagged", func(t *testing.T) {
+		f := fakeExportTenant(t)
+		stubExportDiscovery(t, assert.AnError)
+		_, stderr := captureStdio(t, func() {
+			_, err := (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+			require.NoError(t, err)
+		})
+		assert.Contains(t, stderr, "check sso.discoveryUrl")
+	})
+
+	t.Run("an unreadable group fails the export", func(t *testing.T) {
+		f := fakeExportTenant(t)
+		f.JSON("GET /user/t123/groups/3", http.StatusForbidden, map[string]any{"error": "security/Forbidden", "message": "denied"})
+		_, err := (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+		assert.ErrorContains(t, err, "sso access mapping: user group 3")
+	})
+
+	t.Run("an unreadable application fails the export", func(t *testing.T) {
+		f := fakeExportTenant(t)
+		f.JSON("GET /application/applications/11", http.StatusNotFound, map[string]any{"error": "notFound", "message": "gone"})
+		_, err := (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+		assert.ErrorContains(t, err, "sso access mapping: application 11")
+	})
+}
+
+// TestRunDryRunComparesLoginOptions checks the dry-run reader wiring of the
+// run command: the login options are read (never written) and compared
+func TestRunDryRunComparesLoginOptions(t *testing.T) {
+	f := newFakeC8y(t)
+	newFakeLoginOptions(f, defaultLoginOptions()...)
+	setupRunAgainst(t, f)
+
+	manifest := filepath.Join(t.TempDir(), "tenant.yaml")
+	require.NoError(t, os.WriteFile(manifest, []byte("loginOptions:\n  preferred: oaiSecure\n  oaiSecure:\n    session:\n      renewalTimeout: 2h\n"), 0o644))
+
+	var runErr error
+	stdout, stderr := captureStdio(t, func() {
+		runErr = runRoot(t, "run", "-f", manifest, "--dry-run")
+	})
+	require.NoError(t, runErr, "stdout: %s\nstderr: %s", stdout, stderr)
+	assert.Contains(t, stdout, "[loginOptions] preferred (unchanged): oaiSecure")
+	assert.Contains(t, stdout, "[loginOptions] OAUTH2_INTERNAL (planned): sessionConfiguration.renewalTimeoutMillis: 86400000 → 7200000")
+	assert.NotEmpty(t, f.Requests(http.MethodGet, "/tenant/loginOptions"))
+	assert.Empty(t, writes(f), "a dry run never writes")
+}

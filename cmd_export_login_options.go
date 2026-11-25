@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -62,14 +64,42 @@ func (e *Exporter) loginOptions(ctx context.Context) (*LoginOptionsSpec, error) 
 	}
 
 	if sso, ok := state[LoginTypeSSO]; ok {
-		spec.SSO = e.ssoLoginSpec(ctx, sso, spec.Preferred)
+		if spec.SSO, err = e.ssoLoginSpec(ctx, sso, spec.Preferred); err != nil {
+			return nil, err
+		}
+	}
+
+	// preferred: sso only validates with an sso section which has access
+	// mapping rules; otherwise the mode is left out (and kept as it is when
+	// the manifest is applied)
+	if spec.Preferred == LoginModeSSO && (spec.SSO == nil || spec.SSO.Access == nil || len(spec.SSO.Access.Rules) == 0) {
+		exportNote(SectionLoginOptions, "preferred: sso is not exported because the sso login option has no exportable access mapping rules; add rules and set preferred: sso")
+		spec.Preferred = ""
 	}
 	return spec, nil
 }
 
-func (e *Exporter) ssoLoginSpec(ctx context.Context, option map[string]any, preferred string) *SSOLoginSpec {
+// exportDiscoverOIDC checks an exported SSO discovery URL (replaced in tests,
+// which have no provider to reach)
+var exportDiscoverOIDC = func(ctx context.Context, url string) error {
+	_, err := discoverOIDCProvider(ctx, url)
+	return err
+}
+
+// exportNote prints a note about an exported section to stderr
+func exportNote(section, message string) {
+	fmt.Fprintf(os.Stderr, "⚠ %s: %s\n", section, message)
+}
+
+// ssoLoginSpec exports the SSO login option (nil when it cannot be
+// expressed as a discovery URL)
+func (e *Exporter) ssoLoginSpec(ctx context.Context, option map[string]any, preferred string) (*SSOLoginSpec, error) {
 	str := func(value any) string { s, _ := value.(string); return s }
 	issuer := strings.TrimSuffix(str(option["issuer"]), "/")
+	if issuer == "" {
+		exportNote(SectionLoginOptions, "the sso login option is not exported: it has no issuer to derive its discovery URL from")
+		return nil, nil
+	}
 	spec := &SSOLoginSpec{
 		DiscoveryURL:       issuer + oidcDiscoverySuffix,
 		ClientID:           str(option["clientId"]),
@@ -121,7 +151,8 @@ func (e *Exporter) ssoLoginSpec(ctx context.Context, option map[string]any, pref
 	onNewUser, _ := option["onNewUser"].(map[string]any)
 	dynamic, _ := onNewUser["dynamicMapping"].(map[string]any)
 	if dynamic == nil {
-		return spec
+		e.checkDiscovery(ctx, spec.DiscoveryURL)
+		return spec, nil
 	}
 	config, _ := dynamic["configuration"].(map[string]any)
 	access := &SSOAccessMappingSpec{}
@@ -152,34 +183,59 @@ func (e *Exporter) ssoLoginSpec(ctx context.Context, option map[string]any, pref
 			rule.When = append(rule.When, cond)
 		}
 		for _, id := range idList(mapping["thenGroups"]) {
-			rule.Groups = append(rule.Groups, e.groupName(ctx, id))
+			name, err := e.groupName(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			rule.Groups = append(rule.Groups, name)
 		}
 		for _, id := range idList(mapping["thenApplications"]) {
-			rule.Applications = append(rule.Applications, e.applicationName(ctx, id))
+			name, err := e.applicationName(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			rule.Applications = append(rule.Applications, name)
 		}
 		access.Rules = append(access.Rules, rule)
 	}
 	spec.Access = access
-	return spec
+	e.checkDiscovery(ctx, spec.DiscoveryURL)
+	return spec, nil
 }
 
-// groupName returns the name of a user group (its ID when it cannot be read)
-func (e *Exporter) groupName(ctx context.Context, id string) string {
+// checkDiscovery warns when the discovery URL derived from the issuer does
+// not work (some providers serve it elsewhere, e.g. Azure AD v1 issuers)
+func (e *Exporter) checkDiscovery(ctx context.Context, discoveryURL string) {
+	if err := exportDiscoverOIDC(ctx, discoveryURL); err != nil {
+		exportNote(SectionLoginOptions, fmt.Sprintf("check sso.discoveryUrl, it was derived from the issuer and does not work: %v", err))
+	}
+}
+
+// groupName returns the name of a user group of an access mapping. A group
+// which cannot be read fails the export: its ID is no name the manifest
+// could reference.
+func (e *Exporter) groupName(ctx context.Context, id string) (string, error) {
 	group := e.Client.UserGroups.Get(ctx, usergroups.GetOptions{ID: usergroups.ByID(id)})
-	if group.Err != nil || group.Data.Name() == "" {
-		return id
+	if group.Err != nil {
+		return "", fmt.Errorf("sso access mapping: user group %s: %w", id, group.Err)
 	}
-	return group.Data.Name()
+	if group.Data.Name() == "" {
+		return "", fmt.Errorf("sso access mapping: user group %s has no name", id)
+	}
+	return group.Data.Name(), nil
 }
 
-// applicationName returns the name of an application (its ID when it cannot
-// be read)
-func (e *Exporter) applicationName(ctx context.Context, id string) string {
+// applicationName returns the name of an application of an access mapping
+// (an application which cannot be read fails the export)
+func (e *Exporter) applicationName(ctx context.Context, id string) (string, error) {
 	app := e.Client.Applications.Get(ctx, id)
-	if app.Err != nil || app.Data.Name() == "" {
-		return id
+	if app.Err != nil {
+		return "", fmt.Errorf("sso access mapping: application %s: %w", id, app.Err)
 	}
-	return app.Data.Name()
+	if app.Data.Name() == "" {
+		return "", fmt.Errorf("sso access mapping: application %s has no name", id)
+	}
+	return app.Data.Name(), nil
 }
 
 // idList returns the IDs of a list of numbers or strings

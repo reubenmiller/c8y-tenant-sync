@@ -162,6 +162,9 @@ applications:
         tags: ["v1025.*"]
         includePrereleases: true
         assets: ["devicemanagement-*.zip"]
+    # Delete the oldest binaries after an upload so only the latest 3 remain
+    # (the active binary is always kept)
+    keepBinaries: 3
 
 # Create a tree of device groups (regions, sites, production lines, ...). A
 # group is identified by its name within its parent; missing groups are created

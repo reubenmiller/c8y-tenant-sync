@@ -69,9 +69,17 @@ func fakeHostedTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
 		"self":  url + "/application/applications/99",
 		"owner": map[string]any{"tenant": map[string]any{"id": "t123"}},
 	})
+	for _, app := range apps {
+		app := app
+		f.JSON("GET /application/applications/"+app["id"].(string), http.StatusOK, app)
+	}
 	for _, id := range []string{"99", "42"} {
 		f.JSON("POST /application/applications/"+id+"/binaries", http.StatusCreated, map[string]any{"id": "bin-" + id})
-		f.JSON("PUT /application/applications/"+id, http.StatusOK, map[string]any{"id": id})
+		f.JSON("PUT /application/applications/"+id, http.StatusOK, map[string]any{
+			"id": id, "name": "devicemanagement", "type": "HOSTED",
+			"self":  url + "/application/applications/" + id,
+			"owner": map[string]any{"tenant": map[string]any{"id": "t123"}},
+		})
 	}
 	return f
 }
@@ -206,4 +214,45 @@ func exactRequests(f *fakeC8y, method, path string) []recordedRequest {
 		}
 	}
 	return out
+}
+
+func TestHostedApplicationKeepsTheLatestBinaries(t *testing.T) {
+	f := newFakeC8y(t)
+	f = fakeHostedTenant(t, ownDeviceManagement(f.server.URL, "1025.14.0"))
+	f.JSON("GET /application/applications/42/binaries", http.StatusOK, map[string]any{
+		"attachments": []map[string]any{
+			{"id": "old-1", "created": "2026-01-01T00:00:00Z"},
+			{"id": "old-2", "created": "2026-06-01T00:00:00Z"},
+			{"id": "bin-42", "created": "2026-11-25T00:00:00Z"},
+		},
+		"statistics": stats(),
+	})
+	f.JSON("DELETE /application/applications/42/binaries/old-1", http.StatusNoContent, nil)
+	s, _ := hostedSyncer(t, f, "1025.15.3")
+	spec := hostedSpec()
+	spec.KeepBinaries = 2
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{spec}))
+
+	r := firstResult(s, "devicemanagement")
+	assert.Equal(t, ActionUpdated, r.Action, r.Detail)
+	assert.Equal(t, "version 1025.14.0 -> 1025.15.3 (uploaded devicemanagement-1025.15.3.zip); deleted 1 old binaries", r.Detail)
+	assert.Len(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/old-1"), 1, "the oldest binary is deleted")
+	assert.Empty(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/old-2"))
+	assert.Empty(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/bin-42"))
+}
+
+func TestKeepBinariesValidation(t *testing.T) {
+	spec := hostedSpec()
+	spec.KeepBinaries = -1
+	err := (&Manifest{Applications: []ApplicationSpec{spec}}).Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keepBinaries must not be negative")
+
+	err = (&Manifest{Applications: []ApplicationSpec{{Name: "svc", Type: "MICROSERVICE", KeepBinaries: 2}}}).Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keepBinaries requires type HOSTED and a source")
+
+	spec.KeepBinaries = 3
+	assert.NoError(t, (&Manifest{Applications: []ApplicationSpec{spec}}).Validate())
 }

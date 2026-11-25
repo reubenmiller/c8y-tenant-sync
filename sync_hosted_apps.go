@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/applications"
-	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/model"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/pagination"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/op"
 )
 
 // isHostedWithSource reports whether the application is a web application
@@ -83,37 +83,9 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 	}
 	desiredVersion := archiveVersion(listed[0])
 
-	var app jsonmodels.Application
-	created := false
 	currentVersion := ""
-	if own == nil {
-		contextPath := spec.ContextPath
-		if contextPath == "" {
-			contextPath = spec.Name
-		}
-		key := spec.Key
-		if key == "" {
-			key = spec.Name + "-application-key"
-			if foreign != nil {
-				// The key of the built-in application is taken
-				key = owner + "-" + key
-			}
-		}
-		result := s.Client.Applications.Create(ctx, map[string]any{
-			"name":        spec.Name,
-			"key":         key,
-			"type":        "HOSTED",
-			"contextPath": contextPath,
-		})
-		if result.Err != nil {
-			s.record(SectionApplications, spec.Name, ActionFailed, "create application", result.Err)
-			return "", false
-		}
-		app = result.Data
-		created = true
-	} else {
-		app = *own
-		currentVersion = app.Get("manifest.version").String()
+	if own != nil {
+		currentVersion = own.Get("manifest.version").String()
 		upToDate := desiredVersion != "" && desiredVersion == currentVersion
 		unknown := desiredVersion == ""
 		if !s.Force && (upToDate || unknown) {
@@ -122,7 +94,7 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 				detail = "binary upload skipped (no version in the source; use --force to re-upload)"
 			}
 			s.record(SectionApplications, spec.Name, ActionUnchanged, detail, nil)
-			return s.cacheAppSelfLink(spec.Name, app.Self()), true
+			return s.cacheAppSelfLink(spec.Name, own.Self()), true
 		}
 	}
 
@@ -136,46 +108,61 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 		return "", false
 	}
 
-	upload := s.Client.Applications.Upload(ctx, app.ID(), applications.UploadFileOptions{
-		FilePath:    files[0].Path,
-		Name:        files[0].Filename,
-		ContentType: "application/zip",
+	key := spec.Key
+	if key == "" {
+		key = spec.Name + "-application-key"
+		if foreign != nil {
+			// The key of the built-in application is taken
+			key = owner + "-" + key
+		}
+	}
+
+	// Create the application owned by the tenant when missing, upload the
+	// archive as a new binary, activate it and delete the oldest binaries
+	// beyond keepBinaries (never the active or the uploaded one)
+	result := s.Client.Applications.DeployHosted(ctx, applications.DeployHostedOptions{
+		Path:         files[0].Path,
+		Name:         spec.Name,
+		Key:          key,
+		ContextPath:  spec.ContextPath,
+		Owner:        owner,
+		KeepBinaries: spec.KeepBinaries,
 	})
-	if upload.Err != nil {
-		s.record(SectionApplications, spec.Name, ActionFailed, "upload binary", upload.Err)
+	created, _ := result.Meta["created"].(bool)
+	if result.Err != nil && result.Status != op.StatusPartial {
+		s.record(SectionApplications, spec.Name, ActionFailed, "deploy web application", result.Err)
 		return "", false
 	}
 
-	// Web application binaries are not activated on upload
-	binaryID := upload.Data.ID()
-	if binaryID == "" {
-		s.record(SectionApplications, spec.Name, ActionFailed, "activate binary",
-			fmt.Errorf("the upload response has no binary id"))
-		return "", false
-	}
-	activate := s.Client.Applications.Update(ctx, app.ID(), &model.Application{ActiveVersionID: binaryID}).IgnoreConflict()
-	if activate.Err != nil {
-		s.record(SectionApplications, spec.Name, ActionFailed, "activate binary "+binaryID, activate.Err)
-		return "", false
-	}
-
+	detail := ""
 	switch {
 	case created && foreign != nil:
-		s.record(SectionApplications, spec.Name, ActionCreated,
-			fmt.Sprintf("created tenant-owned copy (in place of the application of tenant %s) and uploaded %s", foreign.Get("owner.tenant.id").String(), files[0].Filename), nil)
+		detail = fmt.Sprintf("created tenant-owned copy (in place of the application of tenant %s) and uploaded %s", foreign.Get("owner.tenant.id").String(), files[0].Filename)
 	case created:
-		s.record(SectionApplications, spec.Name, ActionCreated, "created and uploaded "+files[0].Filename, nil)
+		detail = "created and uploaded " + files[0].Filename
 	case desiredVersion != "" && desiredVersion != currentVersion:
 		from := currentVersion
 		if from == "" {
 			from = "unknown"
 		}
-		s.record(SectionApplications, spec.Name, ActionUpdated,
-			fmt.Sprintf("version %s -> %s (uploaded %s)", from, desiredVersion, files[0].Filename), nil)
+		detail = fmt.Sprintf("version %s -> %s (uploaded %s)", from, desiredVersion, files[0].Filename)
 	default:
-		s.record(SectionApplications, spec.Name, ActionUpdated, "re-uploaded "+files[0].Filename, nil)
+		detail = "re-uploaded " + files[0].Filename
 	}
-	return s.cacheAppSelfLink(spec.Name, app.Self()), true
+	if deleted, _ := result.Meta["deletedBinaries"].([]string); len(deleted) > 0 {
+		detail += fmt.Sprintf("; deleted %d old binaries", len(deleted))
+	}
+	action := ActionUpdated
+	if created {
+		action = ActionCreated
+	}
+	if result.Err != nil {
+		// Deployed, but the old binaries could not all be deleted
+		s.record(SectionApplications, spec.Name, ActionFailed, detail, result.Err)
+	} else {
+		s.record(SectionApplications, spec.Name, action, detail, nil)
+	}
+	return s.cacheAppSelfLink(spec.Name, result.Data.Self()), true
 }
 
 // recordSourceError records a failed source resolution (skipped for optional

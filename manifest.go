@@ -412,6 +412,10 @@ type ApplicationSpec struct {
 	// ContextPath used when creating the application (defaults to the name)
 	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=Context path used when creating the application (defaults to the name)"`
 
+	// KeepBinaries limits the number of binaries (versions) kept by a HOSTED
+	// application with a source
+	KeepBinaries int `yaml:"keepBinaries" json:"keepBinaries,omitempty" jsonschema:"description=For type HOSTED with a source: the number of binaries (application versions) to keep after an upload; the oldest binaries beyond this number are deleted but the active and the uploaded binary are always kept. 0 or omitted keeps all binaries,minimum=0,example=3"`
+
 	// Source provides the application binary (a single zip file). The
 	// application is created if missing and the binary uploaded on creation
 	// (or on every run with --force). For HOSTED applications, only an
@@ -1398,6 +1402,11 @@ func (m *Manifest) Validate() error {
 			if err := app.Source.Validate(); err != nil {
 				errs = append(errs, fmt.Sprintf("applications[%d]: %v", i, err))
 			}
+		}
+		if app.KeepBinaries < 0 {
+			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries must not be negative", i))
+		} else if app.KeepBinaries > 0 && !app.isHostedWithSource() {
+			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries requires type HOSTED and a source", i))
 		}
 	}
 	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)

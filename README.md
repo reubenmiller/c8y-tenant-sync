@@ -855,6 +855,7 @@ applications:
         tags: ["v1025.*"]          # stay on the 1025 release line
         includePrereleases: true   # the releases are published as prereleases
         assets: ["devicemanagement-*.zip"]
+    keepBinaries: 3                # keep the active version and the two before it
 ```
 
 On each run:
@@ -867,6 +868,7 @@ On each run:
   ```
 
 - The uploaded archive is activated (`activeVersionId`) and the tenant is subscribed to its copy; a subscription to the built-in application of the same name does not count.
+- With `keepBinaries: N`, the oldest binaries (application versions) beyond N are deleted after each upload; the active binary and the one just uploaded are never deleted. Without it all binaries are kept, so every release adds another archive to the application. Old binaries are only deleted when a new one is uploaded, so lowering N takes effect with the next release (or the next run with `--force`).
 - `--force` re-uploads the archive even when the version is already active. When no version can be read from the source, an existing application is only re-uploaded with `--force`.
 
 Uploading a new archive replaces the application binary only. The plugins installed into the application through the Administration application are stored in the application `config` and are kept.

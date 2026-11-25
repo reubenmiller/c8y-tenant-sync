@@ -277,6 +277,19 @@ users:
   - userName: old-account@example.com
     enabled: false # keep the account but disable it
 
+  # An SSO user who is created on the first login: skipped (not created)
+  # until then, so no email or password is needed
+  - userName: jdoe.sso@example.com
+    ifMissing: skip
+    inventoryRoles:
+      - group: Plant Berlin
+        roles: [Site operator]
+
+  # An offboarded user: deleted if it exists (only userName is allowed). The
+  # user running the sync is never deleted
+  - userName: contractor@example.com
+    state: absent
+
 # Login options: the preferred login mode of the login page (oaiSecure, basic
 # or sso) and the settings of each login option. Login options are never
 # deleted; the preferred mode is switched last, only once the new option is

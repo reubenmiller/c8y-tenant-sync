@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -139,9 +140,12 @@ func (s *Syncer) ensureGroupRoles(ctx context.Context, groupID string, created b
 }
 
 // SyncUsers ensures users exist with the desired profile fields, global roles
-// and inventory roles. The password is only used when creating a user
-// (existing passwords are never overwritten); global roles are additive:
-// global roles the user has but which are absent from the manifest are kept.
+// and inventory roles, and deletes the users with state absent. The password
+// is only used when creating a user (existing passwords are never
+// overwritten); global roles are additive: global roles the user has but
+// which are absent from the manifest are kept. A missing user is created,
+// skipped or failed as its ifMissing says, and the user running the sync is
+// never deleted.
 //
 // A dry run reads the users (when it can) and reports the same changes as a
 // real run, without writing them.
@@ -150,14 +154,7 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 		// The tenant cannot be read: list the desired users without
 		// comparing them
 		for _, spec := range specs {
-			detail := "ensure user"
-			if len(spec.GlobalRoles) > 0 {
-				detail += " with global roles: " + strings.Join(spec.GlobalRoles, ", ")
-			}
-			if len(spec.InventoryRoles) > 0 {
-				detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryRoles)
-			}
-			s.record(SectionUsers, spec.Username, ActionPlanned, detail, nil)
+			s.record(SectionUsers, spec.Username, ActionPlanned, plannedUserDetail(spec), nil)
 		}
 		return nil
 	}
@@ -166,20 +163,52 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 	groupIDs := map[string]string{}
 	// Inventory roles and device groups are looked up once as well
 	inventory := &inventoryAssignmentCache{}
+	// The user running the sync is only looked up when a user is deleted
+	syncUser := &syncUserCache{}
 
 	for _, spec := range specs {
-		plan, err := s.planUser(ctx, spec, inventory)
+		plan, err := s.planUser(ctx, spec, inventory, syncUser)
 		if err != nil {
 			s.record(SectionUsers, spec.Username, ActionFailed, plan.failure, err)
 			continue
 		}
-		if s.DryRun {
+		switch {
+		case plan.skip:
+			s.record(SectionUsers, spec.Username, ActionSkipped, "user does not exist (ifMissing: skip)", nil)
+		case plan.absent:
+			s.record(SectionUsers, spec.Username, ActionUnchanged, "absent", nil)
+		case plan.delete && s.DryRun:
+			s.record(SectionUsers, spec.Username, ActionPlanned, "delete", nil)
+		case plan.delete:
+			s.deleteUser(ctx, spec, plan)
+		case s.DryRun:
 			s.recordUserPlan(spec, plan)
-			continue
+		default:
+			s.applyUserPlan(ctx, spec, plan, groupIDs)
 		}
-		s.applyUserPlan(ctx, spec, plan, groupIDs)
 	}
 	return nil
+}
+
+// plannedUserDetail describes a user in a dry run which cannot read the tenant
+func plannedUserDetail(spec UserSpec) string {
+	if spec.Absent() {
+		return "delete if it exists"
+	}
+	detail := "ensure user"
+	if len(spec.GlobalRoles) > 0 {
+		detail += " with global roles: " + strings.Join(spec.GlobalRoles, ", ")
+	}
+	if len(spec.InventoryRoles) > 0 {
+		detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryRoles)
+	}
+	switch spec.MissingAction() {
+	case UserIfMissingSkip:
+		detail += "; skipped if missing"
+	case UserIfMissingFail:
+		detail += "; fails if missing"
+	}
+	return detail
 }
 
 // userPlan is the change a user needs: shared by the dry run (which reports
@@ -188,6 +217,11 @@ type userPlan struct {
 	// exists is set when the user exists in the tenant
 	exists           bool
 	userID, userSelf string
+	// skip is set for a missing user with ifMissing: skip
+	skip bool
+	// delete is set for an existing user with state: absent, and absent
+	// for a user with state: absent which does not exist
+	delete, absent bool
 	// profile are the profile fields to update (existing users only)
 	profile map[string]any
 	// globalRoles are the global roles the user is not a member of yet
@@ -200,12 +234,43 @@ type userPlan struct {
 	failure string
 }
 
+// errUserMissing is returned for a missing user with ifMissing: fail
+var errUserMissing = errors.New("the user does not exist (ifMissing: fail)")
+
 // planUser compares the user of the manifest with the tenant
-func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *inventoryAssignmentCache) (userPlan, error) {
+func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *inventoryAssignmentCache, syncUser *syncUserCache) (userPlan, error) {
 	var plan userPlan
 	existing := s.readClient().Users.GetByUsername(ctx, users.GetByUsernameOptions{Username: spec.Username})
-	if existing.Err != nil {
-		// Not found: create it. Cumulocity requires an email for new users
+	if existing.Err != nil && existing.HTTPStatus != http.StatusNotFound {
+		plan.failure = "read user"
+		return plan, existing.Err
+	}
+	found := existing.Err == nil
+
+	if spec.Absent() {
+		if !found {
+			plan.absent = true
+			return plan, nil
+		}
+		plan.userID = existing.Data.ID()
+		if err := syncUser.refuse(ctx, s, plan.userID, existing.Data.UserName()); err != nil {
+			plan.failure = "delete user"
+			return plan, err
+		}
+		plan.exists, plan.delete = true, true
+		return plan, nil
+	}
+
+	if !found {
+		switch spec.MissingAction() {
+		case UserIfMissingSkip:
+			plan.skip = true
+			return plan, nil
+		case UserIfMissingFail:
+			plan.failure = "find user"
+			return plan, errUserMissing
+		}
+		// Create it. Cumulocity requires an email for new users
 		if spec.CreateEmail() == "" {
 			plan.failure = "create user"
 			return plan, fmt.Errorf("an email is required to create a user: set email, or use an email address as userName")
@@ -225,6 +290,54 @@ func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *invento
 	}
 	plan.inventory, plan.inventoryErr = s.planInventoryAssignments(ctx, plan.userID, plan.exists, spec.InventoryRoles, inventory)
 	return plan, nil
+}
+
+// deleteUser deletes a user with state: absent
+func (s *Syncer) deleteUser(ctx context.Context, spec UserSpec, plan userPlan) {
+	result := s.Client.Users.Delete(ctx, users.DeleteOptions{ID: users.ByID(plan.userID)})
+	if result.Err != nil {
+		s.record(SectionUsers, spec.Username, ActionFailed, "delete user", result.Err)
+		return
+	}
+	s.record(SectionUsers, spec.Username, ActionDeleted, "", nil)
+}
+
+// syncUserCache looks up the user running the sync once per target tenant
+type syncUserCache struct {
+	loaded       bool
+	id, userName string
+	err          error
+}
+
+// errSyncUser is returned when the manifest would delete the user running
+// the sync
+var errSyncUser = errors.New("refusing to delete the user running the sync")
+
+// refuse returns an error when the user is the one running the sync (or when
+// that user cannot be determined)
+func (c *syncUserCache) refuse(ctx context.Context, s *Syncer, userID, userName string) error {
+	if !c.loaded {
+		c.loaded = true
+		current := s.readClient().Users.CurrentUser.Get(ctx)
+		if current.Err != nil {
+			c.err = fmt.Errorf("look up the user running the sync: %w", current.Err)
+		} else {
+			c.id, c.userName = current.Data.ID(), current.Data.UserName()
+		}
+	}
+	if c.err != nil {
+		return c.err
+	}
+	if isSameUser(userID, c.id) || isSameUser(userName, c.id) || isSameUser(userName, c.userName) {
+		return errSyncUser
+	}
+	return nil
+}
+
+// isSameUser compares user names or IDs (Cumulocity user IDs are the user
+// names), ignoring case so a match is never missed
+func isSameUser(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(a, b)
 }
 
 // recordUserPlan reports the changes of a user in a dry run

@@ -43,7 +43,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
-- 👥 **Users & global roles**: create global roles with permissions, create users and give them global roles, additively and idempotently
+- 👥 **Users & global roles**: create global roles with permissions, create users and give them global roles, additively and idempotently; skip SSO users until their first login and delete offboarded users
 - 🚪 **Login options**: choose the preferred login mode (OAI-Secure, basic or single sign-on) and configure basic restrictions, OAI-Secure sessions and SSO generated from a provider's OpenID Connect discovery URL, with safeguards against locking anyone out
 - 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
@@ -1116,7 +1116,7 @@ deviceGroups:
 
 ### Users and global roles
 
-The manifest names roles as the Cumulocity UI does. The `globalRoles` section creates *global roles* (user groups in the Cumulocity API), which apply to the whole tenant, and assigns permissions to them; the `users` section creates users and gives them global roles with `users[].globalRoles`. Both are idempotent and **additive**: permissions and global roles already present in the tenant but absent from the manifest are never removed, so built-in global roles (`admins`, `business`, ...) can be extended and manually managed assignments survive a sync.
+The manifest names roles as the Cumulocity UI does. The `globalRoles` section creates *global roles* (user groups in the Cumulocity API), which apply to the whole tenant, and assigns permissions to them; the `users` section creates users (or deletes users marked `state: absent`, see below) and gives them global roles with `users[].globalRoles`. Both are idempotent and **additive**: permissions and global roles already present in the tenant but absent from the manifest are never removed, so built-in global roles (`admins`, `business`, ...) can be extended and manually managed assignments survive a sync.
 
 ```yaml
 globalRoles:
@@ -1154,7 +1154,48 @@ For existing users only the fields set in the manifest are compared and updated 
 - **`password` is only used when creating the user** and never updated afterwards, so re-running the sync doesn't reset credentials. Use `${VAR}` expansion to keep secrets out of the manifest, or prefer `sendPasswordResetEmail: true` to avoid handling passwords entirely.
 - **`enabled` defaults to true** and is always managed: a user disabled in the UI is re-enabled on the next sync unless the manifest says `enabled: false`.
 
-A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add per device group. A user who is already in the desired state is `unchanged`.
+#### Missing and removed users
+
+Two optional fields say what tenant-sync does with a user entry:
+
+- `state`: should the user exist? `present` (the default) or `absent`.
+- `ifMissing`: what to do when a `present` user does not exist yet. `create` (the default), `skip` or `fail`.
+
+```yaml
+users:
+  - userName: new-hire@example.com      # created when missing (the defaults)
+    email: new-hire@example.com
+    sendPasswordResetEmail: true
+    globalRoles: [operators]
+
+  - userName: jdoe@example.com          # SSO user, created on first login
+    ifMissing: skip
+    inventoryRoles:
+      - group: Plant Berlin
+        roles: [Site operator]
+
+  - userName: svc-dashboard             # must already exist
+    ifMissing: fail
+    globalRoles: [operators]
+
+  - userName: contractor@example.com    # offboarded
+    state: absent
+```
+
+| Entry | User missing | User exists |
+| --- | --- | --- |
+| `state: present`, `ifMissing: create` (defaults) | Create | Update |
+| `state: present`, `ifMissing: skip` | Skip (reported as `skipped`) | Update |
+| `state: present`, `ifMissing: fail` | Fail the user | Update |
+| `state: absent` | Nothing to do (`unchanged`) | Delete |
+
+- `ifMissing: skip` suits SSO users who have not logged in yet: the next run picks them up. With `skip` or `fail` the user is never created, so the entry does not need `email`, `password` or `sendPasswordResetEmail`.
+- `state: absent` deletes the user. To only block a login, use `enabled: false`, which keeps the user and their history. An entry with `state: absent` may only have `userName`: validation fails on any other field, `ifMissing` included.
+- The user running the sync is never deleted: such an entry fails with `refusing to delete the user running the sync`. When that user cannot be looked up, no user is deleted.
+- A user that cannot be read (for example because of missing permissions) fails with `read user`. Only a user that does not exist is created, skipped or failed as `ifMissing` says.
+- `enabled` stays a separate field: it is the account state in Cumulocity, while `state` and `ifMissing` say what tenant-sync does with the entry.
+
+A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add per device group. A user who is already in the desired state is `unchanged`. A missing user with `ifMissing: skip` is `skipped`, a missing user with `ifMissing: fail` fails, and a user with `state: absent` shows `delete` (or `unchanged` when it does not exist).
 
 ### Inventory roles and device group access
 

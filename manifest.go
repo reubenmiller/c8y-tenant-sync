@@ -45,7 +45,7 @@ type Manifest struct {
 	// InventoryRoles are permission sets which users get on specific device
 	// groups through users[].inventoryRoles
 	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"`
-	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and give global roles and inventory roles (additive: existing roles are never removed)"`
+	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update (or delete with state absent) and give global roles and inventory roles (additive: existing roles are never removed)"`
 	// LoginOptions configures how users log in (basic, OAI-Secure, SSO)
 	LoginOptions  *LoginOptionsSpec   `yaml:"loginOptions" json:"loginOptions,omitempty" jsonschema:"description=Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"`
 	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
@@ -560,10 +560,19 @@ type GlobalRoleSpec struct {
 }
 
 // UserSpec ensures a user exists with the desired profile fields, global
-// roles and inventory roles. The password is only used when creating the user
-// (existing passwords are never overwritten) and roles are additive.
+// roles and inventory roles, or (state: absent) that it does not exist. The
+// password is only used when creating the user (existing passwords are never
+// overwritten) and roles are additive. IfMissing says what happens when the
+// user does not exist yet: create it (the default), skip it or fail.
 type UserSpec struct {
-	Username  string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
+	Username string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
+
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may only have userName; the user running the sync is never deleted),enum=present,enum=absent"`
+
+	// IfMissing is create (the default), skip or fail
+	IfMissing string `yaml:"ifMissing" json:"ifMissing,omitempty" jsonschema:"description=What to do when the user does not exist: create (default) creates it; skip leaves it out and reports it as skipped (e.g. SSO users who have not logged in yet); fail fails the user. With skip or fail the user is never created so email and password are not needed,enum=create,enum=skip,enum=fail"`
+
 	Email     string `yaml:"email" json:"email,omitempty" jsonschema:"description=Email address of the user (required to create a user; defaults to the userName when it is an email address)"`
 	FirstName string `yaml:"firstName" json:"firstName,omitempty" jsonschema:"description=First name of the user"`
 	LastName  string `yaml:"lastName" json:"lastName,omitempty" jsonschema:"description=Last name of the user"`
@@ -679,6 +688,67 @@ type InventoryAssignmentSpec struct {
 
 func (u UserSpec) IsEnabled() bool {
 	return u.Enabled == nil || *u.Enabled
+}
+
+// User states (users[].state)
+const (
+	UserStatePresent = "present"
+	UserStateAbsent  = "absent"
+)
+
+// UserStates are the values of users[].state
+var UserStates = []string{UserStatePresent, UserStateAbsent}
+
+// What to do with a missing user (users[].ifMissing)
+const (
+	UserIfMissingCreate = "create"
+	UserIfMissingSkip   = "skip"
+	UserIfMissingFail   = "fail"
+)
+
+// UserIfMissingValues are the values of users[].ifMissing
+var UserIfMissingValues = []string{UserIfMissingCreate, UserIfMissingSkip, UserIfMissingFail}
+
+// Absent reports whether the user is to be deleted
+func (u UserSpec) Absent() bool {
+	return strings.TrimSpace(u.State) == UserStateAbsent
+}
+
+// MissingAction is what to do when the user does not exist: create (the
+// default), skip or fail
+func (u UserSpec) MissingAction() string {
+	if value := strings.TrimSpace(u.IfMissing); value != "" {
+		return value
+	}
+	return UserIfMissingCreate
+}
+
+// CreatesMissing reports whether a missing user is created
+func (u UserSpec) CreatesMissing() bool {
+	return !u.Absent() && u.MissingAction() == UserIfMissingCreate
+}
+
+// absentExtraFields lists the fields set on an entry besides userName (an
+// entry with state absent may only have userName)
+func (u UserSpec) absentExtraFields() []string {
+	var fields []string
+	add := func(set bool, name string) {
+		if set {
+			fields = append(fields, name)
+		}
+	}
+	add(u.IfMissing != "", "ifMissing")
+	add(u.Email != "", "email")
+	add(u.FirstName != "", "firstName")
+	add(u.LastName != "", "lastName")
+	add(u.Phone != "", "phone")
+	add(u.Enabled != nil, "enabled")
+	add(u.Password != "", "password")
+	add(u.PasswordFrom != nil, "passwordFrom")
+	add(u.SendPasswordResetEmail, "sendPasswordResetEmail")
+	add(u.GlobalRoles != nil, "globalRoles")
+	add(u.InventoryRoles != nil, "inventoryRoles")
+	return fields
 }
 
 // Source describes where artifacts come from. Exactly one of Path, URL or
@@ -1732,7 +1802,19 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("users[%d]: duplicate userName %q", i, user.Username))
 		}
 		usernames[user.Username] = true
-		if user.SendPasswordResetEmail && user.CreateEmail() == "" {
+		if user.State != "" && !slices.Contains(UserStates, user.State) {
+			errs = append(errs, fmt.Sprintf("users[%d]: unknown state %q: supported values are %s", i, user.State, strings.Join(UserStates, ", ")))
+		}
+		if user.IfMissing != "" && !slices.Contains(UserIfMissingValues, user.IfMissing) {
+			errs = append(errs, fmt.Sprintf("users[%d]: unknown ifMissing %q: supported values are %s", i, user.IfMissing, strings.Join(UserIfMissingValues, ", ")))
+		}
+		if user.Absent() {
+			if extra := user.absentExtraFields(); len(extra) > 0 {
+				errs = append(errs, fmt.Sprintf("users[%d]: a user with state absent may only have userName (remove %s)", i, strings.Join(extra, ", ")))
+			}
+		}
+		// The email is only needed when the user can be created
+		if user.SendPasswordResetEmail && user.CreatesMissing() && user.CreateEmail() == "" {
 			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
 		}
 		for j, group := range user.GlobalRoles {

@@ -2269,6 +2269,23 @@
             "jdoe@example.com"
           ]
         },
+        "state": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "description": "present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may only have userName; the user running the sync is never deleted)"
+        },
+        "ifMissing": {
+          "type": "string",
+          "enum": [
+            "create",
+            "skip",
+            "fail"
+          ],
+          "description": "What to do when the user does not exist: create (default) creates it; skip leaves it out and reports it as skipped (e.g. SSO users who have not logged in yet); fail fails the user. With skip or fail the user is never created so email and password are not needed"
+        },
         "email": {
           "type": "string",
           "description": "Email address of the user (required to create a user; defaults to the userName when it is an email address)"
@@ -2428,7 +2445,7 @@
         "$ref": "#/$defs/UserSpec"
       },
       "type": "array",
-      "description": "Users to create/update and give global roles and inventory roles (additive: existing roles are never removed)"
+      "description": "Users to create/update (or delete with state absent) and give global roles and inventory roles (additive: existing roles are never removed)"
     },
     "loginOptions": {
       "$ref": "#/$defs/LoginOptionsSpec",

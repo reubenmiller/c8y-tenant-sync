@@ -47,7 +47,7 @@ The "run" command uses the active go-c8y-cli session.`,
 		Example: formatExamples(
 			example{"init", "Create a minimal tenant.yaml manifest"},
 			example{"validate tenant.yaml", "Validate a manifest without connecting to Cumulocity"},
-			example{"run -f tenant.yaml --dry-run", "Preview the changes the manifest would make"},
+			example{"run -f tenant.yaml --dry", "Preview the changes the manifest would make"},
 			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
 			example{"schema -o tenant.schema.json", "Write the JSON schema of the manifest to a file"},
 			example{"export -o tenant.yaml", "Create a manifest from the current state of the tenant"},

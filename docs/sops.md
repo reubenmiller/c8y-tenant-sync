@@ -114,7 +114,7 @@ tenant-sync decrypts the manifest automatically (it detects the `sops` section w
 
 ```bash
 c8y tenant-sync validate tenant.yaml
-c8y tenant-sync run -f tenant.yaml --dry-run
+c8y tenant-sync run -f tenant.yaml --dry
 c8y tenant-sync run -f tenant.yaml
 ```
 

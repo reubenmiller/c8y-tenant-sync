@@ -394,7 +394,7 @@ func MarshalManifest(manifest *Manifest, header string) ([]byte, error) {
 	for _, line := range strings.Split(header, "\n") {
 		fmt.Fprintf(&buf, "# %s\n", line)
 	}
-	fmt.Fprintf(&buf, "#\n# Review it before applying it, e.g.: %s run -f <file> --dry-run\n\n", commandPrefix)
+	fmt.Fprintf(&buf, "#\n# Review it before applying it, e.g.: %s run -f <file> --dry\n\n", commandPrefix)
 
 	if len(node.Content) == 0 || len(node.Content[0].Content) == 0 {
 		buf.WriteString("{}\n")

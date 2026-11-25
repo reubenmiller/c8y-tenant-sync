@@ -20,7 +20,7 @@ const minimalTemplate = `# yaml-language-server: $schema=` + SchemaID + `
 # tenant-sync manifest
 #
 # Validate with: c8y tenant-sync validate %[1]s
-# Preview with:  c8y tenant-sync run -f %[1]s --dry-run
+# Preview with:  c8y tenant-sync run -f %[1]s --dry
 # Apply with:    c8y tenant-sync run -f %[1]s
 #
 # Run 'c8y tenant-sync init --full <path>' for a fully annotated example, or see:
@@ -219,7 +219,7 @@ func runInit(args []string, full, force bool) error {
 	fmt.Println("\nNext steps:")
 	fmt.Printf("  1. Edit %s to describe your tenant\n", path)
 	fmt.Printf("  2. Validate it:          %s validate %s\n", commandPrefix, path)
-	fmt.Printf("  3. Preview the changes:  %s run -f %s --dry-run\n", commandPrefix, path)
+	fmt.Printf("  3. Preview the changes:  %s run -f %s --dry\n", commandPrefix, path)
 	fmt.Printf("  4. Apply it:             %s run -f %s\n", commandPrefix, path)
 	return nil
 }

@@ -450,6 +450,10 @@
     },
     "DigitalTwinDefinitionSpec": {
       "properties": {
+        "source": {
+          "$ref": "#/$defs/Source",
+          "description": "Load definitions from files instead of declaring one inline: JSON or YAML definitions as returned by the DTM API (a file can hold several: YAML documents separated by --- or a list); directories are scanned for *.json and *.yaml and *.yml by default"
+        },
         "identifier": {
           "type": "string",
           "description": "Unique identifier of the definition (also the fragment name of a property)",
@@ -488,151 +492,6 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "identifier"
-      ]
-    },
-    "DigitalTwinSourceSpec": {
-      "oneOf": [
-        {
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "url"
-                ]
-              },
-              {
-                "required": [
-                  "github"
-                ]
-              },
-              {
-                "required": [
-                  "cloudsmith"
-                ]
-              }
-            ]
-          },
-          "required": [
-            "path"
-          ]
-        },
-        {
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "path"
-                ]
-              },
-              {
-                "required": [
-                  "github"
-                ]
-              },
-              {
-                "required": [
-                  "cloudsmith"
-                ]
-              }
-            ]
-          },
-          "required": [
-            "url"
-          ]
-        },
-        {
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "path"
-                ]
-              },
-              {
-                "required": [
-                  "url"
-                ]
-              },
-              {
-                "required": [
-                  "cloudsmith"
-                ]
-              }
-            ]
-          },
-          "required": [
-            "github"
-          ]
-        },
-        {
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "path"
-                ]
-              },
-              {
-                "required": [
-                  "url"
-                ]
-              },
-              {
-                "required": [
-                  "github"
-                ]
-              }
-            ]
-          },
-          "required": [
-            "cloudsmith"
-          ]
-        }
-      ],
-      "properties": {
-        "path": {
-          "type": "string",
-          "description": "Local file or directory (relative paths are resolved against the directory of the manifest file which declares it)"
-        },
-        "patterns": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "description": "Glob patterns matched against filenames when path is a directory (default: *)"
-        },
-        "url": {
-          "type": "string",
-          "description": "External URL referenced without uploading a binary"
-        },
-        "github": {
-          "$ref": "#/$defs/GitHubSource",
-          "description": "Pull release assets from a GitHub repository"
-        },
-        "cloudsmith": {
-          "$ref": "#/$defs/CloudsmithSource",
-          "description": "Pull packages from a Cloudsmith repository (e.g. the public thin-edge.io repositories); the name and version and architecture come from the package metadata"
-        },
-        "optional": {
-          "type": "boolean",
-          "description": "Skip this entry instead of failing when the path does not exist or nothing matches"
-        },
-        "kind": {
-          "type": "string",
-          "enum": [
-            "PropertyDefinition",
-            "AssetDefinition",
-            "MeasurementDefinition",
-            "EventDefinition",
-            "AlarmDefinition"
-          ],
-          "description": "Kind of the documents without a kind field (for example definition files exported from or posted to the DTM API)"
-        }
-      },
-      "additionalProperties": false,
       "type": "object"
     },
     "DigitalTwinSpec": {
@@ -648,26 +507,19 @@
           "type": "boolean",
           "description": "Delete definitions tagged managedBy which are no longer declared (requires managedBy; default false)"
         },
-        "sources": {
-          "items": {
-            "$ref": "#/$defs/DigitalTwinSourceSpec"
-          },
-          "type": "array",
-          "description": "Model files with definitions: YAML/JSON documents with a kind field or plain definitions (as returned by the DTM API) with the kind set on the source; directories are scanned for *.yaml and *.yml and *.json by default"
-        },
         "propertyDefinitions": {
           "items": {
             "$ref": "#/$defs/DigitalTwinDefinitionSpec"
           },
           "type": "array",
-          "description": "Property definitions (matched by identifier and contexts)"
+          "description": "Property definitions (matched by identifier and contexts): each entry is an inline definition or a source of definition files"
         },
         "assetDefinitions": {
           "items": {
             "$ref": "#/$defs/DigitalTwinDefinitionSpec"
           },
           "type": "array",
-          "description": "Asset definitions (matched by identifier); their structure is described by composition"
+          "description": "Asset definitions (matched by identifier; their structure is described by composition): each entry is an inline definition or a source of definition files"
         }
       },
       "additionalProperties": false,

@@ -82,7 +82,7 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 	printSectionCount(SectionSmartRest, len(manifest.SmartRestTemplates))
 	dtmCount := 0
 	if manifest.DigitalTwin != nil {
-		dtmCount = len(manifest.DigitalTwin.PropertyDefinitions) + len(manifest.DigitalTwin.AssetDefinitions) + len(manifest.DigitalTwin.Sources)
+		dtmCount = len(manifest.DigitalTwin.PropertyDefinitions) + len(manifest.DigitalTwin.AssetDefinitions)
 	}
 	printSectionCount(SectionDigitalTwin, dtmCount)
 	printSectionCount(SectionSmartFunctions, len(manifest.SmartFunctions))
@@ -129,8 +129,12 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 		check(SectionSmartRest, i, spec.resolvedSource())
 	}
 	if manifest.DigitalTwin != nil {
-		for i, source := range manifest.DigitalTwin.Sources {
-			check(SectionDigitalTwin+".sources", i, resolvedDigitalTwinSource(source.Source))
+		for _, key := range manifest.DigitalTwin.keys() {
+			for i, entry := range key.specs {
+				if entry.Source != nil {
+					check(SectionDigitalTwin+"."+key.name, i, resolvedDigitalTwinSource(*entry.Source))
+				}
+			}
 		}
 	}
 	for i, spec := range manifest.SmartFunctions {

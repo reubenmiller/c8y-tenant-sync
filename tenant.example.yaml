@@ -368,17 +368,22 @@ smartrestTemplates:
       path: ./exports/custom_devmgmt.json
       optional: true
 
-# Digital Twin Manager definitions, inline and from model files (YAML/JSON
-# documents with a kind field). Property definitions are applied before the
+# Digital Twin Manager definitions, inline or from definition files (JSON/YAML
+# as returned by the DTM API). Property definitions are applied before the
 # asset definitions using them, and definitions are only written when they
 # differ.
 digitalTwin:
   managedBy: tenant-sync # tag added to every definition the sync writes
   # prune: true          # delete definitions tagged managedBy which are no longer declared
-  sources:
-    - path: ./dtm
-      optional: true
   propertyDefinitions:
+    # Definition files (JSON/YAML as returned by the DTM API)
+    - source:
+        path: ./dtm/properties
+        optional: true
+    # Or a single file by URL
+    - source:
+        url: https://raw.githubusercontent.com/thin-edge/tiny-edge/refs/heads/main/cumulocity/dtm/tiny_edge_remote_access.json
+    # Or inline
     - identifier: maxFlow
       contexts: [asset]
       jsonSchema: {title: Maximum flow, type: number, minimum: 0}

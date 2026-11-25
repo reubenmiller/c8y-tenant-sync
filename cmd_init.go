@@ -51,9 +51,9 @@ software:
 #       path: ./smartrest # collection JSON files exported by the platform
 
 # digitalTwin:
-#   sources:
-#     - path: ./dtm # model files with PropertyDefinition/AssetDefinition documents
 #   propertyDefinitions:
+#     - source:
+#         path: ./dtm/properties # definition files (JSON/YAML as returned by the DTM API)
 #     - identifier: maxFlow
 #       contexts: [asset]
 #       jsonSchema: {title: Maximum flow, type: number}

@@ -312,8 +312,12 @@ func (m *Manifest) rebase(dir, rootDir string) {
 		rebasePath(&m.SmartFunctions[i].Source)
 	}
 	if m.DigitalTwin != nil {
-		for i := range m.DigitalTwin.Sources {
-			rebasePath(&m.DigitalTwin.Sources[i].Source)
+		for _, defs := range [][]DigitalTwinDefinitionSpec{m.DigitalTwin.PropertyDefinitions, m.DigitalTwin.AssetDefinitions} {
+			for i := range defs {
+				if defs[i].Source != nil {
+					rebasePath(defs[i].Source)
+				}
+			}
 		}
 	}
 
@@ -440,9 +444,9 @@ func mergeByKey[T any](base, over []T, key func(T) string) []T {
 	return out
 }
 
-// mergeDigitalTwin merges the digitalTwin sections: sources are
-// concatenated, definitions with the same key are replaced, and managedBy
-// and prune of over win when set
+// mergeDigitalTwin merges the digitalTwin sections: inline definitions with
+// the same key are replaced, source entries are all kept, and managedBy and
+// prune of over win when set
 func mergeDigitalTwin(base, over *DigitalTwinSpec) *DigitalTwinSpec {
 	if base == nil {
 		return over
@@ -453,7 +457,6 @@ func mergeDigitalTwin(base, over *DigitalTwinSpec) *DigitalTwinSpec {
 	out := &DigitalTwinSpec{
 		ManagedBy: base.ManagedBy,
 		Prune:     base.Prune,
-		Sources:   concat(base.Sources, over.Sources),
 	}
 	if over.ManagedBy != "" {
 		out.ManagedBy = over.ManagedBy

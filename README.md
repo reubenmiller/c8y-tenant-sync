@@ -977,24 +977,31 @@ Since the file content must be read, `url` sources are not supported for this se
 
 ### Digital Twin Manager definitions
 
-The `digitalTwin` section creates and updates [Digital Twin Manager](https://cumulocity.com/docs/digital-twin-manager/) definitions. Declare property and asset definitions inline, or point `sources` at model files (or both):
+The `digitalTwin` section creates and updates [Digital Twin Manager](https://cumulocity.com/docs/digital-twin-manager/) property and asset definitions. Each entry of `propertyDefinitions` and `assetDefinitions` is either a definition declared inline, or a `source` of definition files:
 
 ```yaml
 digitalTwin:
   managedBy: tenant-sync # optional: tag added to every definition the sync writes
   prune: false           # true deletes definitions tagged managedBy which are no longer declared
 
-  # Model files: YAML/JSON documents with a kind field
-  # (directories are scanned for *.yaml, *.yml and *.json)
-  sources:
-    - path: ./dtm
-
   propertyDefinitions:
+    # Definition files: directories are scanned for *.json, *.yaml and *.yml
+    - source:
+        path: ./dtm/properties
+
+    # A single file by URL (downloaded on each run)
+    - source:
+        url: https://raw.githubusercontent.com/thin-edge/tiny-edge/refs/heads/main/cumulocity/dtm/tiny_edge_remote_access.json
+
+    # Inline
     - identifier: maxFlow
       contexts: [asset]
       jsonSchema: {title: Maximum flow, type: number, minimum: 0}
 
   assetDefinitions:
+    - source:
+        path: ./dtm/assets
+
     - identifier: Pump
       jsonSchema: {title: Pump}
       composition:
@@ -1007,47 +1014,30 @@ digitalTwin:
         icon: {category: devicesAndSensors, name: pump}
 ```
 
-A model file holds one or more definitions, separated by `---` or as a list:
+A definition file holds definitions in the format of the DTM API, as JSON or YAML: the body you would `POST` to `/service/dtm/definitions/properties` or `/assets`. Several definitions can share a file, as a list or as YAML documents separated by `---`:
 
 ```yaml
-kind: PropertyDefinition
 identifier: maxFlow
 contexts: [asset]
 jsonSchema: {title: Maximum flow, type: number}
 ---
-kind: AssetDefinition
-identifier: Pump
-jsonSchema: {title: Pump}
-composition:
-  allowedProperties: [{identifier: maxFlow}]
+identifier: minFlow
+contexts: [asset]
+jsonSchema: {title: Minimum flow, type: number}
 ```
 
-Model files accept the kinds `PropertyDefinition`, `AssetDefinition`, `MeasurementDefinition`, `EventDefinition` and `AlarmDefinition`. Assets (`kind: Asset`) are not synced, and a file containing them fails.
-
-Definition files without a `kind` field, such as the JSON bodies posted to the DTM API, can be used as they are by setting `kind` on the source. A `kind` inside a document still wins:
-
-```yaml
-digitalTwin:
-  sources:
-    - path: ./cumulocity/dtm # e.g. tiny-edge's parameter sets
-      kind: PropertyDefinition
-
-    # A single file by URL (downloaded on each run)
-    - url: https://raw.githubusercontent.com/thin-edge/tiny-edge/refs/heads/main/cumulocity/dtm/tiny_edge_remote_access.json
-      kind: PropertyDefinition
-```
-
-A `url` source is downloaded before it is read, so it always applies the current content of that URL. Pin it to a tag or commit (instead of a branch) to control when definitions change. If a download fails, the whole section is skipped, so a failed download never prunes definitions.
+The key decides the kind: files under `propertyDefinitions` hold property definitions, and files under `assetDefinitions` hold asset definitions. A `kind` field in a document is optional, but a file whose `kind` belongs to the other key fails.
 
 How the sync behaves:
 
-- **Matching**: property definitions are matched by `identifier` and `contexts` (in any order), all other kinds by `identifier`.
-- **Order**: property, measurement, event and alarm definitions are applied first, then asset definitions. An asset definition is applied after the asset definitions its composition allows as sub-assets.
+- **Matching**: property definitions are matched by `identifier` and `contexts` (in any order), asset definitions by `identifier`.
+- **Order**: property definitions are applied first, then asset definitions. An asset definition is applied after the asset definitions its composition allows as sub-assets.
 - **Idempotency**: a definition is only written when a declared field differs. Fields the manifest does not set, and fields the server generates (such as `$schema` or the default `minOccurs`), do not count as changes. Tags and contexts are compared as sets.
 - **Read-only definitions**: a definition shared from the enterprise tenant or the definition library which differs from the manifest fails without a write.
-- **Pruning**: with `prune: true`, definitions tagged `managedBy` which no manifest entry declares are deleted (asset definitions first). Without `prune`, definitions are never deleted. The sync skips pruning when a model source fails to load, so a missing file never deletes definitions.
+- **URLs**: a `url` source is downloaded on each run, so it always applies the current content of that URL. Pin it to a tag or commit (instead of a branch) to control when definitions change.
+- **Pruning**: with `prune: true`, definitions tagged `managedBy` which no manifest entry declares are deleted (asset definitions first). Without `prune`, definitions are never deleted. When a source fails to load or download, the whole section is skipped, so a missing file never deletes definitions.
 
-With includes, `sources` are concatenated, definitions with the same key replace earlier ones, and `managedBy` and `prune` of a later file win when set.
+With includes, inline definitions with the same key replace earlier ones, source entries are all kept, and `managedBy` and `prune` of a later file win when set.
 
 ### Smart functions (Data Preparation rules)
 

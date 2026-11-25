@@ -15,8 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// digitalTwinDefaultPatterns select the model files in a directory
-var digitalTwinDefaultPatterns = []string{"*.yaml", "*.yml", "*.json"}
+// digitalTwinDefaultPatterns select the definition files in a directory
+var digitalTwinDefaultPatterns = []string{"*.json", "*.yaml", "*.yml"}
 
 // resolvedDigitalTwinSource returns the source with the default patterns
 // applied
@@ -25,6 +25,23 @@ func resolvedDigitalTwinSource(source Source) Source {
 		source.Patterns = digitalTwinDefaultPatterns
 	}
 	return source
+}
+
+// digitalTwinKey describes one definition list of the digitalTwin section
+type digitalTwinKey struct {
+	// name is the manifest key, e.g. propertyDefinitions
+	name string
+	// kind is the SDK model kind of the definitions
+	kind  string
+	specs []DigitalTwinDefinitionSpec
+}
+
+// keys lists the definition lists of the section in apply order
+func (spec *DigitalTwinSpec) keys() []digitalTwinKey {
+	return []digitalTwinKey{
+		{"propertyDefinitions", dtm.KindPropertyDefinition, spec.PropertyDefinitions},
+		{"assetDefinitions", dtm.KindAssetDefinition, spec.AssetDefinitions},
+	}
 }
 
 // toDefinition converts the manifest definition into the SDK type
@@ -64,20 +81,11 @@ func definitionKey(d dtm.Definition) string {
 	return DigitalTwinDefinitionSpec{Identifier: d.Identifier, Contexts: d.Contexts}.Key()
 }
 
-// digitalTwinDefinitionKinds are the kinds of definition documents
-var digitalTwinDefinitionKinds = []string{
-	dtm.KindPropertyDefinition,
-	dtm.KindAssetDefinition,
-	dtm.KindMeasurementDefinition,
-	dtm.KindEventDefinition,
-	dtm.KindAlarmDefinition,
-}
-
-// loadDigitalTwinFile adds the definitions of a model file to the model.
-// A file holds one or more objects (YAML documents separated by ---, a list,
-// or JSON). Objects without a kind field get defaultKind, so plain definition
-// files (as returned by the DTM API) can be used as they are.
-func loadDigitalTwinFile(model *dtm.Model, path, defaultKind string) error {
+// loadDigitalTwinFile adds the definitions of a file to the model, as the
+// given kind. A file holds one or more definitions (JSON, YAML documents
+// separated by ---, or a list) in the format of the DTM API. A kind field is
+// optional, but must match the manifest key the file is listed under.
+func loadDigitalTwinFile(model *dtm.Model, path, kind string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -102,15 +110,10 @@ func loadDigitalTwinFile(model *dtm.Model, path, defaultKind string) error {
 			if !isObject {
 				return fmt.Errorf("document %d item %d is not an object", doc, i+1)
 			}
-			if kind, _ := obj["kind"].(string); kind == "" {
-				if defaultKind == "" {
-					return fmt.Errorf("document %d item %d has no kind field (add one, or set kind on the source for files with plain definitions)", doc, i+1)
-				}
-				obj["kind"] = defaultKind
+			if declared, _ := obj["kind"].(string); declared != "" && declared != kind {
+				return fmt.Errorf("document %d item %d is a %s, but the file is listed as %s (move it to the matching key)", doc, i+1, declared, kind)
 			}
-			if obj["kind"] == dtm.KindAsset {
-				return fmt.Errorf("document %d item %d: only definitions are supported (kind %s is not synced)", doc, i+1, dtm.KindAsset)
-			}
+			obj["kind"] = kind
 			if err := model.Add(obj); err != nil {
 				return fmt.Errorf("document %d item %d: %w", doc, i+1, err)
 			}
@@ -118,47 +121,27 @@ func loadDigitalTwinFile(model *dtm.Model, path, defaultKind string) error {
 	}
 }
 
-// buildDigitalTwinModel loads the model files of the sources and adds the
-// inline definitions. ok is false when a source failed (already recorded).
+// buildDigitalTwinModel loads the definition files and adds the inline
+// definitions, keeping the order of each list. ok is false when a source
+// failed (already recorded).
 func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model, ok bool) {
 	model = &dtm.Model{}
 	ok = true
-	for index, source := range spec.Sources {
-		item := fmt.Sprintf("digitalTwin.sources[%d]", index)
-		files, resolved := s.resolveSource(SectionDigitalTwin, item, resolvedDigitalTwinSource(source.Source))
-		if !resolved {
-			if !source.Optional {
-				ok = false
-			}
-			continue
-		}
-		files, fetched := s.fetchFiles(SectionDigitalTwin, files)
-		if !fetched {
-			ok = false
-		}
-		for _, file := range files {
-			if s.notDownloaded(file) {
-				// Remote assets are not downloaded in dry-run mode
-				s.record(SectionDigitalTwin, file.Filename, ActionPlanned, "apply definitions from "+file.Filename+" (not downloaded in dry-run)", nil)
+	for _, key := range spec.keys() {
+		for index, entry := range key.specs {
+			if entry.Source == nil {
+				def := entry.toDefinition()
+				if key.kind == dtm.KindAssetDefinition {
+					model.AssetDefinitions = append(model.AssetDefinitions, def)
+				} else {
+					model.PropertyDefinitions = append(model.PropertyDefinitions, def)
+				}
 				continue
 			}
-			if file.Path == "" {
-				s.record(SectionDigitalTwin, file.Filename, ActionFailed, "",
-					fmt.Errorf("model source did not provide a file"))
-				ok = false
-				continue
-			}
-			if err := loadDigitalTwinFile(model, file.Path, source.Kind); err != nil {
-				s.record(SectionDigitalTwin, file.Filename, ActionFailed, "read model file", err)
+			if !s.loadDigitalTwinSource(model, key, index, *entry.Source) {
 				ok = false
 			}
 		}
-	}
-	for _, d := range spec.PropertyDefinitions {
-		model.PropertyDefinitions = append(model.PropertyDefinitions, d.toDefinition())
-	}
-	for _, d := range spec.AssetDefinitions {
-		model.AssetDefinitions = append(model.AssetDefinitions, d.toDefinition())
 	}
 
 	if err := checkDuplicateDefinitions(model); err != nil {
@@ -168,8 +151,37 @@ func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model,
 	return model, ok
 }
 
+// loadDigitalTwinSource adds the definitions of one source entry to the
+// model. It returns false when the source failed (already recorded); an
+// optional source without files is not a failure.
+func (s *Syncer) loadDigitalTwinSource(model *dtm.Model, key digitalTwinKey, index int, source Source) bool {
+	label := fmt.Sprintf("digitalTwin.%s[%d]", key.name, index)
+	files, resolved := s.resolveSource(SectionDigitalTwin, label, resolvedDigitalTwinSource(source))
+	if !resolved {
+		return source.Optional
+	}
+	files, ok := s.fetchFiles(SectionDigitalTwin, files)
+	for _, file := range files {
+		if s.notDownloaded(file) {
+			// Remote files are not downloaded in dry-run mode
+			s.record(SectionDigitalTwin, file.Filename, ActionPlanned, "apply "+key.kind+"s from "+file.Filename+" (not downloaded in dry-run)", nil)
+			continue
+		}
+		if file.Path == "" {
+			s.record(SectionDigitalTwin, file.Filename, ActionFailed, "", fmt.Errorf("definition source did not provide a file"))
+			ok = false
+			continue
+		}
+		if err := loadDigitalTwinFile(model, file.Path, key.kind); err != nil {
+			s.record(SectionDigitalTwin, file.Filename, ActionFailed, "read definition file", err)
+			ok = false
+		}
+	}
+	return ok
+}
+
 // checkDuplicateDefinitions rejects definitions declared more than once
-// (e.g. inline and in a model file), which would be applied twice
+// (e.g. inline and in a file), which would be applied twice
 func checkDuplicateDefinitions(model *dtm.Model) error {
 	var duplicates []string
 	for _, group := range digitalTwinGroups(model) {
@@ -197,9 +209,6 @@ type digitalTwinGroup struct {
 func digitalTwinGroups(model *dtm.Model) []digitalTwinGroup {
 	return []digitalTwinGroup{
 		{dtm.KindPropertyDefinition, model.PropertyDefinitions},
-		{dtm.KindMeasurementDefinition, model.MeasurementDefinitions},
-		{dtm.KindEventDefinition, model.EventDefinitions},
-		{dtm.KindAlarmDefinition, model.AlarmDefinitions},
 		{dtm.KindAssetDefinition, model.AssetDefinitions},
 	}
 }
@@ -285,56 +294,60 @@ func (spec *DigitalTwinSpec) validate() []string {
 	if spec.PruneEnabled() && strings.TrimSpace(spec.ManagedBy) == "" {
 		errs = append(errs, "digitalTwin: prune requires managedBy (the tag marking the definitions the manifest owns)")
 	}
-	for i, source := range spec.Sources {
-		label := fmt.Sprintf("digitalTwin.sources[%d]", i)
-		if source.Kind != "" && !slices.Contains(digitalTwinDefinitionKinds, source.Kind) {
-			errs = append(errs, fmt.Sprintf("%s: unknown kind %q: supported values are %s", label, source.Kind, strings.Join(digitalTwinDefinitionKinds, ", ")))
-		}
-		if err := source.Validate(); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
-		}
-		if source.Cloudsmith != nil {
-			errs = append(errs, label+": cloudsmith sources are not supported (use path or github)")
-		}
-	}
-
-	seen := map[string]bool{}
-	for i, d := range spec.PropertyDefinitions {
-		label := fmt.Sprintf("digitalTwin.propertyDefinitions[%d]", i)
-		if d.Identifier == "" {
-			errs = append(errs, label+": identifier is required")
-			continue
-		}
-		if d.Composition != nil {
-			errs = append(errs, label+": composition only applies to asset definitions")
-		}
-		if seen[d.Key()] {
-			errs = append(errs, fmt.Sprintf("%s: duplicate property definition %s", label, d.Key()))
-		}
-		seen[d.Key()] = true
-	}
-
-	seen = map[string]bool{}
-	for i, d := range spec.AssetDefinitions {
-		label := fmt.Sprintf("digitalTwin.assetDefinitions[%d]", i)
-		if d.Identifier == "" {
-			errs = append(errs, label+": identifier is required")
-			continue
-		}
-		if len(d.Contexts) > 0 {
-			errs = append(errs, label+": contexts only apply to property definitions")
-		}
-		if d.Composition != nil {
-			for j, item := range slices.Concat(d.Composition.AllowedProperties, d.Composition.AllowedSubAssets) {
-				if item.Identifier == "" {
-					errs = append(errs, fmt.Sprintf("%s.composition: item %d: identifier is required", label, j))
+	for _, key := range spec.keys() {
+		seen := map[string]bool{}
+		for i, d := range key.specs {
+			label := fmt.Sprintf("digitalTwin.%s[%d]", key.name, i)
+			if d.Source != nil {
+				errs = append(errs, validateDigitalTwinSource(label, d)...)
+				continue
+			}
+			if d.Identifier == "" {
+				errs = append(errs, label+": identifier (or source) is required")
+				continue
+			}
+			if key.kind == dtm.KindPropertyDefinition && d.Composition != nil {
+				errs = append(errs, label+": composition only applies to asset definitions")
+			}
+			if key.kind == dtm.KindAssetDefinition {
+				if len(d.Contexts) > 0 {
+					errs = append(errs, label+": contexts only apply to property definitions")
+				}
+				if d.Composition != nil {
+					for j, item := range slices.Concat(d.Composition.AllowedProperties, d.Composition.AllowedSubAssets) {
+						if item.Identifier == "" {
+							errs = append(errs, fmt.Sprintf("%s.composition: item %d: identifier is required", label, j))
+						}
+					}
 				}
 			}
+			if seen[d.Key()] {
+				errs = append(errs, fmt.Sprintf("%s: duplicate definition %s", label, d.Key()))
+			}
+			seen[d.Key()] = true
 		}
-		if seen[d.Identifier] {
-			errs = append(errs, fmt.Sprintf("%s: duplicate asset definition %s", label, d.Identifier))
-		}
-		seen[d.Identifier] = true
 	}
 	return errs
+}
+
+// validateDigitalTwinSource checks a source entry: it has no inline fields
+func validateDigitalTwinSource(label string, d DigitalTwinDefinitionSpec) []string {
+	var errs []string
+	if d.Source.Cloudsmith != nil {
+		errs = append(errs, label+".source: cloudsmith sources are not supported (use path, url or github)")
+	} else if err := d.Source.Validate(); err != nil {
+		errs = append(errs, fmt.Sprintf("%s.source: %v", label, err))
+	}
+	inline := d
+	inline.Source = nil
+	if !inline.isEmpty() {
+		errs = append(errs, label+": source and inline definition fields (identifier, jsonSchema, ...) are mutually exclusive")
+	}
+	return errs
+}
+
+// isEmpty reports whether no field is set
+func (d DigitalTwinDefinitionSpec) isEmpty() bool {
+	return d.Source == nil && d.Identifier == "" && len(d.Contexts) == 0 && len(d.Tags) == 0 &&
+		len(d.JSONSchema) == 0 && d.Composition == nil && len(d.Fragments) == 0
 }

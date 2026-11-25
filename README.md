@@ -44,6 +44,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
 - 👥 **Users & user groups**: create user groups with roles, create users and assign them to groups — additively and idempotently
+- 🚪 **Login options**: choose the preferred login mode (OAI-Secure, basic or single sign-on) and configure basic restrictions, OAI-Secure sessions and SSO generated from a provider's OpenID Connect discovery URL, with safeguards against locking anyone out
 - 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🧬 **Digital Twin Manager definitions**: create and update property and asset definitions (plus measurement, event and alarm definitions) inline or from model files, in dependency order, with optional pruning of definitions the manifest no longer declares
@@ -57,7 +58,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, Digital Twin Manager definitions and smart functions)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, login options, Digital Twin Manager definitions and smart functions)
 
 ## Installation
 
@@ -162,7 +163,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file (also accepted as a positional argument), see [Remote manifests](#remote-manifests) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -179,7 +180,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `--verbose` | | Detailed logging |
 | `--debug` | | Verbose logging + HTTP request/response details |
 
-Sections are applied in a fixed order — child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, microservices, extensions, web applications, user groups, users, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
+Sections are applied in a fixed order — child tenants (once, before the targets are resolved), tenant options, features, retention rules, Cumulocity CA, trusted certificates, certificate revocation lists, microservices, extensions, web applications, user groups, users, login options, software, firmware, configuration, SmartREST templates, device profiles, then commands — so users can be assigned to groups created in the same run, profiles can reference repository items synced in the same run, and custom commands can build on everything the manifest declares.
 
 ### Run reports
 
@@ -288,6 +289,7 @@ Fields which hold secrets can reference their value instead of containing it:
 | `users[].passwordFrom` | `password` | `env`, `generate` |
 | `tenants[].adminPasswordFrom` | `adminPass` | `env`, `generate` |
 | `github.tokenFrom` (any GitHub source) | `github.token` | `env`, `generate` |
+| `loginOptions.sso.clientSecretFrom` | `loginOptions.sso.clientSecret` | `env` (the provider issues the secret, so `generate` is refused) |
 
 ```yaml
 tenantOptions:
@@ -357,6 +359,7 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 | `applications` | Web applications the tenant is subscribed to but does not own, such as the built-in Cockpit and Device Management applications |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
 | `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
+| `loginOptions` | The preferred login mode, the basic authentication restrictions, the OAI-Secure session, and the SSO login option as the discovery URL of its issuer with the client ID, scopes and claim and access mappings (group and application IDs as names). The client secret is never exported: it is replaced by `clientSecretFrom: {env: SSO_CLIENT_SECRET}`. The export notes on stderr when the discovery URL derived from the issuer does not work (some providers, such as Azure AD v1, serve it elsewhere), leaves out an SSO option without issuer, and leaves out `preferred: sso` when there are no access mapping rules (which `validate` requires). A mapped group or application which cannot be read fails the export |
 | `digitalTwin` | The tenant's own property and asset definitions. Library definitions and definitions shared from the enterprise tenant are not exported, and neither are fields the server generates (such as `$schema`) or maintains (such as `lastUpdated`). Other custom fields, such as an asset definition's `icon`, are exported as `fragments` |
 | `smartFunctions` | The deployed Data Preparation rules as [inline rules](#inline-rules), with their code and tests. Drafts and the AI chat history are not exported |
 
@@ -1177,6 +1180,89 @@ Inventory assignments are applied in the `users` section, after the user is crea
 
 `inventoryRoles` is applied after `userGroups` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
 
+### Login options
+
+The `loginOptions` section configures how users log in: the preferred login mode of the login page, and the settings of the basic, OAI-Secure and single sign-on (SSO) login options.
+
+```yaml
+loginOptions:
+  preferred: sso            # oaiSecure (recommended), basic or sso; omit to leave it unchanged
+
+  basic:
+    forbiddenClients: [WEB_BROWSERS] # basic authentication only for devices and API clients
+    trustedUserAgents: []
+    forbiddenUserAgents: []
+
+  oaiSecure:
+    session:
+      absoluteTimeout: 336h  # users log in again after 14 days
+      renewalTimeout: 24h
+      maximumParallelSessions: 5
+      userAgentValidationRequired: false
+
+  sso:
+    discoveryUrl: https://idp.example.com/realms/acme/.well-known/openid-configuration
+    clientId: cumulocity
+    clientSecretFrom:
+      env: SSO_CLIENT_SECRET # or clientSecret: ${SSO_CLIENT_SECRET}, or a sops-encrypted clientSecret
+    providerName: Acme       # default: the issuer's host
+    buttonName: Log in with Acme
+    scopes: [openid, profile, email] # the default
+    userIdClaim: preferred_username  # default: sub
+    userData:                        # the defaults
+      email: email
+      firstName: given_name
+      lastName: family_name
+    accessMappings:
+      manageRolesOnlyFromAccessMapping: true # keep groups assigned in Cumulocity which no rule lists
+      rules:
+        - when:
+            - claim: groups
+              operator: IN   # EQ (default), NEQ, GT, LT, GTE, LTE, IN
+              value: c8y-admins
+          groups: [admins]
+          applications: [devicemanagement, cockpit]
+        - match: any         # all (default) or any of the conditions
+          when:
+            - {claim: groups, operator: IN, value: c8y-operators}
+            - {claim: email, value: ops@example.com}
+          groups: [business]
+```
+
+The preferred login mode is what the login page offers:
+
+| `preferred` | Login page |
+|-------------|------------|
+| `oaiSecure` | Username and password, with OAI-Secure tokens (the default for new tenants) |
+| `basic` | Username and password, with basic authentication |
+| `sso` | Redirects to the SSO provider; the username/password form is hidden |
+
+The tool sets `visibleOnLoginPage` of the login options accordingly. Changing the preferred mode logs out the users of the tenant. Basic authentication keeps working for devices and API clients in every mode, unless `basic.forbiddenClients` or `basic.forbiddenUserAgents` restrict it.
+
+#### SSO from the discovery URL
+
+The SSO login option is generated from the OpenID Connect discovery document of the provider: the issuer, the authorization, token and logout requests, and the JWKS signature verification. The manifest only adds the client ID, the client secret, and the claim and access mappings. Register `https://<tenant domain>/tenant/oauth` as a redirect URI of the client at the provider.
+
+- The client secret is sent in the token and refresh request bodies (`client_secret_post`), or in an `Authorization` header when the provider only supports `client_secret_basic`. It is masked in all output, in every encoding. It comes from `clientSecret` (with `${VAR}` or sops) or `clientSecretFrom.env`; a generated value is refused, since the provider would not know it.
+- The endpoints of the discovery document must use https (http only for `localhost`), since the platform sends the client secret and authorization codes to them.
+- The generated requests (`authorizationRequest`, `tokenRequest`, `refreshRequest`, `logoutRequest`) and `signatureVerificationConfig` replace the tenant's values as a whole, so fields which are no longer generated, such as an old `Authorization` header, are removed. Fields the platform generates, such as `_type` or `initRequest`, are not sent back; settings the login option carries besides, such as the password strength and two-factor strategy, are sent back unchanged. When the provider has no logout endpoint, an earlier `logoutRequest` is removed.
+- `accessMappings.rules` reference user groups and applications by name. They are resolved to IDs when the manifest is applied, and an unknown name fails the SSO login option. A user who matches no rule is denied access.
+- `overrides` are merged last into the generated login option, for fields the section does not model (such as `externalTokenConfig`). Write the platform's placeholders as `$${code}`, since `${...}` is expanded from the environment.
+- Fields which are not declared are left as they are in the tenant. Each run compares the generated login option with the tenant's and only writes when they differ.
+
+#### Lock-out safeguards
+
+A broken login configuration can lock everyone out of the tenant, so the section works additively and checks before it switches:
+
+- **Nothing is deleted.** Login options are created or updated, never removed. Hiding a login option only sets `visibleOnLoginPage`.
+- **The SSO provider is checked first**, also in a dry run: the discovery document must be reachable, its issuer must match its URL, it must list the authorization, token and JWKS endpoints and support the authorization code flow, the JWKS must have at least one key, and the client secret must not be empty. If any check fails, nothing is written and the preferred mode stays as it is.
+- **The preferred mode is switched last**, after the other login options are configured. The option of the new mode is made visible before the others are hidden, the result is read back, and if it does not match, the previous visibility is restored.
+- **`validate` refuses** an unknown mode, `preferred: sso` without an `sso` section or without any access mapping rule, `preferred: basic` with `forbiddenClients: [WEB_BROWSERS]`, and OAI-Secure sessions shorter than 15 minutes.
+- **The run refuses** to forbid basic authentication for web browsers while basic is the preferred mode, to make basic preferred while web browsers are forbidden from it, to hide the SSO button while SSO is the preferred mode, and to add a forbidden user agent which matches this tool's own `User-Agent`. Restrictions which are lifted are applied before the preferred mode changes, and new restrictions after it.
+- **`--dry` shows the change**: unlike the other sections, a dry run reads the tenant's login options (and the groups and applications of the access mappings) and goes through the same steps as a real run without writing. So it lists each changed field with its old and new value (the client secret only as `***`), what stays unchanged, the new preferred mode, and every refusal above. Without an active session, and for tenants other than the current one in a dry run with `targets` (their credentials are only resolved in a real run), it lists the desired settings without comparing them.
+
+If the SSO provider stops working while `sso` is the preferred mode, users can still reach the tenant with basic authentication through the API (unless it is restricted), for example to set `preferred: oaiSecure` again with this tool.
+
 ### SmartREST 2.0 template collections
 
 The `smartrestTemplates` section syncs SmartREST 2.0 template collections from JSON files as exported by the platform UI (Device Management → Device types → SmartREST templates → Export) — one collection per file. Point a source at a directory and every `*.json` file in it is synced:
@@ -1654,6 +1740,7 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
 │                     users, role/ │
 │                     group assign)│
 │  sync_inventory_roles.go         │  inventory roles + assignments
+│  sync_login_options.go + oidc.go │  login options, SSO discovery
 │  sync_software.go  + parser.go   │  package filename parsing
 │  sync_firmware.go  + firmware.go │  OS image filename parsing
 │  sync_configuration.go           │
@@ -1668,7 +1755,7 @@ Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple
         │  go-c8y SDK│  Repository.{Software,Firmware,Configuration},
         └────────────┘  Tenants.Options, Features, Applications, UIPlugins,
                         Users, UserGroups, UserRoles,
-                        InventoryRoles, DevicePermissions,
+                        InventoryRoles, DevicePermissions, LoginOptions,
                         SmartRestTemplates, TrustedCertificates,
                         ManagedObjects
 ```

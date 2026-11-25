@@ -635,18 +635,23 @@ func (m *Manifest) rebase(dir, rootDir string) {
 //   - entries without an identity (trusted certificates, revocation lists,
 //     software, firmware, configuration, SmartREST templates) are all kept
 //     and applied in order
-//   - targets and certificateAuthority from over replace those of base
+//   - targets, certificateAuthority and loginOptions from over replace
+//     those of base
 //   - hooks pre/post lists are concatenated, section hooks per section
 func mergeManifests(base, over *Manifest) *Manifest {
 	out := &Manifest{
 		Targets:              base.Targets,
 		CertificateAuthority: base.CertificateAuthority,
+		LoginOptions:         base.LoginOptions,
 	}
 	if over.Targets != nil {
 		out.Targets = over.Targets
 	}
 	if over.CertificateAuthority != nil {
 		out.CertificateAuthority = over.CertificateAuthority
+	}
+	if over.LoginOptions != nil {
+		out.LoginOptions = over.LoginOptions
 	}
 
 	out.Tenants = mergeByKey(base.Tenants, over.Tenants, func(t ChildTenantSpec) string { return strings.ToLower(t.Domain) })

@@ -97,8 +97,16 @@ func (m *Manifest) allSources() []*Source {
 	return sources
 }
 
+// ssoLogin returns the SSO login option of the manifest (nil when none)
+func (m *Manifest) ssoLogin() *SSOLoginSpec {
+	if m.LoginOptions == nil {
+		return nil
+	}
+	return m.LoginOptions.SSO
+}
+
 // ResolveSecretRefs replaces the env and generate references (valueFrom,
-// passwordFrom, adminPasswordFrom, tokenFrom) with their values. It returns
+// passwordFrom, adminPasswordFrom, tokenFrom, clientSecretFrom) with their values. It returns
 // the resolved values, so they can be masked in the output. The application
 // and device references of valueFrom are resolved when the tenant options are
 // applied.
@@ -140,6 +148,13 @@ func (m *Manifest) ResolveSecretRefs(secrets *SecretStore) ([]string, error) {
 		if value, ok := resolve(fmt.Sprintf("tenants[%d].adminPasswordFrom", i), *m.Tenants[i].AdminPasswordFrom); ok {
 			m.Tenants[i].AdminPass = value
 			m.Tenants[i].AdminPasswordFrom = nil
+		}
+	}
+	if sso := m.ssoLogin(); sso != nil && sso.ClientSecretFrom != nil {
+		if value, ok := resolve("loginOptions.sso.clientSecretFrom", *sso.ClientSecretFrom); ok {
+			sso.ClientSecret = value
+			sso.ClientSecretFrom = nil
+			values = append(values, ssoSecretForms(sso)...)
 		}
 	}
 	for _, source := range m.allSources() {

@@ -85,6 +85,11 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	printSectionCount(SectionUserGroups, len(manifest.UserGroups))
 	printSectionCount(SectionInventoryRoles, len(manifest.InventoryRoles))
 	printSectionCount(SectionUsers, len(manifest.Users))
+	loginCount := 0
+	if manifest.LoginOptions != nil {
+		loginCount = 1
+	}
+	printSectionCount(SectionLoginOptions, loginCount)
 	printSectionCount(SectionSoftware, len(manifest.Software))
 	printSectionCount(SectionFirmware, len(manifest.Firmware))
 	printSectionCount(SectionConfiguration, len(manifest.Configuration))

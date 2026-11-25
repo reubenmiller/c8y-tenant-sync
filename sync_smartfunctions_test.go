@@ -152,3 +152,17 @@ func TestValidateSmartFunctions(t *testing.T) {
 	assert.Equal(t, DefaultSmartFunctionWaitTimeout, SmartFunctionSpec{}.waitTimeout())
 	assert.Zero(t, SmartFunctionSpec{WaitTimeout: "0"}.waitTimeout())
 }
+
+func TestSyncSmartFunctionDryRunWithoutDownload(t *testing.T) {
+	// Dry-run lists GitHub assets with the path they would be downloaded to
+	syncer, dir := newTestSyncer(t)
+	syncer.DryRun = true
+	syncer.syncSmartFunction(context.Background(), SmartFunctionSpec{}, smartFunctionPackage{
+		Name:   "tiny-edge-events",
+		Origin: "tiny-edge-events.tar.gz",
+		Path:   filepath.Join(dir, "not-downloaded", "tiny-edge-events.tar.gz"),
+	})
+	result := resultFor(t, syncer, SectionSmartFunctions)
+	assert.Equal(t, ActionPlanned, result.Action, "err: %v", result.Err)
+	assert.Contains(t, result.Detail, "not downloaded in dry-run")
+}

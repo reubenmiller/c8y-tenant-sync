@@ -313,7 +313,7 @@ func (m *Manifest) rebase(dir, rootDir string) {
 	}
 	if m.DigitalTwin != nil {
 		for i := range m.DigitalTwin.Sources {
-			rebasePath(&m.DigitalTwin.Sources[i])
+			rebasePath(&m.DigitalTwin.Sources[i].Source)
 		}
 	}
 

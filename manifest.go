@@ -855,11 +855,20 @@ type DigitalTwinSpec struct {
 	// longer declares
 	Prune *bool `yaml:"prune" json:"prune,omitempty" jsonschema:"description=Delete definitions tagged managedBy which are no longer declared (requires managedBy; default false)"`
 
-	// Sources are DTM model files (YAML or JSON documents with a kind field)
-	Sources []Source `yaml:"sources" json:"sources,omitempty" jsonschema:"description=Model files with definitions: YAML/JSON documents with a kind field (PropertyDefinition or AssetDefinition or MeasurementDefinition or EventDefinition or AlarmDefinition); directories are scanned for *.yaml and *.yml and *.json by default"`
+	// Sources are DTM model files (YAML or JSON documents with a kind field,
+	// or plain definitions with the kind set on the source)
+	Sources []DigitalTwinSourceSpec `yaml:"sources" json:"sources,omitempty" jsonschema:"description=Model files with definitions: YAML/JSON documents with a kind field or plain definitions (as returned by the DTM API) with the kind set on the source; directories are scanned for *.yaml and *.yml and *.json by default"`
 
 	PropertyDefinitions []DigitalTwinDefinitionSpec `yaml:"propertyDefinitions" json:"propertyDefinitions,omitempty" jsonschema:"description=Property definitions (matched by identifier and contexts)"`
 	AssetDefinitions    []DigitalTwinDefinitionSpec `yaml:"assetDefinitions" json:"assetDefinitions,omitempty" jsonschema:"description=Asset definitions (matched by identifier); their structure is described by composition"`
+}
+
+// DigitalTwinSourceSpec is a source of DTM model files
+type DigitalTwinSourceSpec struct {
+	Source `yaml:",inline"`
+
+	// Kind is the kind of documents without a kind field
+	Kind string `yaml:"kind" json:"kind,omitempty" jsonschema:"description=Kind of the documents without a kind field (for example definition files exported from or posted to the DTM API),enum=PropertyDefinition,enum=AssetDefinition,enum=MeasurementDefinition,enum=EventDefinition,enum=AlarmDefinition"`
 }
 
 // PruneEnabled reports whether pruning is enabled

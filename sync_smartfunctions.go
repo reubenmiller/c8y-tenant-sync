@@ -123,12 +123,13 @@ func (s *Syncer) SyncSmartFunctions(ctx context.Context, specs []SmartFunctionSp
 }
 
 func (s *Syncer) syncSmartFunction(ctx context.Context, spec SmartFunctionSpec, pkg smartFunctionPackage) {
+	if s.notDownloaded(ResolvedFile{Path: pkg.Path}) {
+		// Remote assets are not downloaded in dry-run mode, so the package
+		// cannot be validated
+		s.record(SectionSmartFunctions, pkg.Name, ActionPlanned, "deploy rule from "+pkg.Origin+" (not downloaded in dry-run)", nil)
+		return
+	}
 	if pkg.Path == "" {
-		if s.DryRun {
-			// Remote assets are not downloaded in dry-run mode
-			s.record(SectionSmartFunctions, pkg.Name, ActionPlanned, "deploy rule from "+pkg.Origin, nil)
-			return
-		}
 		s.record(SectionSmartFunctions, pkg.Name, ActionFailed, pkg.Origin,
 			fmt.Errorf("rule package source must provide a local file (url/linkOnly sources are not supported)"))
 		return

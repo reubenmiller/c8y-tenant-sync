@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"strings"
 
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/core"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/dtm"
+	"gopkg.in/yaml.v3"
 )
 
 // digitalTwinDefaultPatterns select the model files in a directory
@@ -59,6 +64,60 @@ func definitionKey(d dtm.Definition) string {
 	return DigitalTwinDefinitionSpec{Identifier: d.Identifier, Contexts: d.Contexts}.Key()
 }
 
+// digitalTwinDefinitionKinds are the kinds of definition documents
+var digitalTwinDefinitionKinds = []string{
+	dtm.KindPropertyDefinition,
+	dtm.KindAssetDefinition,
+	dtm.KindMeasurementDefinition,
+	dtm.KindEventDefinition,
+	dtm.KindAlarmDefinition,
+}
+
+// loadDigitalTwinFile adds the definitions of a model file to the model.
+// A file holds one or more objects (YAML documents separated by ---, a list,
+// or JSON). Objects without a kind field get defaultKind, so plain definition
+// files (as returned by the DTM API) can be used as they are.
+func loadDigitalTwinFile(model *dtm.Model, path, defaultKind string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	for doc := 1; ; doc++ {
+		var value any
+		if err := decoder.Decode(&value); errors.Is(err, io.EOF) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		items, isList := value.([]any)
+		if !isList {
+			items = []any{value}
+		}
+		for i, item := range items {
+			if item == nil {
+				continue
+			}
+			obj, isObject := item.(map[string]any)
+			if !isObject {
+				return fmt.Errorf("document %d item %d is not an object", doc, i+1)
+			}
+			if kind, _ := obj["kind"].(string); kind == "" {
+				if defaultKind == "" {
+					return fmt.Errorf("document %d item %d has no kind field (add one, or set kind on the source for files with plain definitions)", doc, i+1)
+				}
+				obj["kind"] = defaultKind
+			}
+			if obj["kind"] == dtm.KindAsset {
+				return fmt.Errorf("document %d item %d: only definitions are supported (kind %s is not synced)", doc, i+1, dtm.KindAsset)
+			}
+			if err := model.Add(obj); err != nil {
+				return fmt.Errorf("document %d item %d: %w", doc, i+1, err)
+			}
+		}
+	}
+}
+
 // buildDigitalTwinModel loads the model files of the sources and adds the
 // inline definitions. ok is false when a source failed (already recorded).
 func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model, ok bool) {
@@ -66,7 +125,7 @@ func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model,
 	ok = true
 	for index, source := range spec.Sources {
 		item := fmt.Sprintf("digitalTwin.sources[%d]", index)
-		files, resolved := s.resolveSource(SectionDigitalTwin, item, resolvedDigitalTwinSource(source))
+		files, resolved := s.resolveSource(SectionDigitalTwin, item, resolvedDigitalTwinSource(source.Source))
 		if !resolved {
 			if !source.Optional {
 				ok = false
@@ -74,31 +133,21 @@ func (s *Syncer) buildDigitalTwinModel(spec *DigitalTwinSpec) (model *dtm.Model,
 			continue
 		}
 		for _, file := range files {
+			if s.notDownloaded(file) {
+				// Remote assets are not downloaded in dry-run mode
+				s.record(SectionDigitalTwin, file.Filename, ActionPlanned, "apply definitions from "+file.Filename+" (not downloaded in dry-run)", nil)
+				continue
+			}
 			if file.Path == "" {
-				if s.DryRun {
-					// Remote assets are not downloaded in dry-run mode
-					s.record(SectionDigitalTwin, file.Filename, ActionPlanned, "apply definitions from "+file.Filename, nil)
-					continue
-				}
 				s.record(SectionDigitalTwin, file.Filename, ActionFailed, "",
 					fmt.Errorf("model source must provide a local file (url/linkOnly sources are not supported)"))
 				ok = false
 				continue
 			}
-			loaded, err := dtm.LoadModel(file.Path)
-			if err == nil && len(loaded.Assets) > 0 {
-				err = fmt.Errorf("found %d asset(s): only definitions are supported (kind %s is not synced)", len(loaded.Assets), dtm.KindAsset)
-			}
-			if err != nil {
+			if err := loadDigitalTwinFile(model, file.Path, source.Kind); err != nil {
 				s.record(SectionDigitalTwin, file.Filename, ActionFailed, "read model file", err)
 				ok = false
-				continue
 			}
-			model.PropertyDefinitions = append(model.PropertyDefinitions, loaded.PropertyDefinitions...)
-			model.MeasurementDefinitions = append(model.MeasurementDefinitions, loaded.MeasurementDefinitions...)
-			model.EventDefinitions = append(model.EventDefinitions, loaded.EventDefinitions...)
-			model.AlarmDefinitions = append(model.AlarmDefinitions, loaded.AlarmDefinitions...)
-			model.AssetDefinitions = append(model.AssetDefinitions, loaded.AssetDefinitions...)
 		}
 	}
 	for _, d := range spec.PropertyDefinitions {
@@ -234,6 +283,9 @@ func (spec *DigitalTwinSpec) validate() []string {
 	}
 	for i, source := range spec.Sources {
 		label := fmt.Sprintf("digitalTwin.sources[%d]", i)
+		if source.Kind != "" && !slices.Contains(digitalTwinDefinitionKinds, source.Kind) {
+			errs = append(errs, fmt.Sprintf("%s: unknown kind %q: supported values are %s", label, source.Kind, strings.Join(digitalTwinDefinitionKinds, ", ")))
+		}
 		if err := source.Validate(); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
 		}

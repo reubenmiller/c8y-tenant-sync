@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/dtm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +37,7 @@ func TestSyncDigitalTwinDryRun(t *testing.T) {
 	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{
 		ManagedBy: "tenant-sync",
 		Prune:     &prune,
-		Sources:   []Source{{Path: "."}},
+		Sources:   []DigitalTwinSourceSpec{{Source: Source{Path: "."}}},
 		PropertyDefinitions: []DigitalTwinDefinitionSpec{
 			{Identifier: "serial", Contexts: []string{"asset", "event"}, JSONSchema: map[string]any{"title": "Serial", "type": "string"}},
 		},
@@ -60,7 +61,7 @@ func TestSyncDigitalTwinRejectsAssetsAndDuplicates(t *testing.T) {
 	syncer.DryRun = true
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets.yaml"), []byte("kind: Asset\nexternalId: pump-07\nasset: {name: Pump 07}\n"), 0o644))
 
-	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{Sources: []Source{{Path: "assets.yaml"}}}))
+	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{Sources: []DigitalTwinSourceSpec{{Source: Source{Path: "assets.yaml"}}}}))
 	result := resultFor(t, syncer, SectionDigitalTwin)
 	assert.Equal(t, ActionFailed, result.Action)
 	assert.Contains(t, result.Err.Error(), "only definitions are supported")
@@ -70,7 +71,7 @@ func TestSyncDigitalTwinRejectsAssetsAndDuplicates(t *testing.T) {
 	syncer.DryRun = true
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pump.yaml"), []byte(testDigitalTwinModelFile), 0o644))
 	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{
-		Sources:          []Source{{Path: "pump.yaml"}},
+		Sources:          []DigitalTwinSourceSpec{{Source: Source{Path: "pump.yaml"}}},
 		AssetDefinitions: []DigitalTwinDefinitionSpec{{Identifier: "Pump"}},
 	}))
 	result = resultFor(t, syncer, SectionDigitalTwin)
@@ -98,7 +99,7 @@ func TestSyncDigitalTwinApply(t *testing.T) {
 	syncer := newFakeSyncer(t, f)
 	require.NoError(t, os.WriteFile(filepath.Join(syncer.Resolver.BaseDir, "pump.yaml"), []byte(testDigitalTwinModelFile), 0o644))
 
-	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{Sources: []Source{{Path: "pump.yaml"}}}))
+	require.NoError(t, syncer.SyncDigitalTwin(context.Background(), &DigitalTwinSpec{Sources: []DigitalTwinSourceSpec{{Source: Source{Path: "pump.yaml"}}}}))
 
 	require.Len(t, syncer.Results, 2, "results: %+v", syncer.Results)
 	assert.Equal(t, "PropertyDefinition maxFlow[asset]", syncer.Results[0].Item)
@@ -116,7 +117,7 @@ func TestDigitalTwinValidate(t *testing.T) {
 	prune := true
 	errs := (&DigitalTwinSpec{
 		Prune:               &prune,
-		Sources:             []Source{{URL: "https://example.com/model.yaml"}},
+		Sources:             []DigitalTwinSourceSpec{{Source: Source{URL: "https://example.com/model.yaml"}}},
 		PropertyDefinitions: []DigitalTwinDefinitionSpec{{Identifier: "a"}, {Identifier: "a"}, {Identifier: "a", Contexts: []string{"asset"}}},
 		AssetDefinitions: []DigitalTwinDefinitionSpec{
 			{Identifier: "Pump", Contexts: []string{"asset"}},
@@ -136,12 +137,12 @@ func TestMergeDigitalTwin(t *testing.T) {
 	prune := true
 	base := &DigitalTwinSpec{
 		ManagedBy:           "base",
-		Sources:             []Source{{Path: "a"}},
+		Sources:             []DigitalTwinSourceSpec{{Source: Source{Path: "a"}}},
 		PropertyDefinitions: []DigitalTwinDefinitionSpec{{Identifier: "maxFlow", Tags: []string{"old"}}},
 	}
 	over := &DigitalTwinSpec{
 		Prune:               &prune,
-		Sources:             []Source{{Path: "b"}},
+		Sources:             []DigitalTwinSourceSpec{{Source: Source{Path: "b"}}},
 		PropertyDefinitions: []DigitalTwinDefinitionSpec{{Identifier: "maxFlow", Tags: []string{"new"}}, {Identifier: "minFlow"}},
 	}
 	merged := mergeDigitalTwin(base, over)
@@ -191,4 +192,36 @@ digitalTwin:
 	def := manifest.DigitalTwin.AssetDefinitions[0].toDefinition()
 	assert.Equal(t, "1", def.Composition.AllowedProperties[0].MinOccurs)
 	assert.Contains(t, def.Extra, "icon")
+}
+
+func TestLoadDigitalTwinFileWithSourceKind(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "tiny_edge.json")
+	require.NoError(t, os.WriteFile(plain, []byte(`{
+		"identifier": "tiny_edge",
+		"jsonSchema": {"type": "object", "title": "tiny-edge client"},
+		"contexts": ["asset", "event", "operation"],
+		"tags": ["tiny-edge"]
+	}`), 0o644))
+
+	model := &dtm.Model{}
+	err := loadDigitalTwinFile(model, plain, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set kind on the source")
+
+	require.NoError(t, loadDigitalTwinFile(model, plain, dtm.KindPropertyDefinition))
+	require.Len(t, model.PropertyDefinitions, 1)
+	assert.Equal(t, "tiny_edge", model.PropertyDefinitions[0].Identifier)
+
+	// A kind in the document wins over the source kind
+	model = &dtm.Model{}
+	mixed := filepath.Join(dir, "mixed.yaml")
+	require.NoError(t, os.WriteFile(mixed, []byte(testDigitalTwinModelFile), 0o644))
+	require.NoError(t, loadDigitalTwinFile(model, mixed, dtm.KindPropertyDefinition))
+	assert.Len(t, model.PropertyDefinitions, 1)
+	assert.Len(t, model.AssetDefinitions, 1)
+
+	errs := (&DigitalTwinSpec{Sources: []DigitalTwinSourceSpec{{Source: Source{Path: "."}, Kind: "Property"}}}).validate()
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0], `unknown kind "Property"`)
 }

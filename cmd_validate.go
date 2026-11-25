@@ -130,7 +130,7 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 	}
 	if manifest.DigitalTwin != nil {
 		for i, source := range manifest.DigitalTwin.Sources {
-			check(SectionDigitalTwin+".sources", i, resolvedDigitalTwinSource(source))
+			check(SectionDigitalTwin+".sources", i, resolvedDigitalTwinSource(source.Source))
 		}
 	}
 	for i, spec := range manifest.SmartFunctions {

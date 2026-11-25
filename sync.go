@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -229,6 +230,19 @@ func (s *Syncer) resolveSource(section, item string, source Source) (files []Res
 		return nil, false
 	}
 	return files, true
+}
+
+// notDownloaded reports whether a resolved file is a remote asset which
+// dry-run mode lists without downloading (so its content cannot be read)
+func (s *Syncer) notDownloaded(file ResolvedFile) bool {
+	if !s.DryRun {
+		return false
+	}
+	if file.Path == "" {
+		return true
+	}
+	_, err := os.Stat(file.Path)
+	return err != nil
 }
 
 // jsonEqual compares a desired Go value with an existing JSON fragment by

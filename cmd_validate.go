@@ -24,11 +24,15 @@ Several manifests (repeated -f flags or several arguments) are validated and mer
 in order, like files included in that order: later files win.
 
 A manifest can also be an http(s) URL. Hooks and commands of remote manifests
-are errors unless --allow-remote-commands is set.`,
+are errors unless --allow-remote-commands is set.
+
+Use - to read a manifest from stdin. Its relative paths are based on the
+current directory.`,
 		Example: formatExamples(
 			example{"validate tenant.yaml", "Validate the manifest schema (unknown fields are errors)"},
 			example{"validate base.yaml prod.yaml", "Validate the merge of two manifests (prod.yaml wins)"},
 			example{"validate https://example.com/tenant.yaml", "Validate a manifest fetched from a URL"},
+			example{"validate -f - < tenant.yaml", "Validate a manifest read from stdin"},
 			example{"validate tenant.yaml --check-sources", "Also check that every local path exists and every GitHub release has matching assets"},
 		),
 		Args:              cobra.ArbitraryArgs,
@@ -42,7 +46,7 @@ are errors unless --allow-remote-commands is set.`,
 			return runValidate(manifestPaths, checkSources, allowRemoteCommands)
 		},
 	}
-	cmd.Flags().StringArrayVarP(&manifestFlags, "manifest", "f", nil, "Path to the tenant manifest file (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
+	cmd.Flags().StringArrayVarP(&manifestFlags, "manifest", "f", nil, "Path or URL of the tenant manifest file, or - to read it from stdin (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
 	cmd.Flags().BoolVar(&checkSources, "check-sources", false, "Also resolve every source (local paths must exist, GitHub releases must have matching assets)")
 	cmd.Flags().BoolVar(&allowRemoteCommands, "allow-remote-commands", false, "Allow hooks and commands in manifests fetched from a URL")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Enable detailed logging")
@@ -59,10 +63,14 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	// Relative source paths are based on the first manifest
 	manifestPath := manifestPaths[0]
 
-	if len(manifestPaths) == 1 {
-		fmt.Printf("✓ %s is valid\n", manifestPath)
+	names := make([]string, 0, len(manifestPaths))
+	for _, path := range manifestPaths {
+		names = append(names, manifestDisplayName(path))
+	}
+	if len(names) == 1 {
+		fmt.Printf("✓ %s is valid\n", names[0])
 	} else {
-		fmt.Printf("✓ %s are valid\n", strings.Join(manifestPaths, ", "))
+		fmt.Printf("✓ %s are valid\n", strings.Join(names, ", "))
 	}
 	for _, file := range manifest.IncludedFiles {
 		fmt.Printf("  includes %s\n", file)

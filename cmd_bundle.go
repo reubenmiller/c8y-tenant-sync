@@ -61,7 +61,7 @@ must be in the manifest directory or below it.`,
 
 // runBundle packages a manifest with its local files into a bundle archive
 func runBundle(manifestPath, output string, extra []string) error {
-	if isRemoteManifest(manifestPath) || isBundleArchive(manifestPath) {
+	if isRemoteManifest(manifestPath) || isBundleArchive(manifestPath) || isStdinManifest(manifestPath) {
 		return fmt.Errorf("%s: bundle a local manifest file", manifestPath)
 	}
 	if !isBundleArchive(output) {

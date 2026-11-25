@@ -160,7 +160,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file (also accepted as a positional argument), see [Remote manifests](#remote-manifests) |
+| `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file, or `-` for stdin (also accepted as a positional argument), see [Remote manifests](#remote-manifests) and [Manifest from stdin](#manifest-from-stdin) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry` | | Preview changes without applying them |
 | `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
@@ -489,6 +489,24 @@ Rules:
 - **Same pipeline**: remote manifests are decrypted with sops and expanded like local files, so `${VAR}` references are filled from your environment. Only apply manifests from sources you trust, and pin a tag or commit in the URL so the content can't change between runs.
 - **Secrets file**: when the main manifest is a URL, the default secrets file is in the current directory and named after the URL (`.../prod.yaml` → `prod.secrets.yaml`). Use `--secrets-file` to pick another file.
 - **Authentication**: `GITHUB_TOKEN` (or `GH_TOKEN`) is sent to `github.com` and `raw.githubusercontent.com`, so manifests in private repositories work. No credentials are sent to other hosts.
+
+#### Manifest from stdin
+
+Use `-` as the manifest to read it from stdin, for example from another tool which generates or templates the manifest:
+
+```bash
+c8y tenant-sync run -f - --dry < tenant.yaml
+envsubst < tenant.tmpl.yaml | c8y tenant-sync run -f -
+```
+
+Rules:
+
+- **Paths**: relative include paths, `source.path` values, hooks and commands are based on the current directory.
+- **Hooks and commands**: they run like those of a local file, without `--allow-remote-commands`. stdin is your own input, so only pipe manifests you trust: `curl ... | c8y tenant-sync run -f -` skips the checks which apply to a [remote manifest](#remote-manifests).
+- **Merging**: `-` can be combined with other manifests and is merged at its position, e.g. `-f base.yaml -f -`. stdin is read once, so giving `-` twice merges it once.
+- **Encryption**: a manifest encrypted with sops is decrypted like a file.
+- **Secrets file**: when the main manifest is `-`, the default secrets file is `tenant.secrets.yaml` in the current directory. Use `--secrets-file` to pick another file.
+- **Not for bundles**: `bundle` needs a manifest file.
 
 #### Bundles
 

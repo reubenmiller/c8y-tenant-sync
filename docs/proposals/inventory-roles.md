@@ -1,20 +1,20 @@
 # Proposal: full lifecycle sync of inventory roles and their assignments
 
-Status: draft
+Status: implemented
 Related: [reubenmiller/go-c8y-cli#172](https://github.com/reubenmiller/go-c8y-cli/issues/172) (commands to manage inventory roles)
 
 ## Summary
 
 Users asked for go-c8y-cli commands to manage inventory roles and their assignments. Commands help with one-off changes, but the real job is usually "make sure these roles exist, and these people have them on these sites, in every tenant". That is a desired-state problem, which tenant-sync is built for.
 
-tenant-sync already covers the basics (see [Where we are today](#where-we-are-today)). This proposal keeps the current split:
+tenant-sync already covered the basics before this proposal (see [Starting point](#starting-point)). This proposal keeps the current split:
 
 - the `inventoryRoles` section owns the **role definitions**;
 - `users[].inventoryRoles` owns **who gets which role on which group**, so roles can be given when a user is created, next to their global roles.
 
 It closes the gaps that stop the manifest from being the source of truth:
 
-1. Name the user's roles as the UI does: `users[].globalRoles` (today `groups`) and `users[].inventoryRoles` (today `inventoryAssignments`).
+1. Name the user's roles as the UI does: `users[].globalRoles` (formerly `groups`) and `users[].inventoryRoles` (formerly `inventoryAssignments`).
 2. Role lifecycle: delete (`state: absent`) and rename (`renamedFrom`).
 3. An opt-in `exact` mode on a user's assignments, which also **revokes** access the manifest no longer declares.
 4. User `state` (`present`, `absent`) and `ifMissing` (`create`, `skip`, `fail`): manage users without creating them (for example SSO users), and delete users who are offboarded.
@@ -23,18 +23,20 @@ It closes the gaps that stop the manifest from being the source of truth:
 
 The go-c8y-cli commands are still worth adding for ad-hoc use and scripting; [CLI commands](#cli-commands-go-c8y-cli172) lists what they should cover.
 
-## Where we are today
+## Starting point
 
-| Capability | Status |
-| --- | --- |
-| Create inventory roles by name | Supported (`inventoryRoles`) |
-| Update description and permissions (permissions compared as a set and replaced) | Supported |
-| Delete or rename roles | Not supported; roles are never deleted |
-| Give a user roles on a device group (name or `Parent/Child` path), also when creating the user | Supported (`users[].inventoryAssignments`) |
-| Revoke roles or assignments not in the manifest | Not supported; assignments are additive |
-| Assign roles to a user without creating the user if missing | Not supported |
-| Dry run | Prints "ensure inventory role" for every role, no comparison |
-| Export | Roles only; assignments are skipped |
+What tenant-sync supported before this proposal, and what it supports now:
+
+| Capability | Before | Now |
+| --- | --- | --- |
+| Create inventory roles by name | Supported (`inventoryRoles`) | Unchanged |
+| Update description and permissions (permissions compared as a set and replaced) | Supported | Unchanged |
+| Delete or rename roles | Not supported; roles were never deleted | `state: absent` and `renamedFrom` |
+| Give a user roles on a device group (name or `Parent/Child` path), also when creating the user | Supported (`users[].inventoryAssignments`) | Renamed to `users[].inventoryRoles` |
+| Revoke roles or assignments not in the manifest | Not supported; assignments were additive | `inventoryRolesMode: exact` per user |
+| Assign roles to a user without creating the user if missing | Not supported | `ifMissing: skip` |
+| Dry run | Printed "ensure inventory role" for every role, no comparison | Diff against the tenant |
+| Export | Roles only; assignments were skipped | Opt-in `users` export with global and inventory roles |
 
 Code: [sync_inventory_roles.go](../../sync_inventory_roles.go), [sync_users.go](../../sync_users.go), [manifest.go](../../manifest.go) (`InventoryRoleSpec`, `InventoryAssignmentSpec`, `UserSpec`), [cmd_export.go](../../cmd_export.go).
 
@@ -106,10 +108,10 @@ The section order already handles this and stays as it is. For each target tenan
 Edge cases to keep (and test):
 
 - **A role that failed to create.** The user referencing it fails with "inventory role not found"; the user's other fields and assignments are still applied.
-- **`--only users`.** The `inventoryRoles` section is skipped, so referenced roles must already exist in the tenant. Validation could warn when `--only` leaves out a section the selected ones depend on.
+- **`--only users`.** The `inventoryRoles` section is skipped, so referenced roles must already exist in the tenant. (A warning when `--only` leaves out a section the selected ones depend on is not implemented.)
 - **Renamed roles.** Users reference the new name. Because the rename runs first, the new name resolves to the existing role ID and its assignments are kept.
 - **Deleted roles.** `state: absent` is applied in the `inventoryRoles` section, before `users`. Validation fails if any user still references a role marked absent, so a run never deletes a role and then tries to assign it.
-- **Dry run.** Nothing is created, so a role declared in the manifest but missing in the tenant is reported as "would be created" for the user, not "not found".
+- **Dry run.** Nothing is created, so a role declared in the manifest but missing in the tenant is marked `(new role)` for the user, not "not found".
 
 ### 3. `exact` mode for a user's assignments
 
@@ -130,7 +132,7 @@ With `exact`, the listed assignments become the user's full inventory access:
 - On each listed group, the user's roles are set to exactly the declared roles (added and removed).
 - An assignment on a group which is not listed is deleted.
 - `inventoryRolesMode: exact` with an empty or missing `inventoryRoles` removes all of the user's inventory access. Validation warns about this so it is not done by accident.
-- Only users with `exact` are affected; all other users stay additive, as today.
+- Only users with `exact` are affected; all other users stay additive, as before.
 
 Safety rails:
 
@@ -138,7 +140,7 @@ Safety rails:
 - The dry run lists every revocation per group and role.
 - The tenant-sync service user cannot be given `exact`, so the run cannot lock itself out.
 
-Should `exact` also be available for `globalRoles`, which are additive in the same way? Using one mode field for both (`rolesMode: exact`) would keep the user spec simple. See [open questions](#open-questions).
+`exact` applies to inventory roles only. Global roles stay additive, with no mode field (see [Decisions](#decisions)).
 
 ### 4. User `state` and `ifMissing`
 
@@ -171,7 +173,7 @@ users:
 | Entry | User missing | User exists |
 | --- | --- | --- |
 | `state: present`, `ifMissing: create` (defaults) | Create | Update |
-| `state: present`, `ifMissing: skip` | Skip, reported as a warning | Update |
+| `state: present`, `ifMissing: skip` | Skip, reported as `skipped` | Update |
 | `state: present`, `ifMissing: fail` | Fail the user | Update |
 | `state: absent` | Nothing to do | Delete |
 
@@ -185,20 +187,19 @@ users:
 Use the existing `dryRunReader` pattern from [sync_login_options.go](../../sync_login_options.go) to read the tenant during a dry run and report real actions:
 
 ```
-inventoryRoles  Site operator     updated    permissions: +OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ
-inventoryRoles  Restart only      unchanged
-inventoryRoles  Legacy viewer     deleted
-users           berlin-ops@...    updated    inventory roles on Europe/Plant Berlin: +Site operator
-users           berlin-ops@...    updated    inventory roles on Plant Hamburg: -Site operator (exact)
+→ [inventoryRoles] Site operator (planned): permissions: +OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ
+✓ [inventoryRoles] Restart only (unchanged)
+→ [inventoryRoles] Legacy viewer (planned): delete
+→ [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: +Site operator; inventory roles on Plant Hamburg (not listed): -Site operator
 ```
 
 For a user who does not exist yet, the dry run shows the assignments they would get when created.
 
 ### 6. Export
 
-Export already writes inventory roles. Add the assignments of users to the exported `users` entries, in additive mode, so applying the export to the same tenant is a no-op. Groups are written as paths when their names are not unique.
+Export already writes inventory roles. The `users` section is now exported too, with each user's global roles and inventory roles, in additive mode, so applying the export to the same tenant is a no-op. Groups are written as paths when their names are not unique.
 
-Assignments contain user names, which are personal data. If the `users` section is not exported today, the assignments need a home: either an opt-in `users` export (with `ifMissing: skip`, so applying it never creates accounts) or no export of assignments at all. See [open questions](#open-questions).
+Assignments contain user names, which are personal data, so the `users` export is opt-in: it is only written when `users` is named in `--only`, never in a plain export of all sections. Exported users get `ifMissing: skip`, so applying the export never creates accounts, and only `userName`, `email`, `firstName` and `lastName` are written (never passwords or other personal fields).
 
 ## CLI commands (go-c8y-cli#172)
 
@@ -219,7 +220,7 @@ The split: the CLI changes one thing now; tenant-sync keeps many tenants matchin
 
 ## Rollout
 
-Each step is a separate pull request and is useful on its own:
+The steps shipped together in one pull request, with one commit per step:
 
 1. Rename `users[].groups` to `users[].globalRoles`, `users[].inventoryAssignments` to `users[].inventoryRoles`, the `userGroups` section to `globalRoles` (with `roles` renamed to `permissions`), and the SSO access rules' `groups` to `globalRoles`.
 2. Dry run diff for `inventoryRoles` and `users[].inventoryRoles`.
@@ -230,10 +231,13 @@ Each step is a separate pull request and is useful on its own:
 
 CLI commands in go-c8y-cli can be done in parallel.
 
-## Open questions
+## Decisions
 
-- **Deleting a role that is still assigned.** Does Cumulocity remove the assignments, or refuse the delete? To check on a test tenant before step 2. The answer decides whether `state: absent` must revoke assignments first, including assignments of users the manifest does not manage.
-- **One mode or two.** A separate `inventoryRolesMode`, or one `rolesMode` covering both global roles and inventory roles?
-- **Export.** Export assignments as `users` entries with `ifMissing: skip`, or not at all?
-- **Targets other than device groups.** The API accepts any managed object. Should `group` also accept a device (by external ID) or a raw managed object ID, or stay limited to groups as the UI is?
-- **Inventory roles in SSO access rules.** The manifest can only expose what the API supports. tenant-sync writes `thenGroups` and `thenApplications` today; if the access mapping API has an equivalent for inventory roles, `rules[].inventoryRoles` would complete the pair. To check against the API; otherwise left out.
+The open questions of the draft were settled as follows:
+
+- **Deleting a role that is still assigned.** `state: absent` only calls delete. Assignments of other users are not revoked first; if Cumulocity refuses the delete, the role fails with the error of the API.
+- **One mode or two.** A separate `inventoryRolesMode` (`additive` or `exact`) on users. Global roles have no mode and stay additive. There is no ownership tracking of roles or assignments.
+- **Export.** Opt-in only: `users` is exported when it is named in `--only`. Exported users get `ifMissing: skip`, their `globalRoles` and `inventoryRoles`, and no personal fields beyond `userName`, `email`, `firstName` and `lastName`.
+- **Targets other than device groups.** `group` stays limited to device groups (by name or path), as in the UI. Devices and raw managed object IDs are not accepted.
+- **Inventory roles in SSO access rules.** Left out: SSO access rules only assign global roles and applications.
+- **Renamed fields.** Renamed outright with no deprecated aliases. The manifest parser rejects unknown fields, so a manifest with the old names fails validation. The renames change only the manifest format, never the API payloads.

@@ -205,6 +205,7 @@ deviceGroups:
         groups:
           - name: Line 1
           - name: Line 2
+      - name: Plant Paris
 
 # Create global roles (user groups in the Cumulocity API) with permissions
 # assigned. Permission assignments are additive: permissions already on a
@@ -242,7 +243,7 @@ inventoryRoles:
 
 # Create users and give them global roles and inventory roles. The password is
 # only used when creating a user (never updated afterwards); roles are
-# additive.
+# additive by default (see inventoryRolesMode: exact below).
 users:
   # The userName defaults to the email (and the email to an email-like
   # userName when the user is created)
@@ -275,13 +276,13 @@ users:
         roles: [Site operator, Restart only]
 
   # A site operator whose inventory access is exactly what is listed:
-  # other roles on Plant Berlin and assignments on other groups are removed
+  # other roles on Plant Paris and assignments on other groups are removed
   # (not allowed for the user running the sync)
   - email: paris-ops@example.com
     sendPasswordResetEmail: true
     inventoryRolesMode: exact # additive (default) or exact
     inventoryRoles:
-      - group: Plant Berlin
+      - group: Europe/Plant Paris
         roles: [Restart only]
 
   - userName: old-account@example.com

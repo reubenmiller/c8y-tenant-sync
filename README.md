@@ -1,6 +1,6 @@
 # c8y-tenant-sync
 
-A GitOps-style CLI tool for keeping Cumulocity IoT tenants in sync with a declarative manifest. Describe the desired tenant state in a YAML file — software, firmware and configuration repositories, tenant options, feature toggles, retention rules, application subscriptions, users, global roles and inventory roles, SmartREST 2.0 templates, device profiles — and apply it idempotently to one or more tenants.
+A GitOps-style CLI tool for keeping Cumulocity IoT tenants in sync with a declarative manifest. Describe the desired tenant state in a YAML file (software, firmware and configuration repositories, tenant options, feature toggles, retention rules, application subscriptions, users, global roles and inventory roles, SmartREST 2.0 templates, device profiles) and apply it idempotently to one or more tenants.
 
 It is a [go-c8y-cli](https://goc8ycli.netlify.app/) binary extension, so it runs as `c8y tenant-sync` and uses your active c8y session. It started as the [tenant-sync example](https://github.com/reubenmiller/go-c8y/tree/v2/examples/tenant-sync) of the go-c8y SDK, which generalises the software-uploader example: the same filename parsing and idempotent upload logic, extended to firmware and configuration, with artifact sources that can be local files **or GitHub releases**, all driven from a single configuration file.
 
@@ -22,7 +22,7 @@ It is a [go-c8y-cli](https://goc8ycli.netlify.app/) binary extension, so it runs
                                                • retention rules
 ```
 
-Because every operation is idempotent (get-or-create / upsert), the same manifest can be applied repeatedly and to multiple tenants — keep it in git, run it from CI, and your tenants stay in sync with the source of truth.
+Because every operation is idempotent (get-or-create / upsert), the same manifest can be applied repeatedly and to multiple tenants. Keep it in git, run it from CI, and your tenants stay in sync with the source of truth.
 
 ## Features
 
@@ -36,20 +36,20 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
   - **Update frameworks**: `*.swu` (SWUpdate), `*.raucb` (RAUC), `*.mender`
   - **Custom types**: any extension, with a `versionPattern` regex for custom naming schemes
 - ⚙️ **Configuration repository sync**: upload configuration files with type and device type filters
-- 🐙 **GitHub sources**: point any entry at a GitHub repository — assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
+- 🐙 **GitHub sources**: point any entry at a GitHub repository: assets are pulled from releases (`latest`, a specific tag, or `all`), with the release tag as the version fallback; `linkOnly` mode references download URLs without re-hosting binaries (the default for firmware)
 - 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata; versions are installed by the device's package manager, or link or upload the package
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe microservices and web applications, upload UI extensions and install them into web applications
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
-- 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store — matched by fingerprint, with name/status/auto-registration updated when they differ — plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
+- 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store (matched by fingerprint, with name/status/auto-registration updated when they differ), plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
 - 👥 **Users & global roles**: create global roles with permissions, create users and give them global roles, additively and idempotently; skip SSO users until their first login and delete offboarded users
 - 🚪 **Login options**: choose the preferred login mode (OAI-Secure, basic or single sign-on) and configure basic restrictions, OAI-Secure sessions and SSO generated from a provider's OpenID Connect discovery URL, with safeguards against locking anyone out
 - 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site; opt in per user to make the listed roles their exact inventory access
-- 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
+- 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform, matched by external identity, updated only when the templates differ (order-insensitive)
 - 🧬 **Digital Twin Manager definitions**: create and update property and asset definitions (plus measurement, event and alarm definitions) inline or from model files, in dependency order, with optional pruning of definitions the manifest no longer declares
 - 🧪 **Smart functions**: deploy Data Preparation rules from package folders or exported `.tar.gz` archives, only when the code, configuration or tests changed, and report deployment errors
-- 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector — with per-tenant credentials resolved automatically
+- 🏢 **Target tenants**: apply one manifest to all child tenants, an explicit list, or tenants matching a selector, with per-tenant credentials resolved automatically
 - 🧷 **Composable manifests**: `include` shared base files (e.g. company-wide retention rules, global roles, certificates) from per-environment or per-customer manifests
 - 🏗️ **Child tenant provisioning**: declare child tenants (domain, company, admin, contact, custom properties, subscriptions) and create them from the parent tenant, then configure them with the rest of the manifest in the same run
 - 🔎 **Dry-run**: preview every change before applying
@@ -150,7 +150,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | Command | Description |
 |---------|-------------|
 | `init [path]` | Create a new manifest (default: `tenant.yaml`) and the `packages` folder next to it, which the manifest syncs software from (skipped while empty). `--full` writes the fully annotated example instead, `--force` overwrites |
-| `validate [path]` | Validate the manifest schema (strict — unknown fields are errors). `--check-sources` also resolves local paths and GitHub releases |
+| `validate [path]` | Validate the manifest schema (strict: unknown fields are errors). `--check-sources` also resolves local paths and GitHub releases |
 | `run [path]` | Apply the manifest to the tenant (alias: `apply`) |
 | `schema` | Generate the JSON schema for the manifest (`-o file` to write to a file) |
 | `export` | Create a manifest from the current state of the tenant (`-o file` to write to a file), see [Exporting a tenant](#exporting-a-tenant) |
@@ -759,9 +759,9 @@ Software and configuration entries upload by default. Set `linkOnly: true` on th
 
 Changing `linkOnly` on an entry which was already synced updates the existing versions on the next run, without `--force`: a linked version is replaced with an uploaded binary, an uploaded one is switched to the link (and its old binary removed), and a link whose URL changed is updated. An already uploaded binary is not compared by content, so replacing it still needs `--force`.
 
-Any source can be marked `optional: true`: when the local path does not exist or nothing matches (no files, no release assets), the entry is reported as `skipped` instead of failing the run — useful when a build directory only exists on some pipelines.
+Any source can be marked `optional: true`: when the local path does not exist or nothing matches (no files, no release assets), the entry is reported as `skipped` instead of failing the run. This is useful when a build directory only exists on some pipelines.
 
-With a GitHub source, `release: all` mirrors every release into the tenant, and `release: latest-5` keeps just the most recent five — pointing a firmware entry at an image repository is enough to populate the firmware version history:
+With a GitHub source, `release: all` mirrors every release into the tenant, and `release: latest-5` keeps just the most recent five. Pointing a firmware entry at an image repository is enough to populate the firmware version history:
 
 ```yaml
 firmware:
@@ -793,7 +793,7 @@ firmware:
       patterns: ["FW_MODEL7_*.custom"]
 ```
 
-The firmware `deviceType` supports placeholders derived from each parsed artifact — `{name}`, `{version}` and `{filename}` — so the device type can follow the artifact naming without listing every image explicitly:
+The firmware `deviceType` supports placeholders derived from each parsed artifact (`{name}`, `{version}` and `{filename}`), so the device type can follow the artifact naming without listing every image explicitly:
 
 ```yaml
 firmware:
@@ -896,7 +896,7 @@ tenantOptions:
 
 ### Retention rules
 
-Retention rules have no name, so a rule is identified by its selector combination — `dataType` plus the optional `fragmentType`, `type` and `source` filters (defaulting to the `*` wildcard). The rules in the tenant are matched against that combination: a missing rule is created, and an existing rule is updated when its `maximumAge` (or `editable`, when set) differs. Rules in the tenant that are absent from the manifest are left alone (no prune mode yet).
+Retention rules have no name, so a rule is identified by its selector combination: `dataType` plus the optional `fragmentType`, `type` and `source` filters (defaulting to the `*` wildcard). The rules in the tenant are matched against that combination: a missing rule is created, and an existing rule is updated when its `maximumAge` (or `editable`, when set) differs. Rules in the tenant that are absent from the manifest are left alone (no prune mode yet).
 
 ```yaml
 retentionRules:
@@ -907,7 +907,7 @@ retentionRules:
     maximumAge: 30
 ```
 
-> **Note**: updating a rule that is marked non-editable in the tenant fails — such system rules must be unlocked or removed manually first.
+> **Note**: updating a rule that is marked non-editable in the tenant fails. Such system rules must be unlocked or removed manually first.
 
 ### Cumulocity certificate authority
 
@@ -957,7 +957,7 @@ SERIALNO,DATE
 0b77e2
 ```
 
-Since the file content must be read, `url` sources are not supported for these sections (GitHub release assets work — they are downloaded first).
+Since the file content must be read, `url` sources are not supported for these sections (GitHub release assets work, since they are downloaded first).
 
 ### Microservices, web applications and extensions
 
@@ -1307,6 +1307,7 @@ A user's inventory roles are applied in the `users` section, after the user is c
 - `group` is the name of a device group (`has(c8y_IsDeviceGroup)`). The name must match exactly one group, otherwise the user fails with "not found" or "ambiguous" (with the IDs of the matching groups). For groups with the same name, use a path of names separated by `/`, such as `Europe/Plant Berlin`, where each group is a direct child of the previous one. A value with a `/` is first looked up as a plain group name.
 - `roles` are inventory role names, declared in `inventoryRoles` or already in the tenant. They are checked when the manifest is applied, so a role which is in neither fails the user with "not found".
 - Missing roles are added to the user's existing assignment for the group, or a new assignment is created. Roles and assignments which are not in the manifest are never removed.
+- List all roles of a group in one entry: validation fails when two entries name the same group. Entries written differently which find the same group (such as `Plant Berlin` and `Europe/Plant Berlin`) are merged into one assignment with the roles of both.
 
 The `inventoryRoles` section is applied after `globalRoles` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
 
@@ -1444,7 +1445,7 @@ If the SSO provider stops working while `sso` is the preferred mode, users can s
 
 ### SmartREST 2.0 template collections
 
-The `smartrestTemplates` section syncs SmartREST 2.0 template collections from JSON files as exported by the platform UI (Device Management → Device types → SmartREST templates → Export) — one collection per file. Point a source at a directory and every `*.json` file in it is synced:
+The `smartrestTemplates` section syncs SmartREST 2.0 template collections from JSON files as exported by the platform UI (Device Management → Device types → SmartREST templates → Export), one collection per file. Point a source at a directory and every `*.json` file in it is synced:
 
 ```yaml
 smartrestTemplates:
@@ -1457,9 +1458,9 @@ smartrestTemplates:
       path: ./exports/custom_devmgmt.json
 ```
 
-A collection is stored as a managed object of type `c8y_SmartRest2Template` and matched via its external identity (`c8y_SmartRest2DeviceIdentifier`, the X-Id devices reference), taken from the file's `name` (falling back to `__externalId`). The upsert only writes when the collection actually differs from the file: the request/response template lists are compared **order-insensitively** (sorted by `msgId`), platform bookkeeping fields (`id`, `lastUpdated`, `owner`, ...) are ignored, and the `c8y_TenantSync` annotation never triggers an update by itself — so re-applying an unchanged export performs no writes.
+A collection is stored as a managed object of type `c8y_SmartRest2Template` and matched via its external identity (`c8y_SmartRest2DeviceIdentifier`, the X-Id devices reference), taken from the file's `name` (falling back to `__externalId`). The upsert only writes when the collection actually differs from the file: the request/response template lists are compared **order-insensitively** (sorted by `msgId`), platform bookkeeping fields (`id`, `lastUpdated`, `owner`, ...) are ignored, and the `c8y_TenantSync` annotation never triggers an update by itself, so re-applying an unchanged export performs no writes.
 
-Since the file content must be read, `url` sources are not supported for this section (GitHub release assets work — they are downloaded first).
+Since the file content must be read, `url` sources are not supported for this section (GitHub release assets work, since they are downloaded first).
 
 ### Digital Twin Manager definitions
 
@@ -1601,7 +1602,7 @@ For rules with several tests, a package folder is usually easier to maintain: it
 
 ### Target tenants
 
-By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead — run once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):
+By default the manifest applies to the current tenant (the `C8Y_*` session). A `targets` section applies it to other tenants instead. Run it once from the parent/management tenant to keep a whole fleet of tenants in sync. The selection modes are additive (the union of all matches):
 
 ```yaml
 targets:
@@ -1622,7 +1623,7 @@ c8y tenant-sync run -f tenant.yaml --target t12345 --target child.example.com
 c8y tenant-sync run -f tenant.yaml --target-selector "domain=*.iot.example.com" --include-current
 ```
 
-Application subscriptions and feature toggles are managed directly from the parent (their APIs address the target tenant by ID). Everything else — tenant options, software/firmware/configuration repositories, device profiles, hooks — runs *inside* each target tenant and therefore needs per-tenant credentials, configured via `targets.credentials`:
+Application subscriptions and feature toggles are managed directly from the parent (their APIs address the target tenant by ID). Everything else (tenant options, software/firmware/configuration repositories, device profiles, hooks) runs *inside* each target tenant and therefore needs per-tenant credentials, configured via `targets.credentials`:
 
 ```yaml
 targets:
@@ -1636,7 +1637,7 @@ targets:
 - **`serviceUser`** (default) uses the [microservice service user](https://goc8ycli.netlify.app/docs/tutorials/microservice-serviceuser/) pattern: a placeholder `MICROSERVICE` application (default name `tenant-sync`, no binary, no deployment) is created in the current tenant, subscribed to every target tenant, and its per-tenant service users are fetched via the application bootstrap user. The application and subscriptions are idempotent and left in place between runs. Service users for freshly subscribed tenants can take a few seconds to appear; the tool retries briefly.
   - **Roles.** The service users get the roles every section needs inside a target tenant: inventory (device groups, software, firmware, configuration, device profiles), identity (SmartREST templates), tenant options, retention rules, tenant management (certificate authority, trusted certificates, revocation lists) and user management (global roles, inventory roles, users), plus read access to applications. The list is the same for every manifest, so applying different manifests doesn't change the application back and forth. `features`, `microservices`, `extensions`, `applications` and `tenants` run with the credentials of the current tenant and need no service user roles.
   - **Existing subscriptions.** A tenant's service user gets its roles when the tenant is subscribed. When the service user of a target lacks a required role (e.g. the tenant was subscribed by an older version), the tool subscribes the application to that tenant again, which creates a new service user with the current roles.
-- **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported — the run fails with a clear error listing tenants without a matching session.
+- **`sessions`** reads [go-c8y-cli session files](https://goc8ycli.netlify.app/docs/gettingstarted/#sessions) and matches them to each target by tenant ID and then by domain. Encrypted sessions are not supported: the run fails with a clear error listing tenants without a matching session.
 - **`tenantAdmin`** logs in to each target with the admin credentials of its entry in the [`tenants`](#provision-child-tenants) section: `adminName` and the admin password (`adminPass`, an `env` reference, or a generated value from the secrets file). It needs no placeholder microservice and no session files, so it suits tenants which this tool creates and manages, e.g. from a CI runner. Targets are matched to `tenants` entries by ID and then by domain. The credentials are checked before any section runs; the run fails for a target without a matching entry, with `sendPasswordResetEmail` (the password is not known), with a password generated in this run for a tenant which already existed (the secrets file was lost), or whose admin login is rejected (the password was changed or two-factor authentication was enabled).
 
 In multi-tenant runs every result line and the hook environment (`C8Y_TENANT`, `C8Y_USERNAME`, `C8Y_PASSWORD`) are scoped to the tenant being applied:
@@ -1725,7 +1726,7 @@ c8y tenant-sync run -f customer-a.yaml
 
 ### Hooks
 
-Pre and post hooks run arbitrary commands around the sync — for example go-c8y-cli calls for anything outside the manifest's scope. Hooks execute via `sh -c` from the manifest directory with the current environment (including the `C8Y_*` session variables) passed through. A failing pre hook aborts the run; post hooks always run (also after section failures) and their failures are reported without aborting. Hooks run regardless of `--only`, and are only printed (not executed) in dry-run mode. In multi-tenant runs hooks execute once per target tenant, with `C8Y_TENANT`, `C8Y_USERNAME` and `C8Y_PASSWORD` overridden to that tenant's resolved credentials (and `C8Y_TOKEN` cleared).
+Pre and post hooks run arbitrary commands around the sync, for example go-c8y-cli calls for anything outside the manifest's scope. Hooks execute via `sh -c` from the manifest directory with the current environment (including the `C8Y_*` session variables) passed through. A failing pre hook aborts the run; post hooks always run (also after section failures) and their failures are reported without aborting. Hooks run regardless of `--only`, and are only printed (not executed) in dry-run mode. In multi-tenant runs hooks execute once per target tenant, with `C8Y_TENANT`, `C8Y_USERNAME` and `C8Y_PASSWORD` overridden to that tenant's resolved credentials (and `C8Y_TOKEN` cleared).
 
 ```yaml
 hooks:
@@ -1736,7 +1737,7 @@ hooks:
     - run: c8y inventory list --query "has(c8y_TenantSync)" --select id,name -o csv
 ```
 
-Hooks can also be scoped to a single section under `hooks.sections.<sectionName>` — they run immediately before/after that section, and (unlike the global hooks) are skipped when the section is excluded by `--only`. The same failure semantics apply: a failing section pre hook aborts the run, post hook failures are reported without aborting.
+Hooks can also be scoped to a single section under `hooks.sections.<sectionName>`. They run immediately before/after that section, and (unlike the global hooks) are skipped when the section is excluded by `--only`. The same failure semantics apply: a failing section pre hook aborts the run, post hook failures are reported without aborting.
 
 ```yaml
 hooks:
@@ -1750,7 +1751,7 @@ hooks:
 
 ### Commands
 
-The `commands` section runs named groups of arbitrary shell commands as the last section — for anything declarative sections don't cover (creating devices, registering external IDs, smoke tests, ...). The **actions within a group run in sequence** (a failing action skips the rest of its group, reported as `skipped`), while **separate groups run concurrently** with each other — so order-dependent steps go in one group, and independent work goes in separate groups:
+The `commands` section runs named groups of arbitrary shell commands as the last section, for anything declarative sections don't cover (creating devices, registering external IDs, smoke tests, ...). The **actions within a group run in sequence** (a failing action skips the rest of its group, reported as `skipped`), while **separate groups run concurrently** with each other, so order-dependent steps go in one group, and independent work goes in separate groups:
 
 ```yaml
 commands:
@@ -1765,13 +1766,13 @@ commands:
       - c8y currenttenant get --select name -o csv
 ```
 
-Commands execute like hooks: via `sh -c` from the manifest directory, with the `C8Y_*` session variables passed through (scoped to the target tenant in multi-tenant runs), printed but not executed in dry-run mode. Unlike a failing pre hook, a failing action does not abort the run — it fails its group and is reflected in the summary and exit code.
+Commands execute like hooks: via `sh -c` from the manifest directory, with the `C8Y_*` session variables passed through (scoped to the target tenant in multi-tenant runs), printed but not executed in dry-run mode. Unlike a failing pre hook, a failing action does not abort the run. It fails its group and is reflected in the summary and exit code.
 
 ### Device profiles
 
-Device profiles bundle firmware, software and configuration — a profile is essentially a set of links to existing repository items. By default each reference is looked up in the tenant and resolved to its binary URL; that's why the `deviceProfiles` section runs **after** the repository sections, so the referenced items can be synced by the same manifest. References to items outside the manifest must already exist in the tenant, otherwise the profile fails with a lookup error.
+Device profiles bundle firmware, software and configuration. A profile is essentially a set of links to existing repository items. By default each reference is looked up in the tenant and resolved to its binary URL; that's why the `deviceProfiles` section runs **after** the repository sections, so the referenced items can be synced by the same manifest. References to items outside the manifest must already exist in the tenant, otherwise the profile fails with a lookup error.
 
-Alternatively a reference can set `url` explicitly (e.g. for an externally hosted binary), which skips the repository lookup entirely. The special values `none` and `"-"` also skip the lookup but leave the `url` off the profile entry altogether — useful when the devices resolve artifacts by name/version themselves and the referenced item doesn't exist in the tenant at all:
+Alternatively a reference can set `url` explicitly (e.g. for an externally hosted binary), which skips the repository lookup entirely. The special values `none` and `"-"` also skip the lookup but leave the `url` off the profile entry altogether. This is useful when the devices resolve artifacts by name/version themselves and the referenced item doesn't exist in the tenant at all:
 
 ```yaml
 deviceProfiles:
@@ -1864,7 +1865,7 @@ Managed objects created by this tool carry a `c8y_TenantSync` fragment:
 }
 ```
 
-The fragment is passed to the SDK upserts as an **annotation**: it is written on create and on every real update, but it is excluded from change detection and never triggers an update by itself. Re-applying an unchanged manifest therefore performs no writes — `syncedAt` records when the desired state last actually changed, not when the tool last ran.
+The fragment is passed to the SDK upserts as an **annotation**: it is written on create and on every real update, but it is excluded from change detection and never triggers an update by itself. Re-applying an unchanged manifest therefore performs no writes: `syncedAt` records when the desired state last actually changed, not when the tool last ran.
 
 ```bash
 # List everything managed by tenant-sync

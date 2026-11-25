@@ -133,6 +133,7 @@ func TestValidateInventoryRoles(t *testing.T) {
 		{"assignment with empty role", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: g, roles: ['']}]\n", "users[0].inventoryRoles[0].roles[0]: role must not be empty"},
 		{"assignment with empty path segment", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: 'Europe//Berlin', roles: [x]}]\n", `invalid group path "Europe//Berlin"`},
 		{"duplicate group", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: g, roles: [x]}, {group: g, roles: [y]}]\n", `users[0].inventoryRoles[1]: duplicate group "g"`},
+		{"duplicate group path", "users:\n  - email: a@example.com\n    inventoryRoles: [{group: Europe/Berlin, roles: [x]}, {group: ' Europe / Berlin ', roles: [y]}]\n", `users[0].inventoryRoles[1]: duplicate group " Europe / Berlin "`},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -492,4 +493,26 @@ users:
 	created := f.Requests(http.MethodPost, "/user/t123/users/u1/roles/inventory")
 	require.Len(t, created, 1)
 	assert.Equal(t, []any{map[string]any{"id": float64(7)}}, created[0].Body["roles"])
+}
+
+func TestInventoryAssignmentSameGroupMerged(t *testing.T) {
+	f := fakeUsers(t, existingUser)
+	fakeInventoryRoles(f, siteOperatorRole(), map[string]any{"id": 8, "name": "Reader"})
+	fakeDeviceGroups(f,
+		fakeGroup{ID: "1", Name: "Europe"},
+		fakeGroup{ID: "100", Name: "Plant Berlin", Parent: "1"},
+	)
+	fakeAssignments(f)
+
+	r := syncBerlinOps(t, f,
+		InventoryAssignmentSpec{Group: "Plant Berlin", Roles: []string{"Site operator"}},
+		InventoryAssignmentSpec{Group: "Europe/Plant Berlin", Roles: []string{"Reader", "Site operator"}},
+	)
+
+	require.NoError(t, r.Err)
+	assert.Equal(t, "inventory roles on Plant Berlin: +Site operator, +Reader", r.Detail)
+	created := f.Requests(http.MethodPost, "/user/t123/users/u1/roles/inventory")
+	require.Len(t, created, 1, "two entries for the same group create one assignment")
+	assert.Equal(t, "100", created[0].Body["managedObject"])
+	assert.Equal(t, []any{map[string]any{"id": float64(7)}, map[string]any{"id": float64(8)}}, created[0].Body["roles"])
 }

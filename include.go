@@ -635,7 +635,7 @@ func (m *Manifest) rebase(dir, rootDir string) {
 //   - list sections are concatenated (base first)
 //   - entries with an identity (child tenant domain, tenant option
 //     category+key, feature key, retention rule selector, application name,
-//     root device group name (the whole tree is replaced), user group name,
+//     root device group name (the whole tree is replaced), global role name,
 //     inventory role name, user name, device profile name, command group
 //     name) replace an entry with the same identity in base, at its
 //     position (the later definition wins)

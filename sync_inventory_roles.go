@@ -470,6 +470,7 @@ type existingAssignment struct {
 // only: the changes of the other assignments are still returned, together
 // with the joined errors. In exact mode no unlisted assignment is deleted
 // when a listed group cannot be resolved, since it could be that group.
+// Entries which resolve to the same group are merged into one change.
 func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, exists, exact bool, assignments []InventoryAssignmentSpec, cache *inventoryAssignmentCache) ([]inventoryAssignmentChange, error) {
 	if len(assignments) == 0 && (!exact || !exists) {
 		return nil, nil
@@ -514,32 +515,64 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 	var errs []error
 	listed := map[string]bool{}
 	unresolvedGroup := false
+
+	// Resolve the groups first. Entries written differently which resolve
+	// to the same group (e.g. "Plant Berlin" and "Europe/Plant Berlin") are
+	// merged into the first one, so that one change covers all of their
+	// roles: separate changes would each start from the same existing
+	// assignment and undo each other.
+	type plannedAssignment struct {
+		change inventoryAssignmentChange
+		roles  []string
+	}
+	var planned []*plannedAssignment
+	byGroup := map[string]*plannedAssignment{}
 	for _, assignment := range assignments {
 		ref := strings.TrimSpace(assignment.Group)
 		change := inventoryAssignmentChange{group: assignment.Group}
+		var key string
 		groupID, err := s.resolveDeviceGroup(ctx, ref, cache.groupIDs)
 		switch {
 		case err == nil:
 			change.groupID = groupID
-			listed[groupID] = true
-			if current, ok := existing[groupID]; ok {
+			key = "id:" + groupID
+		case s.DryRun && errors.Is(err, errNotFound) && s.pending().deviceGroups[ref]:
+			change.pendingGroup = true
+			key = "pending:" + strings.Join(splitGroupPath(ref), "/")
+		default:
+			unresolvedGroup = true
+			errs = append(errs, err)
+			continue
+		}
+		if entry, ok := byGroup[key]; ok {
+			for _, role := range assignment.Roles {
+				if !slices.Contains(entry.roles, role) {
+					entry.roles = append(entry.roles, role)
+				}
+			}
+			continue
+		}
+		entry := &plannedAssignment{change: change, roles: slices.Clone(assignment.Roles)}
+		byGroup[key] = entry
+		planned = append(planned, entry)
+	}
+
+	for _, entry := range planned {
+		change := entry.change
+		if change.groupID != "" {
+			listed[change.groupID] = true
+			if current, ok := existing[change.groupID]; ok {
 				change.assignmentID = current.id
 				change.currentRoles = current.roles
 				if exact {
 					change.duplicates = current.duplicates
 				}
 			}
-		case s.DryRun && errors.Is(err, errNotFound) && s.pending().deviceGroups[ref]:
-			change.pendingGroup = true
-		default:
-			unresolvedGroup = true
-			errs = append(errs, err)
-			continue
 		}
 
 		var roleErr error
 		var desired []int64
-		for _, roleName := range assignment.Roles {
+		for _, roleName := range entry.roles {
 			roleID, err := cache.roleID(roleName)
 			if s.DryRun {
 				// The inventoryRoles section of the same dry run would

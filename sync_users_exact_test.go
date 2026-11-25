@@ -341,3 +341,33 @@ func TestSyncUsersExactDryRunWithoutSession(t *testing.T) {
 	assert.Equal(t, "ensure user; inventory roles: Site operator on Plant Berlin; Reader on Plant Paris; "+
 		"inventoryRolesMode exact: other inventory roles are removed", r.Detail)
 }
+
+func TestSyncUsersExactSameGroupMerged(t *testing.T) {
+	f := fakeUsers(t, existingUser)
+	fakeCurrentUser(f, "tenant-sync")
+	fakeInventoryRoles(f, siteOperatorRole(), map[string]any{"id": 8, "name": "Reader"})
+	fakeDeviceGroups(f,
+		fakeGroup{ID: "1", Name: "Europe"},
+		fakeGroup{ID: "100", Name: "Plant Berlin", Parent: "1"},
+	)
+	fakeAssignments(f, map[string]any{"id": 31, "managedObject": "100", "roles": []map[string]any{{"id": 7}, {"id": 8}}})
+	fakeDeleteAssignments(f, http.StatusNoContent, 31)
+	s := newFakeSyncer(t, f)
+
+	// Both entries resolve to group 100: together they declare the roles
+	// the user already has, so nothing is revoked
+	require.NoError(t, s.SyncUsers(context.Background(), []UserSpec{{
+		Username:           "berlin-ops@example.com",
+		InventoryRolesMode: UserInventoryRolesExact,
+		InventoryRoles: []InventoryAssignmentSpec{
+			{Group: "Plant Berlin", Roles: []string{"Site operator"}},
+			{Group: "Europe/Plant Berlin", Roles: []string{"Reader"}},
+		},
+	}}))
+
+	r := resultFor(t, s, SectionUsers)
+	require.NoError(t, r.Err)
+	assert.Equal(t, ActionUnchanged, r.Action)
+	assert.Empty(t, f.Requests(http.MethodPut, "/user/t123/users/u1/roles/inventory/31"))
+	assert.Empty(t, f.Requests(http.MethodDelete, "/user/t123/users/u1/roles/inventory/31"))
+}

@@ -1866,10 +1866,11 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, prefix+": group is required")
 			} else if slices.Contains(splitGroupPath(group), "") {
 				errs = append(errs, fmt.Sprintf("%s: invalid group path %q: empty group name", prefix, assignment.Group))
-			} else if assignedGroups[group] {
+			} else if key := strings.Join(splitGroupPath(group), "/"); assignedGroups[key] {
 				errs = append(errs, fmt.Sprintf("%s: duplicate group %q (list all roles of a group in one entry)", prefix, assignment.Group))
+			} else {
+				assignedGroups[key] = true
 			}
-			assignedGroups[group] = true
 			if len(assignment.Roles) == 0 {
 				errs = append(errs, prefix+": at least one role is required")
 			}

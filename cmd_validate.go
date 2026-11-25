@@ -150,6 +150,19 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 		}
 		check(SectionSmartFunctions, i, spec.resolvedSource())
 	}
+	for i, spec := range manifest.Microservices {
+		if spec.Source != nil {
+			check(SectionMicroservices, i, *spec.Source)
+		}
+	}
+	for i, spec := range manifest.Extensions {
+		check(SectionExtensions, i, spec.Source)
+	}
+	for i, spec := range manifest.Applications {
+		if spec.Source != nil {
+			check(SectionApplications, i, *spec.Source)
+		}
+	}
 	for i, spec := range manifest.TrustedCertificates {
 		check(SectionTrustedCertificates, i, spec.resolvedSource())
 	}

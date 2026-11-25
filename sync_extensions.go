@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -69,7 +70,7 @@ func (s *Syncer) ensureExtension(ctx context.Context, spec ExtensionSpec) {
 		return
 	}
 	if existing != nil && version != "" && hasExtensionVersion(*existing, version) {
-		s.record(SectionExtensions, spec.Name, ActionUnchanged, "version "+version+" already uploaded", nil)
+		s.recordUploadedExtension(ctx, spec, *existing, version)
 		return
 	}
 
@@ -103,7 +104,7 @@ func (s *Syncer) ensureExtension(ctx context.Context, spec ExtensionSpec) {
 		return
 	}
 	if existing != nil && hasExtensionVersion(*existing, version) {
-		s.record(SectionExtensions, spec.Name, ActionUnchanged, "version "+version+" already uploaded", nil)
+		s.recordUploadedExtension(ctx, spec, *existing, version)
 		return
 	}
 
@@ -142,6 +143,14 @@ func (s *Syncer) ensureExtension(ctx context.Context, spec ExtensionSpec) {
 	}
 
 	detail := fmt.Sprintf("uploaded version %s (%s)", version, files[0].Filename)
+	if created || slices.Contains(tags, applicationplugins.VersionLatest) {
+		// Like the extensions uploaded in the Administration application, the
+		// latest version is the active one
+		if result := s.Client.UIPlugins.Activate(ctx, appID, upload.Data.BinaryID()); result.Err != nil {
+			s.record(SectionExtensions, spec.Name, ActionFailed, detail+"; activate version "+version, result.Err)
+			return
+		}
+	}
 	if created {
 		s.record(SectionExtensions, spec.Name, ActionCreated, "created and "+detail, nil)
 	} else {
@@ -200,6 +209,72 @@ func (s *Syncer) visibleExtension(ctx context.Context, name, owner string) (*jso
 		}
 	}
 	return found, nil
+}
+
+// recordUploadedExtension records an extension whose version is already
+// uploaded. An extension without an active version (uploaded by earlier
+// versions of the tool) gets the version with the latest tag activated.
+func (s *Syncer) recordUploadedExtension(ctx context.Context, spec ExtensionSpec, plugin jsonmodels.UIPlugin, version string) {
+	detail := "version " + version + " already uploaded"
+	if plugin.ActiveVersionID() != "" {
+		s.record(SectionExtensions, spec.Name, ActionUnchanged, detail, nil)
+		return
+	}
+	active := resolveExtensionVersion(plugin, applicationplugins.VersionLatest)
+	if active == "" {
+		active = version
+	}
+	binaryID := ""
+	for _, v := range plugin.Get("applicationVersions").Array() {
+		if v.Get("version").String() == active {
+			binaryID = v.Get("binaryId").String()
+		}
+	}
+	if binaryID == "" {
+		s.record(SectionExtensions, spec.Name, ActionFailed, detail, fmt.Errorf("no binary found for version %s to activate", active))
+		return
+	}
+	if result := s.Client.UIPlugins.Activate(ctx, plugin.ID(), binaryID); result.Err != nil {
+		s.record(SectionExtensions, spec.Name, ActionFailed, detail+"; activate version "+active, result.Err)
+		return
+	}
+	s.record(SectionExtensions, spec.Name, ActionUpdated, detail+"; activated version "+active, nil)
+}
+
+// extensionModules returns the modules of a version of an extension, which
+// are installed into a web application: the exports of the cumulocity.json of
+// the version (as the Administration application does), or its remotes for
+// extensions without exports
+func (s *Syncer) extensionModules(ctx context.Context, contextPath, version string) ([]string, error) {
+	resp, err := s.Client.Resty().R().
+		SetContext(ctx).
+		SetHeader("Accept", "application/json").
+		Get("/apps/" + url.PathEscape(contextPath+"@"+version) + "/cumulocity.json")
+	if err != nil {
+		return nil, fmt.Errorf("read the cumulocity.json of %s@%s: %w", contextPath, version, err)
+	}
+	if resp.StatusCode() >= 300 {
+		return nil, fmt.Errorf("read the cumulocity.json of %s@%s: %s", contextPath, version, resp.Status())
+	}
+	manifest := gjson.ParseBytes(resp.Bytes())
+	var modules []string
+	for _, export := range manifest.Get("exports").Array() {
+		if name := export.Get("module").String(); name != "" && !slices.Contains(modules, name) {
+			modules = append(modules, name)
+		}
+	}
+	if len(modules) == 0 {
+		manifest.Get("remotes").ForEach(func(_, list gjson.Result) bool {
+			for _, m := range list.Array() {
+				if name := m.String(); name != "" && !slices.Contains(modules, name) {
+					modules = append(modules, name)
+				}
+			}
+			return true
+		})
+	}
+	slices.Sort(modules)
+	return modules, nil
 }
 
 // hasExtensionVersion reports whether the extension has the version
@@ -292,7 +367,8 @@ func (s *Syncer) syncApplicationExtensions(ctx context.Context, spec Application
 		installed[p.ContextPath] = p
 	}
 
-	var install, remove []string
+	install := map[string]any{}
+	var remove []string
 	var pending []pendingExtension
 	for _, ext := range spec.Extensions {
 		plugin, err := s.visibleExtension(ctx, ext.Name, owner)
@@ -327,14 +403,29 @@ func (s *Syncer) syncApplicationExtensions(ctx context.Context, spec Application
 				fmt.Errorf("extension %q has no version or tag %q", ext.Name, ext.VersionOrLatest()))
 			continue
 		}
-		if isInstalled && have.Version == version {
+		modules, err := s.extensionModules(ctx, plugin.ContextPath(), version)
+		if err != nil {
+			s.record(SectionApplications, item(ext), ActionFailed, "", err)
+			continue
+		}
+		installedModules := slices.Sorted(slices.Values(have.Modules))
+		modulesMatch := slices.Equal(modules, installedModules)
+		if isInstalled && have.Version == version && modulesMatch {
 			s.record(SectionApplications, item(ext), ActionUnchanged, "version "+version+" installed", nil)
 			continue
 		}
-		install = append(install, plugin.Name()+"@"+version)
-		detail := "installed version " + version
+		// The remotes entry is written as the Administration application does;
+		// an installed version is replaced
 		if isInstalled {
+			remove = append(remove, contextPath)
+		}
+		install[contextPath+"@"+version] = modules
+		detail := "installed version " + version
+		switch {
+		case isInstalled && have.Version != version:
 			detail = fmt.Sprintf("version %s -> %s", have.Version, version)
+		case isInstalled:
+			detail = fmt.Sprintf("version %s: modules updated (%s)", version, strings.Join(modules, ", "))
 		}
 		pending = append(pending, pendingExtension{item(ext), detail})
 	}
@@ -343,8 +434,8 @@ func (s *Syncer) syncApplicationExtensions(ctx context.Context, spec Application
 	}
 
 	result := s.Client.UIApplicationPlugins.Update(ctx, own.ID(), applicationplugins.UpdateOptions{
-		Install: install,
-		Remove:  remove,
+		Remove: remove,
+		Body:   map[string]any{"config": map[string]any{"remotes": install}},
 	})
 	for _, change := range pending {
 		if result.Err != nil {

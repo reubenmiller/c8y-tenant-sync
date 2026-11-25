@@ -37,21 +37,41 @@ func fakeExtensionTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
 	for _, app := range apps {
 		app := app
 		f.JSON("GET /application/applications/"+app["id"].(string), http.StatusOK, app)
+		// The cumulocity.json of each extension version, which exports the
+		// module <contextPath>Module
+		versions, _ := app["applicationVersions"].([]map[string]any)
+		for _, v := range versions {
+			contextPath := app["contextPath"].(string)
+			f.JSON("GET /apps/"+contextPath+"@"+v["version"].(string)+"/cumulocity.json", http.StatusOK, map[string]any{
+				"name": app["name"], "contextPath": contextPath, "version": v["version"], "isPackage": true,
+				"exports": []map[string]any{{"name": "Module", "module": contextPath + "Module", "path": "./module.ts"}},
+			})
+		}
 	}
 	return f
 }
 
+// extension is an uploaded extension with an active version. Like the
+// platform's extensions, its application manifest does not list the modules.
 func extension(id, name, contextPath, owner string, versions ...map[string]any) map[string]any {
 	return map[string]any{
 		"id": id, "name": name, "contextPath": contextPath, "type": "HOSTED",
 		"owner":               map[string]any{"tenant": map[string]any{"id": owner}},
 		"manifest":            map[string]any{"isPackage": true, "package": "plugin"},
+		"activeVersionId":     "bin-active",
 		"applicationVersions": versions,
 	}
 }
 
+// inactive removes the active version of an extension (as uploaded by
+// earlier versions of the tool)
+func inactive(ext map[string]any) map[string]any {
+	delete(ext, "activeVersionId")
+	return ext
+}
+
 func extVersion(v string, tags ...string) map[string]any {
-	return map[string]any{"version": v, "tags": tags}
+	return map[string]any{"version": v, "binaryId": "bin-" + v, "tags": tags}
 }
 
 // writeExtensionZip writes an extension archive with a cumulocity.json
@@ -72,6 +92,7 @@ func widgetZip(t *testing.T, name, v string) string {
 	return writeExtensionZip(t, name+"-"+v+".zip", map[string]any{
 		"name": name, "key": name + "-key", "contextPath": "my-widget",
 		"version": v, "isPackage": true, "package": "plugin",
+		"remotes": map[string]any{"my-widget": []string{"WidgetModule"}},
 	})
 }
 
@@ -79,6 +100,7 @@ func TestExtensionIsCreatedAndVersionUploaded(t *testing.T) {
 	f := fakeExtensionTenant(t)
 	f.JSON("POST /application/applications", http.StatusCreated, extension("77", "my-widget-plugin", "my-widget", "t123"))
 	f.JSON("POST /application/applications/77/versions", http.StatusCreated, extVersion("1.2.0", "latest"))
+	f.JSON("PUT /application/applications/77", http.StatusOK, map[string]any{"id": "77"})
 	s := newFakeSyncer(t, f)
 
 	spec := ExtensionSpec{Name: "my-widget-plugin", Source: Source{Path: widgetZip(t, "my-widget-plugin", "1.2.0")}}
@@ -98,6 +120,12 @@ func TestExtensionIsCreatedAndVersionUploaded(t *testing.T) {
 	require.Len(t, uploads, 1)
 	assert.Contains(t, string(uploads[0].RawBody), `"version":"1.2.0"`)
 	assert.Contains(t, string(uploads[0].RawBody), `"tags":["latest"]`)
+
+	// The latest version is activated, like extensions uploaded in the
+	// Administration application
+	activations := putsWith(f, "77", "activeVersionId")
+	require.Len(t, activations, 1)
+	assert.Equal(t, "bin-1.2.0", activations[0].Body["activeVersionId"])
 
 	// Extensions belong to the tenant running the sync: another target does
 	// not upload again
@@ -139,6 +167,7 @@ func TestExtensionNewVersionIsUploaded(t *testing.T) {
 	require.Len(t, uploads, 1)
 	assert.Contains(t, string(uploads[0].RawBody), `"tags":["stable"]`)
 	assert.Empty(t, exactRequests(f, http.MethodPost, "/application/applications"))
+	assert.Empty(t, f.Requests(http.MethodPut, "/application/applications/77"), "a version without the latest tag is not activated")
 }
 
 func TestExtensionArchiveMustMatchTheName(t *testing.T) {
@@ -166,10 +195,10 @@ func ownWebApp(remotes map[string]any) map[string]any {
 func TestApplicationExtensionsAreInstalledUpgradedAndRemoved(t *testing.T) {
 	f := fakeExtensionTenant(t,
 		ownWebApp(map[string]any{
-			"my-widget@1.0.0":      []string{"WidgetModule"},
-			"old-widget@2.0.0":     []string{"OldModule"},
-			"hand-installed@1.0.0": []string{"HandModule"},
-			"pinned@1.0.0":         []string{"PinnedModule"},
+			"my-widget@1.0.0":      []string{"my-widgetModule"},
+			"old-widget@2.0.0":     []string{"old-widgetModule"},
+			"hand-installed@1.0.0": []string{"hand-installedModule"},
+			"pinned@1.0.0":         []string{"pinnedModule"},
 			"legacy-remote":        []string{"LegacyModule"},
 		}),
 		extension("77", "my-widget-plugin", "my-widget", "t123", extVersion("1.0.0"), extVersion("1.2.0", "latest")),
@@ -210,7 +239,7 @@ func TestApplicationExtensionsAreInstalledUpgradedAndRemoved(t *testing.T) {
 	config := puts[0].Body["config"].(map[string]any)
 	assert.Equal(t, "kept", config["other"])
 	remotes := config["remotes"].(map[string]any)
-	assert.Contains(t, remotes, "my-widget@1.2.0")
+	assert.Equal(t, []any{"my-widgetModule"}, remotes["my-widget@1.2.0"], "the modules come from the extension manifest")
 	assert.Contains(t, remotes, "new@3.0.0")
 	assert.Contains(t, remotes, "pinned@1.0.0")
 	assert.Contains(t, remotes, "hand-installed@1.0.0", "extensions which are not listed are kept")
@@ -226,7 +255,7 @@ func TestApplicationExtensionsAreInstalledUpgradedAndRemoved(t *testing.T) {
 
 func TestApplicationExtensionsUnchangedNeedNoUpdate(t *testing.T) {
 	f := fakeExtensionTenant(t,
-		ownWebApp(map[string]any{"my-widget@1.2.0": []string{"WidgetModule"}}),
+		ownWebApp(map[string]any{"my-widget@1.2.0": []string{"my-widgetModule"}}),
 		extension("77", "my-widget-plugin", "my-widget", "t123", extVersion("1.2.0", "latest")),
 	)
 	s := newFakeSyncer(t, f)
@@ -392,4 +421,59 @@ extensions:
 			assert.Contains(t, err.Error(), tc.errorMsg)
 		})
 	}
+}
+
+func TestExtensionWithoutActiveVersionIsActivated(t *testing.T) {
+	f := fakeExtensionTenant(t, inactive(extension("77", "my-widget-plugin", "my-widget", "t123", extVersion("1.0.0"), extVersion("1.2.0", "latest"))))
+	f.JSON("PUT /application/applications/77", http.StatusOK, map[string]any{"id": "77"})
+	s := newFakeSyncer(t, f)
+
+	require.NoError(t, s.SyncExtensions(context.Background(), []ExtensionSpec{
+		{Name: "my-widget-plugin", Source: Source{Path: widgetZip(t, "my-widget-plugin", "1.2.0")}},
+	}))
+
+	r := resultFor(t, s, SectionExtensions)
+	assert.Equal(t, ActionUpdated, r.Action, r.Err)
+	assert.Equal(t, "version 1.2.0 already uploaded; activated version 1.2.0", r.Detail)
+	assert.Empty(t, f.Requests(http.MethodPost, "/application/applications"), "no version is uploaded")
+	activations := putsWith(f, "77", "activeVersionId")
+	require.Len(t, activations, 1)
+	assert.Equal(t, "bin-1.2.0", activations[0].Body["activeVersionId"])
+}
+
+func TestApplicationExtensionWithWrongModulesIsReinstalled(t *testing.T) {
+	f := fakeExtensionTenant(t,
+		// Installed by an earlier version of the tool without modules
+		ownWebApp(map[string]any{"my-widget@1.2.0": []string{}}),
+		extension("77", "my-widget-plugin", "my-widget", "t123", extVersion("1.2.0", "latest")),
+	)
+	f.JSON("PUT /application/applications/42", http.StatusOK, map[string]any{"id": "42"})
+	s := newFakeSyncer(t, f)
+
+	s.syncApplicationExtensions(context.Background(), ApplicationSpec{
+		Name:       "devicemanagement",
+		Extensions: []ApplicationExtensionSpec{{Name: "my-widget-plugin"}},
+	})
+	r := resultFor(t, s, SectionApplications)
+	assert.Equal(t, ActionUpdated, r.Action, r.Err)
+	assert.Equal(t, "version 1.2.0: modules updated (my-widgetModule)", r.Detail)
+	puts := exactRequests(f, http.MethodPut, "/application/applications/42")
+	require.Len(t, puts, 1)
+	remotes := puts[0].Body["config"].(map[string]any)["remotes"].(map[string]any)
+	assert.Equal(t, []any{"my-widgetModule"}, remotes["my-widget@1.2.0"])
+}
+
+func TestExtensionModulesFallBackToRemotes(t *testing.T) {
+	f := newFakeC8y(t)
+	f.JSON("GET /apps/old-style@1.0.0/cumulocity.json", http.StatusOK, map[string]any{
+		"remotes": map[string]any{"old-style": []string{"B", "A"}},
+	})
+	s := newFakeSyncer(t, f)
+
+	modules, err := s.extensionModules(context.Background(), "old-style", "1.0.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"A", "B"}, modules)
+
+	_, err = s.extensionModules(context.Background(), "missing", "1.0.0")
+	assert.ErrorContains(t, err, "read the cumulocity.json of missing@1.0.0")
 }

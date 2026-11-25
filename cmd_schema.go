@@ -200,7 +200,7 @@ func (ApplicationExtensionSpec) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Description: "UI extension installed into the web application: \"<name>[@<version or tag>]\" or an object",
 		OneOf: []*jsonschema.Schema{
-			{Type: "string", Pattern: "^[^@\\s]+(@[^@\\s]+)?$", Examples: []any{"my-widget-plugin", "my-widget-plugin@1.2.0"}},
+			{Type: "string", Pattern: "^[^@]*[^@\\s][^@]*(@[^@\\s]+)?$", Examples: []any{"my-widget-plugin", "my-widget-plugin@1.2.0", "Cloud HTTP proxy"}},
 			{Type: "object", Properties: props, Required: []string{"name"}, AdditionalProperties: jsonschema.FalseSchema},
 		},
 	}

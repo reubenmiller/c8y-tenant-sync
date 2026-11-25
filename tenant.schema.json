@@ -6,10 +6,11 @@
       "oneOf": [
         {
           "type": "string",
-          "pattern": "^[^@\\s]+(@[^@\\s]+)?$",
+          "pattern": "^[^@]*[^@\\s][^@]*(@[^@\\s]+)?$",
           "examples": [
             "my-widget-plugin",
-            "my-widget-plugin@1.2.0"
+            "my-widget-plugin@1.2.0",
+            "Cloud HTTP proxy"
           ]
         },
         {

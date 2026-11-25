@@ -148,7 +148,7 @@ microservices:
     subscribed: false
 
   # With a source, the microservice is created if missing and its binary (zip)
-  # uploaded on creation (or on every run with --force)
+  # uploaded when it has none or the source version differs (or with --force)
   - name: my-microservice
     source:
       path: ./build/my-microservice.zip

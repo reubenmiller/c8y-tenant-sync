@@ -1015,7 +1015,7 @@
         },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the microservice binary (zip) comes from; must resolve to a single file. The microservice is created if missing and the binary uploaded on creation (or on every run with --force)"
+          "description": "Where the microservice binary (zip) comes from; must resolve to a single file. The microservice is created if missing"
         }
       },
       "additionalProperties": false,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -421,43 +422,52 @@ func (s *Syncer) ensureApplication(ctx context.Context, entry appEntry) (string,
 		return "", false
 	}
 
-	// A source is given: the application binary (a single zip) is available
-	created := false
-	if app.Err != nil {
-		// Application does not exist: create it
-		appType := entry.appType
-		if appType == "" {
-			appType = "MICROSERVICE"
+	// A source is given. List it without downloading to read the version:
+	// the binary is uploaded when the application is new, has no binary yet
+	// (e.g. an earlier upload failed), runs another version, or with --force
+	probe := *s.Resolver
+	probe.SkipDownload = true
+	listed, err := probe.Resolve(*entry.source)
+	if err != nil {
+		if entry.source.Optional && errors.Is(err, ErrNothingToDo) {
+			s.record(entry.section, entry.name, ActionSkipped, err.Error(), nil)
+		} else {
+			s.record(entry.section, entry.name, ActionFailed, "resolve source", err)
 		}
-		contextPath := entry.context
-		if contextPath == "" {
-			contextPath = entry.name
-		}
+		return "", false
+	}
+	if len(listed) != 1 {
+		s.record(entry.section, entry.name, ActionFailed, "",
+			fmt.Errorf("application source must resolve to exactly one file, got %d (narrow it down with github.assets or github.tags)", len(listed)))
+		return "", false
+	}
+	desiredVersion := archiveVersion(listed[0])
 
-		key := entry.key
-		if key == "" {
-			key = entry.name + "-application-key"
+	exists := app.Err == nil
+	currentVersion := ""
+	reason := ""
+	if exists {
+		currentVersion = app.Data.Get("manifest.version").String()
+		switch {
+		case app.Data.Get("activeVersionId").String() == "" && currentVersion == "":
+			reason = "no binary"
+		case desiredVersion != "" && desiredVersion != currentVersion:
+			reason = "version"
+		case s.Force:
+			reason = "force"
 		}
-		createResult := s.Client.Applications.Create(ctx, map[string]any{
-			"name":        entry.name,
-			"key":         key,
-			"type":        appType,
-			"contextPath": contextPath,
-		})
-		if createResult.Err != nil {
-			s.record(entry.section, entry.name, ActionFailed, "create application", createResult.Err)
-			return "", false
+		if reason == "" {
+			detail := "version " + currentVersion + " already active"
+			if desiredVersion == "" {
+				detail = "binary upload skipped (no version in the source; use --force to re-upload)"
+			}
+			s.record(entry.section, entry.name, ActionUnchanged, detail, nil)
+			return s.cacheAppSelfLink(entry.name, app.Data.Self()), true
 		}
-		app = createResult
-		created = true
 	}
 
-	if !created && !s.Force {
-		s.record(entry.section, entry.name, ActionUnchanged,
-			"binary upload skipped (application exists; use --force to re-upload)", nil)
-		return s.cacheAppSelfLink(entry.name, app.Data.Self()), true
-	}
-
+	// Download before creating the application, so a failed download does
+	// not leave an application without a binary behind
 	files, ok := s.resolveSource(entry.section, entry.name, *entry.source)
 	if !ok {
 		return "", false
@@ -473,19 +483,62 @@ func (s *Syncer) ensureApplication(ctx context.Context, entry appEntry) (string,
 		return "", false
 	}
 
+	if !exists {
+		appType := entry.appType
+		if appType == "" {
+			appType = "MICROSERVICE"
+		}
+		contextPath := entry.context
+		if contextPath == "" {
+			contextPath = entry.name
+		}
+		key := entry.key
+		if key == "" {
+			key = entry.name + "-application-key"
+		}
+		createResult := s.Client.Applications.Create(ctx, map[string]any{
+			"name":        entry.name,
+			"key":         key,
+			"type":        appType,
+			"contextPath": contextPath,
+		})
+		if createResult.Err != nil {
+			s.record(entry.section, entry.name, ActionFailed, "create application", createResult.Err)
+			return "", false
+		}
+		app = createResult
+	}
+
 	upload := s.Client.Applications.Upload(ctx, app.Data.ID(), applications.UploadFileOptions{
 		FilePath:    files[0].Path,
 		Name:        files[0].Filename,
 		ContentType: "application/zip",
 	})
 	if upload.Err != nil {
-		s.record(entry.section, entry.name, ActionFailed, "upload binary", upload.Err)
+		detail := "upload binary " + files[0].Filename
+		if !exists {
+			detail = "created, but " + detail + " (retried on the next run)"
+		}
+		err := upload.Err
+		if entry.section == SectionMicroservices && core.ErrHasStatus(err, http.StatusForbidden) {
+			err = fmt.Errorf("%w (uploading microservices requires microservice hosting to be enabled for the tenant, which the management tenant or your Cumulocity provider controls, and ROLE_APPLICATION_MANAGEMENT_ADMIN)", err)
+		}
+		s.record(entry.section, entry.name, ActionFailed, detail, err)
 		return "", false
 	}
 
-	if created {
+	switch {
+	case !exists:
 		s.record(entry.section, entry.name, ActionCreated, "created and uploaded "+files[0].Filename, nil)
-	} else {
+	case reason == "no binary":
+		s.record(entry.section, entry.name, ActionUpdated, "uploaded "+files[0].Filename+" (the application had no binary)", nil)
+	case reason == "version":
+		from := currentVersion
+		if from == "" {
+			from = "unknown"
+		}
+		s.record(entry.section, entry.name, ActionUpdated, fmt.Sprintf("version %s -> %s (uploaded %s)", from, desiredVersion, files[0].Filename), nil)
+	default:
 		s.record(entry.section, entry.name, ActionUpdated, "re-uploaded "+files[0].Filename, nil)
 	}
 	return s.cacheAppSelfLink(entry.name, app.Data.Self()), true

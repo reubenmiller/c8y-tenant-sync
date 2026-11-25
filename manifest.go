@@ -412,9 +412,9 @@ type MicroserviceSpec struct {
 	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=Context path used when creating the microservice from a source (defaults to the name)"`
 
 	// Source provides the microservice binary (a single zip file). The
-	// microservice is created if missing and the binary uploaded on creation
-	// (or on every run with --force).
-	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the microservice binary (zip) comes from; must resolve to a single file. The microservice is created if missing and the binary uploaded on creation (or on every run with --force)"`
+	// microservice is created if missing, and the binary uploaded when the
+	// microservice has none or the source version differs (or with --force).
+	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the microservice binary (zip) comes from; must resolve to a single file. The microservice is created if missing, and the binary is uploaded when the microservice has no binary yet or the source version (from the filename or the GitHub release tag) differs from the microservice manifest.version (or on every run with --force)"`
 }
 
 func (m MicroserviceSpec) IsSubscribed() bool {

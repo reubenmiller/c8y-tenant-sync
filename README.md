@@ -931,7 +931,13 @@ To change such subscriptions, run `c8y tenant-sync` from the owner tenant with a
 
 #### Microservices from a source
 
-With a `source`, the microservice is also created when missing (`contextPath` defaults to the name, `key` to `<name>-application-key`) and its binary (a single zip) uploaded. Since binary content cannot be compared, the upload only happens on creation, or on every run with `--force`:
+With a `source`, the microservice is also created when missing (`contextPath` defaults to the name, `key` to `<name>-application-key`) and its binary (a single zip) uploaded. The source is listed without downloading first, and the binary is uploaded when:
+
+- the microservice is new, or has no binary yet (for example after a failed upload),
+- the source version differs from the `manifest.version` of the microservice. The version comes from the filename (`my-microservice-1.2.0.zip`) or the GitHub release tag, so a scheduled run picks up new releases,
+- or `--force` is given. Without a version in the source, an existing binary is only replaced with `--force`.
+
+The source is downloaded before the microservice is created, so a failed download does not leave a microservice without a binary behind.
 
 ```yaml
 microservices:

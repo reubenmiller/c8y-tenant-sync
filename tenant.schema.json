@@ -2,18 +2,53 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/reubenmiller/c8y-tenant-sync/main/tenant.schema.json",
   "$defs": {
+    "ApplicationExtensionSpec": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[^@\\s]+(@[^@\\s]+)?$",
+          "examples": [
+            "my-widget-plugin",
+            "my-widget-plugin@1.2.0"
+          ]
+        },
+        {
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Extension name (or context path)"
+            },
+            "version": {
+              "type": "string",
+              "description": "Version or tag to install (defaults to latest)",
+              "examples": [
+                "latest",
+                "1.2.0"
+              ]
+            },
+            "installed": {
+              "type": "boolean",
+              "description": "Desired state (defaults to true); false removes the extension from the application"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "name"
+          ]
+        }
+      ],
+      "description": "UI extension installed into the web application: \"\u003cname\u003e[@\u003cversion or tag\u003e]\" or an object"
+    },
     "ApplicationSpec": {
       "properties": {
         "name": {
           "type": "string",
-          "description": "Application name"
-        },
-        "type": {
-          "type": "string",
-          "description": "Application type (lookup filter; also used when creating from a source where it defaults to MICROSERVICE)",
+          "minLength": 1,
+          "description": "Web application name",
           "examples": [
-            "MICROSERVICE",
-            "HOSTED"
+            "devicemanagement"
           ]
         },
         "subscribed": {
@@ -22,27 +57,34 @@
         },
         "key": {
           "type": "string",
-          "description": "Application key used when creating the application (defaults to \u003cname\u003e-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"
+          "description": "With a source: application key used when creating the application (defaults to \u003cname\u003e-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"
         },
         "contextPath": {
           "type": "string",
-          "description": "Context path used when creating the application (defaults to the name)"
+          "description": "With a source: context path used when creating the application (defaults to the name)"
         },
         "description": {
           "type": "string",
-          "description": "For type HOSTED with a source: the application description (kept in sync when set). Defaults to the description of the application of the same name owned by another tenant (e.g. the built-in application which the tenant-owned copy replaces); an inherited description only fills in a missing one"
+          "description": "With a source: the application description (kept in sync when set). Defaults to the description of the application of the same name owned by another tenant (e.g. the built-in application which the tenant-owned copy replaces); an inherited description only fills in a missing one"
         },
         "keepBinaries": {
           "type": "integer",
           "minimum": 0,
-          "description": "For type HOSTED with a source: the number of binaries (application versions) to keep after an upload; the oldest binaries beyond this number are deleted but the active and the uploaded binary are always kept. 0 or omitted keeps all binaries",
+          "description": "With a source: the number of binaries (application versions) to keep after an upload; the oldest binaries beyond this number are deleted but the active and the uploaded binary are always kept. 0 or omitted keeps all binaries",
           "examples": [
             3
           ]
         },
         "source": {
           "$ref": "#/$defs/Source",
-          "description": "Where the application binary (zip) comes from; must resolve to a single file. For type HOSTED the application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"
+          "description": "Where the web application binary (zip) comes from; must resolve to a single file. The application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"
+        },
+        "extensions": {
+          "items": {
+            "$ref": "#/$defs/ApplicationExtensionSpec"
+          },
+          "type": "array",
+          "description": "UI extensions to install into the application (additive: other installed extensions are kept; installed: false removes one). The application must be owned by the tenant running the sync: give it a source to replace a built-in application with a tenant-owned copy"
         }
       },
       "additionalProperties": false,
@@ -541,6 +583,35 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ExtensionSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Extension name; must match the name in the cumulocity.json of the archive",
+          "examples": [
+            "my-widget-plugin"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Source",
+          "description": "Where the extension archive (zip with a cumulocity.json) comes from; must resolve to a single file. The version is read from the archive filename (e.g. my-plugin-1.2.0.zip) or the GitHub release tag without downloading"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Tags of a newly uploaded version (defaults to [latest]; an empty list uploads the version without tags)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "source"
+      ]
+    },
     "FeatureSpec": {
       "properties": {
         "key": {
@@ -911,6 +982,39 @@
           },
           "type": "array",
           "description": "Permissions of the role (compared as a set; the role is updated when the set differs)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "MicroserviceSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Microservice name",
+          "examples": [
+            "advanced-software-mgmt"
+          ]
+        },
+        "subscribed": {
+          "type": "boolean",
+          "description": "Desired subscription state (defaults to true when omitted); false unsubscribes the microservice from the target tenant"
+        },
+        "key": {
+          "type": "string",
+          "description": "Application key used when creating the microservice from a source (defaults to \u003cname\u003e-application-key)"
+        },
+        "contextPath": {
+          "type": "string",
+          "description": "Context path used when creating the microservice from a source (defaults to the name)"
+        },
+        "source": {
+          "$ref": "#/$defs/Source",
+          "description": "Where the microservice binary (zip) comes from; must resolve to a single file. The microservice is created if missing and the binary uploaded on creation (or on every run with --force)"
         }
       },
       "additionalProperties": false,
@@ -1961,12 +2065,26 @@
       "type": "array",
       "description": "Certificate revocation entries to upload from CSV files (columns SERIALNO and optional DATE); additive: existing entries are never removed"
     },
+    "microservices": {
+      "items": {
+        "$ref": "#/$defs/MicroserviceSpec"
+      },
+      "type": "array",
+      "description": "Microservices to subscribe to the target tenant (optionally created/uploaded from a source); the Microservices page of the Administration application"
+    },
+    "extensions": {
+      "items": {
+        "$ref": "#/$defs/ExtensionSpec"
+      },
+      "type": "array",
+      "description": "UI extensions (plugin packages) to upload into the tenant running the sync; a version is only uploaded when it is not on the extension yet. Install them into web applications with applications[].extensions; the Extensions page of the Administration application"
+    },
     "applications": {
       "items": {
         "$ref": "#/$defs/ApplicationSpec"
       },
       "type": "array",
-      "description": "Applications to subscribe to the current tenant (optionally created/uploaded from a source)"
+      "description": "Web applications to subscribe to the target tenant (optionally kept at the version of a source and with UI extensions installed); the Applications page of the Administration application. Microservices are listed under microservices"
     },
     "deviceGroups": {
       "items": {

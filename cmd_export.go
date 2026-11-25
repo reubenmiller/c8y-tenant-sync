@@ -31,6 +31,7 @@ var ExportSections = []string{
 	SectionFeatures,
 	SectionRetentionRules,
 	SectionCertificateAuthority,
+	SectionMicroservices,
 	SectionApplications,
 	SectionDeviceGroups,
 	SectionInventoryRoles,
@@ -40,13 +41,12 @@ var ExportSections = []string{
 
 // exportOptions holds the flags of the export command
 type exportOptions struct {
-	output           string
-	sections         []string
-	allFeatures      bool
-	applicationTypes []string
-	force            bool
-	verbose          bool
-	debug            bool
+	output      string
+	sections    []string
+	allFeatures bool
+	force       bool
+	verbose     bool
+	debug       bool
 }
 
 func newExportCmd() *cobra.Command {
@@ -62,8 +62,10 @@ Exported sections: ` + strings.Join(ExportSections, ", ") + `.
 - features: feature toggles set for the tenant (use --all-features for all toggles)
 - retentionRules: all retention rules
 - certificateAuthority: the state of the Cumulocity CA, if the tenant has one
-- applications: applications the tenant is subscribed to but does not own (by default
-  microservices; use --application-type to change)
+- microservices: microservices the tenant is subscribed to but does not own (such as the
+  built-in microservices)
+- applications: web applications the tenant is subscribed to but does not own (such as the
+  built-in Cockpit and Device Management applications)
 - deviceGroups: the tree of device groups with name and description (other fragments
   and the devices in the groups are not exported)
 - inventoryRoles: all inventory roles with their permissions (users' inventory assignments
@@ -78,7 +80,7 @@ Review the manifest before applying it to other tenants.`,
 			example{"export", "Print a manifest of the current tenant"},
 			example{"export -o tenant.yaml", "Write the manifest of the current tenant to a file"},
 			example{"export --sections tenantOptions,features", "Export only the tenant options and feature toggles"},
-			example{"export --application-type MICROSERVICE,HOSTED", "Also export subscribed web applications"},
+			example{"export --sections microservices,applications", "Export only the subscribed microservices and web applications"},
 		),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -90,14 +92,11 @@ Review the manifest before applying it to other tenants.`,
 	flags.StringVarP(&opts.output, "output", "o", "", "Write the manifest to a file instead of stdout")
 	flags.StringSliceVar(&opts.sections, "sections", nil, "Comma-separated list of sections to export (default: all). Sections: "+strings.Join(ExportSections, ", "))
 	flags.BoolVar(&opts.allFeatures, "all-features", false, "Export all feature toggles, not only the ones set for the tenant")
-	flags.StringSliceVar(&opts.applicationTypes, "application-type", []string{"MICROSERVICE"}, "Types of subscribed applications to export (e.g. MICROSERVICE, HOSTED, EXTERNAL)")
 	flags.BoolVar(&opts.force, "force", false, "Overwrite the output file if it already exists")
 	flags.BoolVar(&opts.verbose, "verbose", false, "Enable detailed logging")
 	flags.BoolVar(&opts.debug, "debug", false, "Enable debug mode (verbose logging + HTTP debug)")
 
 	_ = cmd.RegisterFlagCompletionFunc("sections", cobra.FixedCompletions(ExportSections, cobra.ShellCompDirectiveNoFileComp))
-	_ = cmd.RegisterFlagCompletionFunc("application-type", cobra.FixedCompletions(
-		[]string{"MICROSERVICE", "HOSTED", "EXTERNAL"}, cobra.ShellCompDirectiveNoFileComp))
 	_ = cmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"yaml", "yml"}, cobra.ShellCompDirectiveFilterFileExt
 	})
@@ -127,10 +126,9 @@ func runExport(ctx context.Context, opts *exportOptions, stdout io.Writer) error
 	}
 
 	exporter := &Exporter{
-		Client:           client,
-		Sections:         opts.sections,
-		AllFeatures:      opts.allFeatures,
-		ApplicationTypes: opts.applicationTypes,
+		Client:      client,
+		Sections:    opts.sections,
+		AllFeatures: opts.allFeatures,
 	}
 	manifest, tenantID, err := exporter.Export(ctx)
 	if err != nil {
@@ -171,8 +169,6 @@ type Exporter struct {
 	// AllFeatures exports all feature toggles instead of only the ones set
 	// for the tenant
 	AllFeatures bool
-	// ApplicationTypes are the types of subscribed applications to export
-	ApplicationTypes []string
 }
 
 func (e *Exporter) enabled(section string) bool {
@@ -205,6 +201,7 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 		{SectionFeatures, func() (err error) { manifest.Features, err = e.features(ctx); return }},
 		{SectionRetentionRules, func() (err error) { manifest.RetentionRules, err = e.retentionRules(ctx); return }},
 		{SectionCertificateAuthority, func() (err error) { manifest.CertificateAuthority, err = e.certificateAuthority(ctx); return }},
+		{SectionMicroservices, func() (err error) { manifest.Microservices, err = e.microservices(ctx, tenantID); return }},
 		{SectionApplications, func() (err error) { manifest.Applications, err = e.applications(ctx, tenantID); return }},
 		{SectionDeviceGroups, func() (err error) {
 			manifest.DeviceGroups, err = listDeviceGroupTree(ctx, e.Client.DeviceGroups)
@@ -338,27 +335,42 @@ func (e *Exporter) certificateAuthority(ctx context.Context) (*CertificateAuthor
 	return spec, nil
 }
 
-func (e *Exporter) applications(ctx context.Context, tenantID string) ([]ApplicationSpec, error) {
-	types := e.ApplicationTypes
-	if len(types) == 0 {
-		types = []string{"MICROSERVICE"}
-	}
-	var specs []ApplicationSpec
+// subscribedNames lists the names of the applications of the given types
+// which the tenant is subscribed to but does not own, such as the built-in
+// microservices and web applications
+func (e *Exporter) subscribedNames(ctx context.Context, tenantID string, types ...string) ([]string, error) {
+	var names []string
 	result := e.Client.Applications.List(ctx, applications.ListOptions{
-		// Applications the tenant is subscribed to but does not own, such
-		// as the built-in microservices
 		ProvidedFor:       tenantID,
-		Type:              strings.ToUpper(strings.Join(types, ",")),
+		Type:              strings.Join(types, ","),
 		PaginationOptions: pagination.PaginationOptions{PageSize: 2000},
 	})
 	for app, err := range result.Items() {
 		if err != nil {
 			return nil, err
 		}
-		specs = append(specs, ApplicationSpec{Name: app.Name(), Type: app.Type()})
+		names = append(names, app.Name())
 	}
-	sort.SliceStable(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
-	return specs, nil
+	sort.Strings(names)
+	return names, nil
+}
+
+func (e *Exporter) microservices(ctx context.Context, tenantID string) ([]MicroserviceSpec, error) {
+	names, err := e.subscribedNames(ctx, tenantID, "MICROSERVICE")
+	var specs []MicroserviceSpec
+	for _, name := range names {
+		specs = append(specs, MicroserviceSpec{Name: name})
+	}
+	return specs, err
+}
+
+func (e *Exporter) applications(ctx context.Context, tenantID string) ([]ApplicationSpec, error) {
+	names, err := e.subscribedNames(ctx, tenantID, "HOSTED", "EXTERNAL")
+	var specs []ApplicationSpec
+	for _, name := range names {
+		specs = append(specs, ApplicationSpec{Name: name})
+	}
+	return specs, err
 }
 
 // MarshalManifest renders a manifest as YAML with the schema reference and a

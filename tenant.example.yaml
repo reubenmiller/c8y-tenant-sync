@@ -137,30 +137,42 @@ certificateRevocationLists:
       path: ./certificates/revoked.csv
       optional: true
 
-# Subscribe applications to the target tenant (idempotent)
-applications:
+# Subscribe microservices to the target tenant (idempotent)
+microservices:
   - name: advanced-software-mgmt
 
-  # subscribed: false unsubscribes the application. (Un)subscribing an
-  # application not owned by the current tenant requires running from the
+  # subscribed: false unsubscribes the microservice. (Un)subscribing a
+  # microservice not owned by the current tenant requires running from the
   # owner (parent) tenant, e.g. with a targets section.
   - name: cloud-remote-access
     subscribed: false
 
-  # With a source, the application is created if missing and its binary (zip)
+  # With a source, the microservice is created if missing and its binary (zip)
   # uploaded on creation (or on every run with --force)
   - name: my-microservice
-    type: MICROSERVICE
     source:
       path: ./build/my-microservice.zip
       optional: true # skip instead of failing when the file does not exist
+
+# Upload UI extensions (plugin packages) into the tenant running the sync. A
+# version is only uploaded when it is not on the extension yet (the version
+# comes from the archive filename, the release tag or the cumulocity.json).
+# Install them into web applications with applications[].extensions.
+extensions:
+  - name: my-widget-plugin
+    source:
+      path: ./build/my-widget-plugin-1.0.0.zip
+      optional: true
+
+# Subscribe web applications to the target tenant (idempotent)
+applications:
+  - name: cockpit
 
   # A tenant-owned copy of a built-in web application, kept at the latest
   # release: created when missing (in place of the application owned by the
   # management tenant) and re-uploaded whenever the release version differs
   # from the application manifest.version
   - name: devicemanagement
-    type: HOSTED
     source:
       github:
         repo: Cumulocity-IoT/devicemanagement
@@ -170,6 +182,13 @@ applications:
     # Delete the oldest binaries after an upload so only the latest 3 remain
     # (the active binary is always kept)
     keepBinaries: 3
+    # Install UI extensions into the tenant-owned copy (additive: extensions
+    # installed by hand are kept). "<name>[@<version or tag>]" defaults to
+    # the latest version; installed: false removes an extension.
+    extensions:
+      - my-widget-plugin
+      - name: old-widget-plugin
+        installed: false
 
 # Create a tree of device groups (regions, sites, production lines, ...). A
 # group is identified by its name within its parent; missing groups are created

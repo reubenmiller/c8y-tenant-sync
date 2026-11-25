@@ -34,6 +34,8 @@ var sectionServiceUserRoles = map[string][]string{
 	SectionCertificateAuthority:   {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_TENANT_MANAGEMENT_ADMIN"},
 	SectionTrustedCertificates:    {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_TENANT_MANAGEMENT_ADMIN"},
 	SectionCertificateRevocations: {"ROLE_TENANT_MANAGEMENT_ADMIN"},
+	SectionMicroservices:          nil, // base credentials
+	SectionExtensions:             nil, // base credentials
 	SectionApplications:           nil, // base credentials
 	SectionDeviceGroups:           {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
 	SectionUserGroups:             {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},

@@ -83,8 +83,16 @@ software:
 #   - source:
 #       path: ./certificates/revoked.csv # SERIALNO[,DATE] per row
 
-# applications:
+# microservices:
 #   - name: advanced-software-mgmt
+
+# extensions:
+#   - name: my-widget-plugin
+#     source:
+#       path: ./build/my-widget-plugin-1.0.0.zip
+
+# applications:
+#   - name: cockpit
 
 # deviceGroups:
 #   - name: Europe

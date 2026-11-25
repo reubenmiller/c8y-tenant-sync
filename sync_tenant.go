@@ -167,26 +167,102 @@ func (s *Syncer) featureOverride(ctx context.Context, key, tenantID string) (act
 	return active, known
 }
 
-// SyncApplications ensures applications exist (creating and uploading their
+// appEntry is a microservice or web application entry of the manifest, in the
+// shape shared by the subscription logic
+type appEntry struct {
+	section    string
+	name       string
+	appType    string // lookup filter: MICROSERVICE, HOSTED or "" (any)
+	subscribed bool
+	key        string
+	context    string
+	source     *Source
+
+	// hosted is the web application entry when it has a source: it is kept
+	// as a tenant-owned copy at the version of the source
+	hosted *ApplicationSpec
+}
+
+func microserviceEntry(spec MicroserviceSpec) appEntry {
+	return appEntry{
+		section:    SectionMicroservices,
+		name:       spec.Name,
+		appType:    "MICROSERVICE",
+		subscribed: spec.IsSubscribed(),
+		key:        spec.Key,
+		context:    spec.ContextPath,
+		source:     spec.Source,
+	}
+}
+
+func applicationEntry(spec ApplicationSpec) appEntry {
+	entry := appEntry{
+		section:    SectionApplications,
+		name:       spec.Name,
+		subscribed: spec.IsSubscribed(),
+		key:        spec.Key,
+		context:    spec.ContextPath,
+		source:     spec.Source,
+	}
+	if spec.Source != nil {
+		entry.appType = "HOSTED"
+		hosted := spec
+		entry.hosted = &hosted
+	}
+	return entry
+}
+
+// SyncMicroservices ensures microservices exist (creating and uploading their
 // binary from a source when one is given) and subscribes them to the target
-// tenant, or unsubscribes them when subscribed: false. Subscriptions address
-// the target tenant by ID, so the calls run with the base credentials.
+// tenant, or unsubscribes them when subscribed: false
+func (s *Syncer) SyncMicroservices(ctx context.Context, specs []MicroserviceSpec) error {
+	entries := make([]appEntry, 0, len(specs))
+	for _, spec := range specs {
+		entries = append(entries, microserviceEntry(spec))
+	}
+	return s.syncSubscriptions(ctx, entries)
+}
+
+// SyncApplications keeps web applications with a source at the version of
+// the source, subscribes the applications to the target tenant (or
+// unsubscribes them when subscribed: false) and installs their extensions
 func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) error {
-	if len(specs) == 0 {
+	entries := make([]appEntry, 0, len(specs))
+	for _, spec := range specs {
+		entries = append(entries, applicationEntry(spec))
+	}
+	if err := s.syncSubscriptions(ctx, entries); err != nil {
+		return err
+	}
+	for _, spec := range specs {
+		if len(spec.Extensions) > 0 {
+			s.syncApplicationExtensions(ctx, spec)
+		}
+	}
+	return nil
+}
+
+// syncSubscriptions ensures the applications exist (creating and uploading
+// their binary from a source when one is given) and subscribes them to the
+// target tenant, or unsubscribes them when subscribed: false. Subscriptions
+// address the target tenant by ID, so the calls run with the base
+// credentials.
+func (s *Syncer) syncSubscriptions(ctx context.Context, entries []appEntry) error {
+	if len(entries) == 0 {
 		return nil
 	}
 
 	if s.DryRun {
-		for _, spec := range specs {
+		for _, entry := range entries {
 			detail := "subscribe"
-			if !spec.IsSubscribed() {
+			if !entry.subscribed {
 				detail = "unsubscribe"
-			} else if spec.isHostedWithSource() {
+			} else if entry.hosted != nil {
 				detail = "create tenant-owned copy if missing, upload the source when its version differs, then subscribe"
-			} else if spec.Source != nil {
+			} else if entry.source != nil {
 				detail = "create/upload if missing, then subscribe"
 			}
-			s.record(SectionApplications, spec.Name, ActionPlanned, detail, nil)
+			s.record(entry.section, entry.name, ActionPlanned, detail, nil)
 		}
 		return nil
 	}
@@ -195,6 +271,13 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 	current := s.activeTarget == nil || s.activeTarget.Current
 	if s.activeTarget != nil {
 		tenantID = s.activeTarget.TenantID
+	}
+	if tenantID == "" && current && s.baseTenantID != "" {
+		// Already read by an earlier section (microservices before
+		// applications) together with its subscriptions
+		if _, ok := s.subscriptionCache[s.baseTenantID]; ok {
+			tenantID = s.baseTenantID
+		}
 	}
 	if tenantID == "" {
 		// No targets configured: the target is the current tenant
@@ -219,56 +302,56 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 	// subscribed again (which the owner tenant may deny)
 	subs, known := s.tenantSubscriptions(ctx, tenantID, current)
 
-	for _, spec := range specs {
-		subscribed, isSubscribed := subs.find(spec.Name, spec.Type)
-		if !spec.IsSubscribed() {
+	for _, entry := range entries {
+		subscribed, isSubscribed := subs.find(entry.name, entry.appType)
+		if !entry.subscribed {
 			if known && !isSubscribed {
-				s.record(SectionApplications, spec.Name, ActionUnchanged, "not subscribed", nil)
+				s.record(entry.section, entry.name, ActionUnchanged, "not subscribed", nil)
 				continue
 			}
-			s.unsubscribeApplication(ctx, spec, tenantID, subscribed.OwnerTenant)
+			s.unsubscribeApplication(ctx, entry, tenantID, subscribed.OwnerTenant)
 			continue
 		}
 
 		// Applications without a source need no further work when they are
 		// subscribed. With a source, the binary is still created/uploaded
-		if known && isSubscribed && spec.Source == nil {
-			s.record(SectionApplications, spec.Name, ActionUnchanged, "already subscribed", nil)
+		if known && isSubscribed && entry.source == nil {
+			s.record(entry.section, entry.name, ActionUnchanged, "already subscribed", nil)
 			continue
 		}
 
-		selfLink, ok := s.ensureApplication(ctx, spec)
+		selfLink, ok := s.ensureApplication(ctx, entry)
 		if !ok {
 			continue
 		}
-		if spec.isHostedWithSource() {
+		if entry.hosted != nil {
 			// Only a subscription to the tenant-owned copy counts, not one to
 			// a built-in application of the same name
-			isSubscribed = isSubscribed && subscribed.OwnerTenant == s.appOwners[spec.Name]
+			isSubscribed = isSubscribed && subscribed.OwnerTenant == s.appOwners[entry.name]
 			if !isSubscribed {
-				_, isSubscribed = subs.findOwned(spec.Name, spec.Type, s.appOwners[spec.Name])
+				_, isSubscribed = subs.findOwned(entry.name, entry.appType, s.appOwners[entry.name])
 			}
 		}
 		if known && isSubscribed {
-			s.record(SectionApplications, spec.Name, ActionUnchanged, "already subscribed", nil)
+			s.record(entry.section, entry.name, ActionUnchanged, "already subscribed", nil)
 			continue
 		}
 
 		result := s.Client.Applications.Subscribe(ctx, tenantID, selfLink)
 		if result.Err != nil {
-			if detail, skip := s.foreignOwnerSkip(ctx, result.Err, s.appOwners[spec.Name], tenantID, "subscribe"); skip {
-				s.record(SectionApplications, spec.Name, ActionSkipped, detail, nil)
+			if detail, skip := s.foreignOwnerSkip(ctx, result.Err, s.appOwners[entry.name], tenantID, "subscribe"); skip {
+				s.record(entry.section, entry.name, ActionSkipped, detail, nil)
 				continue
 			}
-			s.record(SectionApplications, spec.Name, ActionFailed, "subscribe", subscriptionErrorHint(result.Err, tenantID))
+			s.record(entry.section, entry.name, ActionFailed, "subscribe", subscriptionErrorHint(result.Err, tenantID))
 			continue
 		}
 
 		// A 409 conflict means the tenant is already subscribed
 		if result.Status == op.StatusDuplicate || result.HTTPStatus == http.StatusConflict {
-			s.record(SectionApplications, spec.Name, ActionUnchanged, "already subscribed", nil)
+			s.record(entry.section, entry.name, ActionUnchanged, "already subscribed", nil)
 		} else {
-			s.record(SectionApplications, spec.Name, ActionUpdated, "subscribed", nil)
+			s.record(entry.section, entry.name, ActionUpdated, "subscribed", nil)
 		}
 	}
 	return nil
@@ -277,22 +360,22 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 // unsubscribeApplication removes the application subscription from the target
 // tenant. A missing application or subscription both count as the desired
 // state being reached.
-func (s *Syncer) unsubscribeApplication(ctx context.Context, spec ApplicationSpec, tenantID, owner string) {
-	result := s.Client.Applications.Unsubscribe(ctx, tenantID, s.Client.Applications.ByName(spec.Name, spec.Type))
+func (s *Syncer) unsubscribeApplication(ctx context.Context, entry appEntry, tenantID, owner string) {
+	result := s.Client.Applications.Unsubscribe(ctx, tenantID, s.Client.Applications.ByName(entry.name, entry.appType))
 	if result.Err != nil {
 		if detail, skip := s.foreignOwnerSkip(ctx, result.Err, owner, tenantID, "unsubscribe"); skip {
-			s.record(SectionApplications, spec.Name, ActionSkipped, detail, nil)
+			s.record(entry.section, entry.name, ActionSkipped, detail, nil)
 			return
 		}
-		s.record(SectionApplications, spec.Name, ActionFailed, "unsubscribe", subscriptionErrorHint(result.Err, tenantID))
+		s.record(entry.section, entry.name, ActionFailed, "unsubscribe", subscriptionErrorHint(result.Err, tenantID))
 		return
 	}
 	if result.Status == op.StatusSkipped {
 		// Application not found, or not subscribed (404)
-		s.record(SectionApplications, spec.Name, ActionUnchanged, "not subscribed", nil)
+		s.record(entry.section, entry.name, ActionUnchanged, "not subscribed", nil)
 		return
 	}
-	s.record(SectionApplications, spec.Name, ActionUpdated, "unsubscribed", nil)
+	s.record(entry.section, entry.name, ActionUpdated, "unsubscribed", nil)
 }
 
 // subscriptionErrorHint augments 403 errors from (un)subscribe calls, which
@@ -313,28 +396,28 @@ func subscriptionErrorHint(err error, tenantID string) error {
 //
 // Successful results are cached by name so that the create/upload work (and
 // its result records) happen only once when applying to multiple tenants.
-func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (string, bool) {
-	if spec.isHostedWithSource() {
-		return s.ensureHostedApplication(ctx, spec)
+func (s *Syncer) ensureApplication(ctx context.Context, entry appEntry) (string, bool) {
+	if entry.hosted != nil {
+		return s.ensureHostedApplication(ctx, *entry.hosted)
 	}
-	if selfLink, ok := s.appSelfLinks[spec.Name]; ok {
+	if selfLink, ok := s.appSelfLinks[entry.name]; ok {
 		return selfLink, true
 	}
 
-	app := s.Client.Applications.Get(ctx, s.Client.Applications.ByName(spec.Name, spec.Type))
+	app := s.Client.Applications.Get(ctx, s.Client.Applications.ByName(entry.name, entry.appType))
 	if app.Err == nil {
 		if s.appOwners == nil {
 			s.appOwners = map[string]string{}
 		}
-		s.appOwners[spec.Name] = app.Data.Get("owner.tenant.id").String()
+		s.appOwners[entry.name] = app.Data.Get("owner.tenant.id").String()
 	}
 
-	if app.Err == nil && spec.Source == nil {
-		return s.cacheAppSelfLink(spec.Name, app.Data.Self()), true
+	if app.Err == nil && entry.source == nil {
+		return s.cacheAppSelfLink(entry.name, app.Data.Self()), true
 	}
 
-	if app.Err != nil && spec.Source == nil {
-		s.record(SectionApplications, spec.Name, ActionFailed, "lookup", app.Err)
+	if app.Err != nil && entry.source == nil {
+		s.record(entry.section, entry.name, ActionFailed, "lookup", app.Err)
 		return "", false
 	}
 
@@ -342,27 +425,27 @@ func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (s
 	created := false
 	if app.Err != nil {
 		// Application does not exist: create it
-		appType := spec.Type
+		appType := entry.appType
 		if appType == "" {
 			appType = "MICROSERVICE"
 		}
-		contextPath := spec.ContextPath
+		contextPath := entry.context
 		if contextPath == "" {
-			contextPath = spec.Name
+			contextPath = entry.name
 		}
 
-		key := spec.Key
+		key := entry.key
 		if key == "" {
-			key = spec.Name + "-application-key"
+			key = entry.name + "-application-key"
 		}
 		createResult := s.Client.Applications.Create(ctx, map[string]any{
-			"name":        spec.Name,
+			"name":        entry.name,
 			"key":         key,
 			"type":        appType,
 			"contextPath": contextPath,
 		})
 		if createResult.Err != nil {
-			s.record(SectionApplications, spec.Name, ActionFailed, "create application", createResult.Err)
+			s.record(entry.section, entry.name, ActionFailed, "create application", createResult.Err)
 			return "", false
 		}
 		app = createResult
@@ -370,22 +453,22 @@ func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (s
 	}
 
 	if !created && !s.Force {
-		s.record(SectionApplications, spec.Name, ActionUnchanged,
+		s.record(entry.section, entry.name, ActionUnchanged,
 			"binary upload skipped (application exists; use --force to re-upload)", nil)
-		return s.cacheAppSelfLink(spec.Name, app.Data.Self()), true
+		return s.cacheAppSelfLink(entry.name, app.Data.Self()), true
 	}
 
-	files, ok := s.resolveSource(SectionApplications, spec.Name, *spec.Source)
+	files, ok := s.resolveSource(entry.section, entry.name, *entry.source)
 	if !ok {
 		return "", false
 	}
 	if len(files) != 1 {
-		s.record(SectionApplications, spec.Name, ActionFailed, "",
+		s.record(entry.section, entry.name, ActionFailed, "",
 			fmt.Errorf("application source must resolve to exactly one file, got %d", len(files)))
 		return "", false
 	}
 	if files[0].Path == "" {
-		s.record(SectionApplications, spec.Name, ActionFailed, "",
+		s.record(entry.section, entry.name, ActionFailed, "",
 			fmt.Errorf("application source must provide a local file (url/linkOnly sources are not supported for application binaries)"))
 		return "", false
 	}
@@ -396,16 +479,16 @@ func (s *Syncer) ensureApplication(ctx context.Context, spec ApplicationSpec) (s
 		ContentType: "application/zip",
 	})
 	if upload.Err != nil {
-		s.record(SectionApplications, spec.Name, ActionFailed, "upload binary", upload.Err)
+		s.record(entry.section, entry.name, ActionFailed, "upload binary", upload.Err)
 		return "", false
 	}
 
 	if created {
-		s.record(SectionApplications, spec.Name, ActionCreated, "created and uploaded "+files[0].Filename, nil)
+		s.record(entry.section, entry.name, ActionCreated, "created and uploaded "+files[0].Filename, nil)
 	} else {
-		s.record(SectionApplications, spec.Name, ActionUpdated, "re-uploaded "+files[0].Filename, nil)
+		s.record(entry.section, entry.name, ActionUpdated, "re-uploaded "+files[0].Filename, nil)
 	}
-	return s.cacheAppSelfLink(spec.Name, app.Data.Self()), true
+	return s.cacheAppSelfLink(entry.name, app.Data.Self()), true
 }
 
 // cacheAppSelfLink stores an application self link for reuse by later targets

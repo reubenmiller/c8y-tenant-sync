@@ -37,9 +37,11 @@ type Manifest struct {
 	TrustedCertificates        []TrustedCertificateSpec        `yaml:"trustedCertificates" json:"trustedCertificates,omitempty" jsonschema:"description=Trusted device certificates (PEM/DER) to upload into the tenant trust store (matched by fingerprint; name/status/autoRegistrationEnabled updated when they differ)"`
 	CertificateRevocationLists []CertificateRevocationListSpec `yaml:"certificateRevocationLists" json:"certificateRevocationLists,omitempty" jsonschema:"description=Certificate revocation entries to upload from CSV files (columns SERIALNO and optional DATE); additive: existing entries are never removed"`
 
-	Applications []ApplicationSpec `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Applications to subscribe to the current tenant (optionally created/uploaded from a source)"`
-	DeviceGroups []DeviceGroupSpec `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
-	UserGroups   []UserGroupSpec   `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
+	Microservices []MicroserviceSpec `yaml:"microservices" json:"microservices,omitempty" jsonschema:"description=Microservices to subscribe to the target tenant (optionally created/uploaded from a source); the Microservices page of the Administration application"`
+	Extensions    []ExtensionSpec    `yaml:"extensions" json:"extensions,omitempty" jsonschema:"description=UI extensions (plugin packages) to upload into the tenant running the sync; a version is only uploaded when it is not on the extension yet. Install them into web applications with applications[].extensions; the Extensions page of the Administration application"`
+	Applications  []ApplicationSpec  `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Web applications to subscribe to the target tenant (optionally kept at the version of a source and with UI extensions installed); the Applications page of the Administration application. Microservices are listed under microservices"`
+	DeviceGroups  []DeviceGroupSpec  `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
+	UserGroups    []UserGroupSpec    `yaml:"userGroups" json:"userGroups,omitempty" jsonschema:"description=User groups (global roles) to create/update with roles assigned (additive: existing roles are never removed)"`
 	// InventoryRoles are permission sets which users get on specific device
 	// groups through users[].inventoryAssignments
 	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryAssignments"`
@@ -395,13 +397,55 @@ type CertificateRevocationListSpec struct {
 	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the revocation list CSV files come from (columns SERIALNO and optional DATE; directories are scanned for *.csv by default)"`
 }
 
-// ApplicationSpec subscribes an application (by name) to the target tenant,
-// or unsubscribes it with subscribed: false. With a source, the application
-// is also created if missing and its binary (e.g. a microservice or web
-// application zip) uploaded.
+// MicroserviceSpec subscribes a microservice (by name) to the target tenant,
+// or unsubscribes it with subscribed: false. With a source, the microservice
+// is also created if missing and its binary (zip) uploaded.
+type MicroserviceSpec struct {
+	Name string `yaml:"name" json:"name" jsonschema:"description=Microservice name,minLength=1,example=advanced-software-mgmt"`
+
+	// Subscribed declares the desired subscription state (defaults to true).
+	// With subscribed: false the microservice is unsubscribed from the
+	// target tenant (and never created/uploaded, even when a source is given).
+	Subscribed *bool `yaml:"subscribed" json:"subscribed,omitempty" jsonschema:"description=Desired subscription state (defaults to true when omitted); false unsubscribes the microservice from the target tenant"`
+
+	Key         string `yaml:"key" json:"key,omitempty" jsonschema:"description=Application key used when creating the microservice from a source (defaults to <name>-application-key)"`
+	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=Context path used when creating the microservice from a source (defaults to the name)"`
+
+	// Source provides the microservice binary (a single zip file). The
+	// microservice is created if missing and the binary uploaded on creation
+	// (or on every run with --force).
+	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the microservice binary (zip) comes from; must resolve to a single file. The microservice is created if missing and the binary uploaded on creation (or on every run with --force)"`
+}
+
+func (m MicroserviceSpec) IsSubscribed() bool {
+	return m.Subscribed == nil || *m.Subscribed
+}
+
+// ExtensionSpec uploads a UI extension (a plugin package, shown on the
+// Extensions page of the Administration application) into the tenant running
+// the sync. The extension is created if missing and a version is uploaded
+// when the source version is not on the extension yet.
+type ExtensionSpec struct {
+	Name string `yaml:"name" json:"name" jsonschema:"description=Extension name; must match the name in the cumulocity.json of the archive,minLength=1,example=my-widget-plugin"`
+
+	// Source provides the extension archive (a single zip file with a
+	// cumulocity.json)
+	Source Source `yaml:"source" json:"source" jsonschema:"description=Where the extension archive (zip with a cumulocity.json) comes from; must resolve to a single file. The version is read from the archive filename (e.g. my-plugin-1.2.0.zip) or the GitHub release tag without downloading, otherwise from the cumulocity.json"`
+
+	// Tags are set on a newly uploaded version (defaults to latest)
+	Tags []string `yaml:"tags" json:"tags,omitempty" jsonschema:"description=Tags of a newly uploaded version (defaults to [latest]; an empty list uploads the version without tags)"`
+}
+
+// ApplicationSpec subscribes a web application (by name) to the target
+// tenant, or unsubscribes it with subscribed: false. With a source, a web
+// application owned by the tenant running the sync is kept at the version of
+// the source. Extensions are installed into the application.
 type ApplicationSpec struct {
-	Name string `yaml:"name" json:"name" jsonschema:"description=Application name"`
-	Type string `yaml:"type" json:"type,omitempty" jsonschema:"description=Application type (lookup filter; also used when creating from a source where it defaults to MICROSERVICE),example=MICROSERVICE,example=HOSTED"` // optional application type filter (e.g. MICROSERVICE, HOSTED)
+	Name string `yaml:"name" json:"name" jsonschema:"description=Web application name,minLength=1,example=devicemanagement"`
+
+	// LegacyType is only read to point manifests written for the former
+	// combined applications section to the microservices section
+	LegacyType string `yaml:"type" json:"-"`
 
 	// Subscribed declares the desired subscription state (defaults to true).
 	// With subscribed: false the application is unsubscribed from the target
@@ -409,28 +453,77 @@ type ApplicationSpec struct {
 	Subscribed *bool `yaml:"subscribed" json:"subscribed,omitempty" jsonschema:"description=Desired subscription state (defaults to true when omitted); false unsubscribes the application from the target tenant"`
 
 	// Key used when creating the application (defaults to
-	// <name>-application-key, prefixed with the tenant ID when a HOSTED
+	// <name>-application-key, prefixed with the tenant ID when an
 	// application of the same name owned by another tenant exists)
-	Key string `yaml:"key" json:"key,omitempty" jsonschema:"description=Application key used when creating the application (defaults to <name>-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"`
+	Key string `yaml:"key" json:"key,omitempty" jsonschema:"description=With a source: application key used when creating the application (defaults to <name>-application-key; for a tenant-owned copy of a built-in web application it is prefixed with the tenant ID)"`
 
 	// ContextPath used when creating the application (defaults to the name)
-	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=Context path used when creating the application (defaults to the name)"`
+	ContextPath string `yaml:"contextPath" json:"contextPath,omitempty" jsonschema:"description=With a source: context path used when creating the application (defaults to the name)"`
 
-	// Description of a HOSTED application with a source. Defaults to the
+	// Description of an application with a source. Defaults to the
 	// description of the application it replaces
-	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=For type HOSTED with a source: the application description (kept in sync when set). Defaults to the description of the application of the same name owned by another tenant (e.g. the built-in application which the tenant-owned copy replaces); an inherited description only fills in a missing one"`
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=With a source: the application description (kept in sync when set). Defaults to the description of the application of the same name owned by another tenant (e.g. the built-in application which the tenant-owned copy replaces); an inherited description only fills in a missing one"`
 
-	// KeepBinaries limits the number of binaries (versions) kept by a HOSTED
+	// KeepBinaries limits the number of binaries (versions) kept by an
 	// application with a source
-	KeepBinaries int `yaml:"keepBinaries" json:"keepBinaries,omitempty" jsonschema:"description=For type HOSTED with a source: the number of binaries (application versions) to keep after an upload; the oldest binaries beyond this number are deleted but the active and the uploaded binary are always kept. 0 or omitted keeps all binaries,minimum=0,example=3"`
+	KeepBinaries int `yaml:"keepBinaries" json:"keepBinaries,omitempty" jsonschema:"description=With a source: the number of binaries (application versions) to keep after an upload; the oldest binaries beyond this number are deleted but the active and the uploaded binary are always kept. 0 or omitted keeps all binaries,minimum=0,example=3"`
 
-	// Source provides the application binary (a single zip file). The
-	// application is created if missing and the binary uploaded on creation
-	// (or on every run with --force). For HOSTED applications, only an
+	// Source provides the application binary (a single zip file). Only an
 	// application owned by the tenant running the sync counts (a built-in
 	// application of the same name is replaced by a tenant-owned copy) and the
 	// binary is uploaded whenever its version differs from manifest.version.
-	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the application binary (zip) comes from; must resolve to a single file. For type HOSTED the application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"`
+	Source *Source `yaml:"source" json:"source,omitempty" jsonschema:"description=Where the web application binary (zip) comes from; must resolve to a single file. The application is owned by the tenant running the sync (a built-in application of the same name such as devicemanagement is replaced by a tenant-owned copy) and the binary is uploaded whenever the source version differs from the application manifest.version"`
+
+	// Extensions are installed into the application (additive: installed
+	// extensions which are not listed are kept)
+	Extensions []ApplicationExtensionSpec `yaml:"extensions" json:"extensions,omitempty" jsonschema:"description=UI extensions to install into the application (additive: other installed extensions are kept; installed: false removes one). The application must be owned by the tenant running the sync: give it a source to replace a built-in application with a tenant-owned copy"`
+}
+
+// ApplicationExtensionSpec is a UI extension installed into a web
+// application. It is written as "<name>[@<version or tag>]" or as an object.
+type ApplicationExtensionSpec struct {
+	Name string `yaml:"name" json:"name"`
+
+	// Version is a version or a tag of the extension (defaults to latest)
+	Version string `yaml:"version" json:"version,omitempty"`
+
+	// Installed declares the desired state (defaults to true); false removes
+	// the extension from the application
+	Installed *bool `yaml:"installed" json:"installed,omitempty"`
+}
+
+// IsInstalled reports whether the extension should be installed
+func (e ApplicationExtensionSpec) IsInstalled() bool {
+	return e.Installed == nil || *e.Installed
+}
+
+// VersionOrLatest is the version or tag to install
+func (e ApplicationExtensionSpec) VersionOrLatest() string {
+	if e.Version == "" {
+		return "latest"
+	}
+	return e.Version
+}
+
+// UnmarshalYAML accepts "<name>[@<version>]" or an object
+func (e *ApplicationExtensionSpec) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		e.Name, e.Version, _ = strings.Cut(strings.TrimSpace(node.Value), "@")
+		return nil
+	case yaml.MappingNode:
+		type plain ApplicationExtensionSpec
+		var value plain
+		decoder := yaml.NewDecoder(strings.NewReader(nodeYAML(node)))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&value); err != nil {
+			return fmt.Errorf("line %d: application extension: %w", node.Line, err)
+		}
+		*e = ApplicationExtensionSpec(value)
+		return nil
+	default:
+		return fmt.Errorf("line %d: an extension must be a name (with an optional @version) or an object with name", node.Line)
+	}
 }
 
 func (a ApplicationSpec) IsSubscribed() bool {
@@ -1449,22 +1542,66 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("certificateRevocationLists[%d]: url sources are not supported (the CSV content must be available locally)", i))
 		}
 	}
+	for i, ms := range m.Microservices {
+		if strings.TrimSpace(ms.Name) == "" {
+			errs = append(errs, fmt.Sprintf("microservices[%d]: name is required", i))
+		}
+		if ms.Source != nil {
+			if err := ms.Source.Validate(); err != nil {
+				errs = append(errs, fmt.Sprintf("microservices[%d]: %v", i, err))
+			}
+		}
+	}
+	extensionNames := map[string]bool{}
+	for i, ext := range m.Extensions {
+		if strings.TrimSpace(ext.Name) == "" {
+			errs = append(errs, fmt.Sprintf("extensions[%d]: name is required", i))
+		} else if extensionNames[ext.Name] {
+			errs = append(errs, fmt.Sprintf("extensions[%d]: duplicate extension name %q", i, ext.Name))
+		}
+		extensionNames[ext.Name] = true
+		if err := ext.Source.Validate(); err != nil {
+			errs = append(errs, fmt.Sprintf("extensions[%d]: %v", i, err))
+		}
+	}
 	for i, app := range m.Applications {
-		if app.Name == "" {
+		if strings.TrimSpace(app.Name) == "" {
 			errs = append(errs, fmt.Sprintf("applications[%d]: name is required", i))
+		}
+		if app.LegacyType != "" {
+			if strings.EqualFold(app.LegacyType, "MICROSERVICE") {
+				errs = append(errs, fmt.Sprintf("applications[%d]: type is no longer supported: move the microservice %q to the microservices section", i, app.Name))
+			} else {
+				errs = append(errs, fmt.Sprintf("applications[%d]: type is no longer supported: the applications section only holds web applications, remove type", i))
+			}
 		}
 		if app.Source != nil {
 			if err := app.Source.Validate(); err != nil {
 				errs = append(errs, fmt.Sprintf("applications[%d]: %v", i, err))
 			}
 		}
-		if app.Description != "" && !app.isHostedWithSource() {
-			errs = append(errs, fmt.Sprintf("applications[%d]: description requires type HOSTED and a source", i))
+		if app.Description != "" && app.Source == nil {
+			errs = append(errs, fmt.Sprintf("applications[%d]: description requires a source", i))
 		}
 		if app.KeepBinaries < 0 {
 			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries must not be negative", i))
-		} else if app.KeepBinaries > 0 && !app.isHostedWithSource() {
-			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries requires type HOSTED and a source", i))
+		} else if app.KeepBinaries > 0 && app.Source == nil {
+			errs = append(errs, fmt.Sprintf("applications[%d]: keepBinaries requires a source", i))
+		}
+		if len(app.Extensions) > 0 && !app.IsSubscribed() {
+			errs = append(errs, fmt.Sprintf("applications[%d]: extensions can't be installed into an application with subscribed: false", i))
+		}
+		seen := map[string]bool{}
+		for j, ext := range app.Extensions {
+			switch {
+			case strings.TrimSpace(ext.Name) == "":
+				errs = append(errs, fmt.Sprintf("applications[%d].extensions[%d]: name is required", i, j))
+			case seen[ext.Name]:
+				errs = append(errs, fmt.Sprintf("applications[%d].extensions[%d]: duplicate extension %q", i, j, ext.Name))
+			case !ext.IsInstalled() && ext.Version != "":
+				errs = append(errs, fmt.Sprintf("applications[%d].extensions[%d]: version can't be used with installed: false", i, j))
+			}
+			seen[ext.Name] = true
 		}
 	}
 	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)

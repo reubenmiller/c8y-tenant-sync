@@ -805,7 +805,9 @@ func TestSyncLoginOptionsLeavesOutReadOnlyFields(t *testing.T) {
 		option["initRequest"] = "https://t123/tenant/oauth?tenant_id=t123"
 		option["loginRedirectDomain"] = "t123.example.com"
 		option["greenMinLength"] = nil
-		option["tfaStrategy"] = "SMS"
+		option["tfaStrategy"] = "TOTP"
+		option["enforceStrength"] = true
+		option["strengthValidity"] = true
 	}
 	newFakeLoginOptions(f, initial...)
 	s := newFakeSyncer(t, f)
@@ -824,6 +826,10 @@ func TestSyncLoginOptionsLeavesOutReadOnlyFields(t *testing.T) {
 		}
 		assert.Contains(t, put.Body, "type")
 		assert.Contains(t, put.Body, "visibleOnLoginPage")
+		// The password strength and TFA settings are sent back unchanged
+		assert.Equal(t, "TOTP", put.Body["tfaStrategy"], put.Path)
+		assert.Equal(t, true, put.Body["enforceStrength"], put.Path)
+		assert.Equal(t, true, put.Body["strengthValidity"], put.Path)
 	}
 }
 
@@ -925,4 +931,90 @@ func TestRunDryRunComparesLoginOptions(t *testing.T) {
 	assert.Contains(t, stdout, "[loginOptions] OAUTH2_INTERNAL (planned): sessionConfiguration.renewalTimeoutMillis: 86400000 → 7200000")
 	assert.NotEmpty(t, f.Requests(http.MethodGet, "/tenant/loginOptions"))
 	assert.Empty(t, writes(f), "a dry run never writes")
+}
+
+func TestSyncLoginOptionsOverridesReplacingAccessMappingsFail(t *testing.T) {
+	p := newFakeOIDC(t)
+	f := newFakeC8y(t)
+	fakeSSOGroupsAndApps(f)
+	newFakeLoginOptions(f, defaultLoginOptions()...)
+	for _, overrides := range []map[string]any{
+		{"onNewUser": nil},
+		{"onNewUser": map[string]any{"dynamicMapping": "none"}},
+	} {
+		s := newFakeSyncer(t, f)
+		spec := ssoSpec(p)
+		spec.Overrides = overrides
+		require.NotPanics(t, func() {
+			require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{Preferred: LoginModeSSO, SSO: spec}))
+		})
+		results := loginResults(s)
+		assert.ErrorContains(t, results[LoginTypeSSO].Err, "overrides replace onNewUser")
+		assert.ErrorContains(t, results[loginItemPreferred].Err, "kept login mode oaiSecure")
+	}
+	assert.Empty(t, writes(f))
+}
+
+func TestSyncLoginOptionsRemovesStaleLogoutRequest(t *testing.T) {
+	p := newFakeOIDC(t)
+	f := newFakeC8y(t)
+	fakeSSOGroupsAndApps(f)
+	options := newFakeLoginOptions(f, defaultLoginOptions()...)
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{SSO: ssoSpec(p)}))
+	require.NotNil(t, options.get(LoginTypeSSO)["logoutRequest"])
+
+	// The provider no longer has a logout endpoint
+	p.discovery["end_session_endpoint"] = nil
+	s = newFakeSyncer(t, f)
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{SSO: ssoSpec(p)}))
+	result := loginResults(s)[LoginTypeSSO]
+	assert.Equal(t, ActionUpdated, result.Action, result.Err)
+	assert.Contains(t, result.Detail, "logoutRequest: {")
+	assert.Contains(t, result.Detail, "→ (unset)")
+	puts := f.Requests(http.MethodPut, "/tenant/loginOptions/oauth2-id")
+	require.NotEmpty(t, puts)
+	last := puts[len(puts)-1].Body
+	assert.Contains(t, last, "logoutRequest")
+	assert.Nil(t, last["logoutRequest"], "null removes the logout request")
+
+	// Then nothing changes, and options without one never get a null
+	s = newFakeSyncer(t, f)
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{SSO: ssoSpec(p)}))
+	assert.Equal(t, ActionUnchanged, loginResults(s)[LoginTypeSSO].Action, loginResults(s)[LoginTypeSSO].Detail)
+}
+
+func TestSyncLoginOptionsCreateWithoutLogoutEndpoint(t *testing.T) {
+	p := newFakeOIDC(t)
+	p.discovery["end_session_endpoint"] = nil
+	f := newFakeC8y(t)
+	fakeSSOGroupsAndApps(f)
+	newFakeLoginOptions(f, defaultLoginOptions()...)
+	s := newFakeSyncer(t, f)
+	require.NoError(t, s.SyncLoginOptions(context.Background(), &LoginOptionsSpec{SSO: ssoSpec(p)}))
+	assert.Equal(t, ActionCreated, loginResults(s)[LoginTypeSSO].Action)
+	created := f.Requests(http.MethodPost, "/tenant/loginOptions")
+	require.Len(t, created, 1)
+	assert.NotContains(t, created[0].Body, "logoutRequest")
+	assert.NotContains(t, loginResults(s)[LoginTypeSSO].Detail, "logoutRequest")
+}
+
+func TestExportLoginOptionsSkipsInvalidSessionTimeouts(t *testing.T) {
+	f := fakeExportTenant(t)
+	options := exportLoginOptions()
+	options[1]["sessionConfiguration"] = map[string]any{"absoluteTimeoutMillis": 600000, "renewalTimeoutMillis": 300000, "maximumNumberOfParallelSessions": 3}
+	f.JSON("GET /tenant/loginOptions", http.StatusOK, map[string]any{"loginOptions": options, "statistics": stats()})
+
+	var spec *LoginOptionsSpec
+	var err error
+	_, stderr := captureStdio(t, func() {
+		spec, err = (&Exporter{Client: f.Client()}).loginOptions(context.Background())
+	})
+	require.NoError(t, err)
+	require.NotNil(t, spec.OAISecure)
+	assert.Empty(t, spec.OAISecure.Session.AbsoluteTimeout)
+	assert.Empty(t, spec.OAISecure.Session.RenewalTimeout)
+	assert.Equal(t, 3, *spec.OAISecure.Session.MaximumParallelSessions, "other session settings are kept")
+	assert.Contains(t, stderr, "OAI-Secure session timeouts (absoluteTimeout 10m, renewalTimeout 5m) are not exported")
+	assert.Empty(t, spec.validate())
 }

@@ -59,7 +59,17 @@ func (e *Exporter) loginOptions(ctx context.Context) (*LoginOptionsSpec, error) 
 			if value, ok := session["userAgentValidationRequired"].(bool); ok {
 				sessionSpec.UserAgentValidationRequired = &value
 			}
-			spec.OAISecure = &OAISecureLoginSpec{Session: sessionSpec}
+			// Timeouts which validate would refuse are left out (and kept
+			// as they are when the manifest is applied)
+			if errs := sessionSpec.validate(); len(errs) > 0 {
+				exportNote(SectionLoginOptions, fmt.Sprintf("the OAI-Secure session timeouts (absoluteTimeout %s, renewalTimeout %s) are not exported: %s",
+					firstNonEmpty(sessionSpec.AbsoluteTimeout, "unset"), firstNonEmpty(sessionSpec.RenewalTimeout, "unset"), strings.Join(errs, "; ")))
+				sessionSpec.AbsoluteTimeout = ""
+				sessionSpec.RenewalTimeout = ""
+			}
+			if *sessionSpec != (OAISecureSessionSpec{}) {
+				spec.OAISecure = &OAISecureLoginSpec{Session: sessionSpec}
+			}
 		}
 	}
 

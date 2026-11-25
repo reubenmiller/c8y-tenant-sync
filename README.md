@@ -860,7 +860,8 @@ applications:
 
 On each run:
 
-- Only an application owned by the tenant running the sync counts as existing. The built-in `devicemanagement` application owned by the `management` tenant is left alone, and a tenant-owned copy with the same name and context path is created. That copy then replaces the subscribed application for the tenant. Its key defaults to `<tenant>-<name>-application-key`, since the built-in application already uses `<name>-application-key`; set `key` to choose another.
+- Only an application owned by the tenant running the sync counts as existing. The built-in `devicemanagement` application owned by the `management` tenant is left alone, and a tenant-owned copy with the same name and context path is created. That copy then replaces the subscribed application for the tenant. Its key defaults to `<tenant>-<name>-application-key`, since the built-in application already uses `<name>-application-key`; set `key` to choose another. The key is only used when the copy is created. Like any manifest value it can use environment variables, for example `key: ${C8Y_TENANT}-dm-key` (c8y passes `C8Y_TENANT` to the extension; set it yourself when running the binary directly, otherwise the reference is left as written).
+- The copy inherits the `description` of the application it replaces. The inherited description is set when the copy is created, or filled in when the copy has none, but never overwrites a description changed afterwards (for example in the UI). Set `description` in the entry to use your own; an explicit description is kept in sync on every run.
 - The release is listed without downloading it and its version (from the asset filename such as `devicemanagement-1025.15.3.zip`, otherwise the release tag) is compared with the `manifest.version` of the application. The archive is only downloaded and uploaded when the versions differ, so a scheduled run picks up new releases without `--force`:
 
   ```

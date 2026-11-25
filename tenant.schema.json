@@ -28,6 +28,10 @@
           "type": "string",
           "description": "Context path used when creating the application (defaults to the name)"
         },
+        "description": {
+          "type": "string",
+          "description": "For type HOSTED with a source: the application description (kept in sync when set). Defaults to the description of the application of the same name owned by another tenant (e.g. the built-in application which the tenant-owned copy replaces); an inherited description only fills in a missing one"
+        },
         "keepBinaries": {
           "type": "integer",
           "minimum": 0,

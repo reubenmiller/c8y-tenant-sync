@@ -48,9 +48,10 @@ func fakeHostedTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
 	url := f.server.URL
 	builtin := map[string]any{
 		"id": "1", "name": "devicemanagement", "type": "HOSTED", "contextPath": "devicemanagement",
-		"self":     url + "/application/applications/1",
-		"owner":    map[string]any{"tenant": map[string]any{"id": "management"}},
-		"manifest": map[string]any{"version": "1025.14.0"},
+		"self":        url + "/application/applications/1",
+		"owner":       map[string]any{"tenant": map[string]any{"id": "management"}},
+		"manifest":    map[string]any{"version": "1025.14.0"},
+		"description": builtinDescription,
 	}
 	all := append([]map[string]any{builtin}, apps...)
 	// The tenant is subscribed to the built-in application and its own copies
@@ -82,6 +83,19 @@ func fakeHostedTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
 		})
 	}
 	return f
+}
+
+const builtinDescription = "The Device Management application"
+
+// putsWith returns the PUT requests to the application with the given field
+func putsWith(f *fakeC8y, id, field string) []recordedRequest {
+	var out []recordedRequest
+	for _, r := range exactRequests(f, http.MethodPut, "/application/applications/"+id) {
+		if _, ok := r.Body[field]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func hostedSpec() ApplicationSpec {
@@ -120,9 +134,13 @@ func TestHostedApplicationCreatesTenantOwnedCopyOfBuiltin(t *testing.T) {
 	assert.Equal(t, "t123-devicemanagement-application-key", created[0].Body["key"], "the built-in key is taken")
 	assert.Len(t, f.Requests(http.MethodPost, "/application/applications/99/binaries"), 1)
 	assert.Equal(t, 1, *downloads)
-	activations := f.Requests(http.MethodPut, "/application/applications/99")
+	activations := putsWith(f, "99", "activeVersionId")
 	require.Len(t, activations, 1, "the uploaded binary is activated")
 	assert.Equal(t, "bin-99", activations[0].Body["activeVersionId"])
+	descriptions := putsWith(f, "99", "description")
+	require.Len(t, descriptions, 1, "the description of the built-in application is inherited")
+	assert.Equal(t, builtinDescription, descriptions[0].Body["description"])
+	assert.Contains(t, r.Detail, "description inherited from the application of tenant management")
 
 	// The subscription to the built-in application does not count
 	subscribe := f.Requests(http.MethodPost, "/tenant/tenants/t123/applications")
@@ -134,9 +152,10 @@ func TestHostedApplicationCreatesTenantOwnedCopyOfBuiltin(t *testing.T) {
 func ownDeviceManagement(url, version string) map[string]any {
 	return map[string]any{
 		"id": "42", "name": "devicemanagement", "type": "HOSTED", "contextPath": "devicemanagement",
-		"self":     url + "/application/applications/42",
-		"owner":    map[string]any{"tenant": map[string]any{"id": "t123"}},
-		"manifest": map[string]any{"version": version},
+		"self":        url + "/application/applications/42",
+		"owner":       map[string]any{"tenant": map[string]any{"id": "t123"}},
+		"manifest":    map[string]any{"version": version},
+		"description": builtinDescription,
 	}
 }
 
@@ -169,7 +188,7 @@ func TestHostedApplicationUploadsNewerSourceVersion(t *testing.T) {
 	assert.Equal(t, 1, *downloads)
 	assert.Empty(t, exactRequests(f, http.MethodPost, "/application/applications"), "the existing copy is reused")
 	assert.Len(t, f.Requests(http.MethodPost, "/application/applications/42/binaries"), 1)
-	activations := f.Requests(http.MethodPut, "/application/applications/42")
+	activations := putsWith(f, "42", "activeVersionId")
 	require.Len(t, activations, 1)
 	assert.Equal(t, "bin-42", activations[0].Body["activeVersionId"])
 }
@@ -255,4 +274,57 @@ func TestKeepBinariesValidation(t *testing.T) {
 
 	spec.KeepBinaries = 3
 	assert.NoError(t, (&Manifest{Applications: []ApplicationSpec{spec}}).Validate())
+}
+
+func TestHostedApplicationFillsInMissingDescription(t *testing.T) {
+	f := newFakeC8y(t)
+	own := ownDeviceManagement(f.server.URL, "1025.15.3")
+	delete(own, "description")
+	f = fakeHostedTenant(t, own)
+	s, _ := hostedSyncer(t, f, "1025.15.3")
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{hostedSpec()}))
+
+	r := firstResult(s, "devicemanagement")
+	assert.Equal(t, ActionUpdated, r.Action, r.Detail)
+	assert.Equal(t, "description inherited from the application of tenant management; version 1025.15.3 already active", r.Detail)
+	descriptions := putsWith(f, "42", "description")
+	require.Len(t, descriptions, 1)
+	assert.Equal(t, builtinDescription, descriptions[0].Body["description"])
+}
+
+func TestHostedApplicationKeepsCustomisedDescription(t *testing.T) {
+	f := newFakeC8y(t)
+	own := ownDeviceManagement(f.server.URL, "1025.15.3")
+	own["description"] = "Changed in the UI"
+	f = fakeHostedTenant(t, own)
+	s, _ := hostedSyncer(t, f, "1025.15.3")
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{hostedSpec()}))
+
+	assert.Equal(t, ActionUnchanged, firstResult(s, "devicemanagement").Action)
+	assert.Empty(t, putsWith(f, "42", "description"), "an inherited description does not overwrite an existing one")
+}
+
+func TestHostedApplicationExplicitDescription(t *testing.T) {
+	f := newFakeC8y(t)
+	f = fakeHostedTenant(t, ownDeviceManagement(f.server.URL, "1025.15.3"))
+	s, _ := hostedSyncer(t, f, "1025.15.3")
+	spec := hostedSpec()
+	spec.Description = "Device Management (ACME build)"
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{spec}))
+
+	r := firstResult(s, "devicemanagement")
+	assert.Equal(t, ActionUpdated, r.Action, r.Detail)
+	assert.Equal(t, "description updated; version 1025.15.3 already active", r.Detail)
+	descriptions := putsWith(f, "42", "description")
+	require.Len(t, descriptions, 1)
+	assert.Equal(t, "Device Management (ACME build)", descriptions[0].Body["description"])
+}
+
+func TestDescriptionRequiresHostedWithSource(t *testing.T) {
+	err := (&Manifest{Applications: []ApplicationSpec{{Name: "svc", Description: "x"}}}).Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "description requires type HOSTED and a source")
 }

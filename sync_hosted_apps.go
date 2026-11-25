@@ -83,8 +83,21 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 	}
 	desiredVersion := archiveVersion(listed[0])
 
+	description := desiredDescription(spec, foreign)
+	descriptionNote := ""
 	currentVersion := ""
 	if own != nil {
+		// An explicit description is kept in sync; an inherited one only
+		// fills in a missing description
+		current := own.Get("description").String()
+		if description != "" && description != current && (spec.Description != "" || current == "") {
+			if err := s.setDescription(ctx, own.ID(), description); err != nil {
+				s.record(SectionApplications, spec.Name, ActionFailed, "update description", err)
+				return "", false
+			}
+			descriptionNote = describeDescription(spec, foreign)
+		}
+
 		currentVersion = own.Get("manifest.version").String()
 		upToDate := desiredVersion != "" && desiredVersion == currentVersion
 		unknown := desiredVersion == ""
@@ -93,7 +106,12 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 			if unknown {
 				detail = "binary upload skipped (no version in the source; use --force to re-upload)"
 			}
-			s.record(SectionApplications, spec.Name, ActionUnchanged, detail, nil)
+			action := ActionUnchanged
+			if descriptionNote != "" {
+				action = ActionUpdated
+				detail = descriptionNote + "; " + detail
+			}
+			s.record(SectionApplications, spec.Name, action, detail, nil)
 			return s.cacheAppSelfLink(spec.Name, own.Self()), true
 		}
 	}
@@ -134,6 +152,14 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 		return "", false
 	}
 
+	if created && description != "" {
+		if err := s.setDescription(ctx, result.Data.ID(), description); err != nil {
+			s.record(SectionApplications, spec.Name, ActionFailed, "update description", err)
+			return "", false
+		}
+		descriptionNote = describeDescription(spec, foreign)
+	}
+
 	detail := ""
 	switch {
 	case created && foreign != nil:
@@ -149,6 +175,9 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 	default:
 		detail = "re-uploaded " + files[0].Filename
 	}
+	if descriptionNote != "" {
+		detail += "; " + descriptionNote
+	}
 	if deleted, _ := result.Meta["deletedBinaries"].([]string); len(deleted) > 0 {
 		detail += fmt.Sprintf("; deleted %d old binaries", len(deleted))
 	}
@@ -163,6 +192,32 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 		s.record(SectionApplications, spec.Name, action, detail, nil)
 	}
 	return s.cacheAppSelfLink(spec.Name, result.Data.Self()), true
+}
+
+// desiredDescription is the description of the application: the one in the
+// manifest or, by default, the description of the application of the same
+// name owned by another tenant which the tenant-owned copy replaces
+func desiredDescription(spec ApplicationSpec, foreign *jsonmodels.Application) string {
+	if spec.Description != "" {
+		return spec.Description
+	}
+	if foreign != nil {
+		return foreign.Get("description").String()
+	}
+	return ""
+}
+
+// describeDescription is the result detail of a description update
+func describeDescription(spec ApplicationSpec, foreign *jsonmodels.Application) string {
+	if spec.Description == "" && foreign != nil {
+		return "description inherited from the application of tenant " + foreign.Get("owner.tenant.id").String()
+	}
+	return "description updated"
+}
+
+// setDescription sets the description of an application
+func (s *Syncer) setDescription(ctx context.Context, id, description string) error {
+	return s.Client.Applications.Update(ctx, id, map[string]any{"description": description}).Err
 }
 
 // recordSourceError records a failed source resolution (skipped for optional

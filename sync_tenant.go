@@ -241,6 +241,14 @@ func (s *Syncer) SyncApplications(ctx context.Context, specs []ApplicationSpec) 
 		if !ok {
 			continue
 		}
+		if spec.isHostedWithSource() {
+			// Only a subscription to the tenant-owned copy counts, not one to
+			// a built-in application of the same name
+			isSubscribed = isSubscribed && subscribed.OwnerTenant == s.appOwners[spec.Name]
+			if !isSubscribed {
+				_, isSubscribed = subs.findOwned(spec.Name, spec.Type, s.appOwners[spec.Name])
+			}
+		}
 		if known && isSubscribed {
 			s.record(SectionApplications, spec.Name, ActionUnchanged, "already subscribed", nil)
 			continue

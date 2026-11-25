@@ -53,10 +53,16 @@ func fakeHostedTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
 		"manifest": map[string]any{"version": "1025.14.0"},
 	}
 	all := append([]map[string]any{builtin}, apps...)
+	// The tenant is subscribed to the built-in application and its own copies
+	refs := []map[string]any{}
+	for _, app := range all {
+		refs = append(refs, map[string]any{"application": app})
+	}
 	f.JSON("GET /tenant/currentTenant", http.StatusOK, map[string]any{
 		"name":         "t123",
-		"applications": map[string]any{"references": []map[string]any{{"application": builtin}}},
+		"applications": map[string]any{"references": refs},
 	})
+	f.JSON("POST /tenant/tenants/t123/applications", http.StatusCreated, map[string]any{})
 	f.JSON("GET /application/applications", http.StatusOK, map[string]any{"applications": all, "statistics": stats()})
 	f.JSON("POST /application/applications", http.StatusCreated, map[string]any{
 		"id": "99", "name": "devicemanagement", "type": "HOSTED",
@@ -64,7 +70,8 @@ func fakeHostedTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
 		"owner": map[string]any{"tenant": map[string]any{"id": "t123"}},
 	})
 	for _, id := range []string{"99", "42"} {
-		f.JSON("POST /application/applications/"+id+"/binaries", http.StatusCreated, map[string]any{"id": id})
+		f.JSON("POST /application/applications/"+id+"/binaries", http.StatusCreated, map[string]any{"id": "bin-" + id})
+		f.JSON("PUT /application/applications/"+id, http.StatusOK, map[string]any{"id": id})
 	}
 	return f
 }
@@ -105,7 +112,15 @@ func TestHostedApplicationCreatesTenantOwnedCopyOfBuiltin(t *testing.T) {
 	assert.Equal(t, "t123-devicemanagement-application-key", created[0].Body["key"], "the built-in key is taken")
 	assert.Len(t, f.Requests(http.MethodPost, "/application/applications/99/binaries"), 1)
 	assert.Equal(t, 1, *downloads)
-	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants/t123/applications"), "devicemanagement is already subscribed")
+	activations := f.Requests(http.MethodPut, "/application/applications/99")
+	require.Len(t, activations, 1, "the uploaded binary is activated")
+	assert.Equal(t, "bin-99", activations[0].Body["activeVersionId"])
+
+	// The subscription to the built-in application does not count
+	subscribe := f.Requests(http.MethodPost, "/tenant/tenants/t123/applications")
+	require.Len(t, subscribe, 1, "the tenant is subscribed to its copy")
+	assert.Contains(t, subscribe[0].Body["application"].(map[string]any)["self"], "/application/applications/99")
+	assert.Equal(t, ActionUpdated, s.Results[len(s.Results)-1].Action)
 }
 
 func ownDeviceManagement(url, version string) map[string]any {
@@ -130,6 +145,7 @@ func TestHostedApplicationAtSourceVersionIsUnchanged(t *testing.T) {
 	assert.Equal(t, 0, *downloads, "the archive is not downloaded when the version is active")
 	assert.Empty(t, exactRequests(f, http.MethodPost, "/application/applications"))
 	assert.Empty(t, f.Requests(http.MethodPost, "/application/applications/42/binaries"))
+	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants/t123/applications"), "the copy is already subscribed")
 }
 
 func TestHostedApplicationUploadsNewerSourceVersion(t *testing.T) {
@@ -145,6 +161,9 @@ func TestHostedApplicationUploadsNewerSourceVersion(t *testing.T) {
 	assert.Equal(t, 1, *downloads)
 	assert.Empty(t, exactRequests(f, http.MethodPost, "/application/applications"), "the existing copy is reused")
 	assert.Len(t, f.Requests(http.MethodPost, "/application/applications/42/binaries"), 1)
+	activations := f.Requests(http.MethodPut, "/application/applications/42")
+	require.Len(t, activations, 1)
+	assert.Equal(t, "bin-42", activations[0].Body["activeVersionId"])
 }
 
 func TestHostedApplicationForceReuploadsSameVersion(t *testing.T) {

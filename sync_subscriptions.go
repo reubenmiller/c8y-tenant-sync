@@ -36,6 +36,17 @@ func (s subscriptions) find(name, appType string) (subscribedApplication, bool) 
 	return subscribedApplication{}, false
 }
 
+// findOwned returns the subscription of the application owned by the owner
+// tenant, matching the name and, when given, the application type
+func (s subscriptions) findOwned(name, appType, owner string) (subscribedApplication, bool) {
+	for _, app := range s {
+		if app.Name == name && app.OwnerTenant == owner && (appType == "" || strings.EqualFold(app.Type, appType)) {
+			return app, true
+		}
+	}
+	return subscribedApplication{}, false
+}
+
 func subscribedFromApplication(app jsonmodels.Application) subscribedApplication {
 	return subscribedApplication{
 		Name:        app.Name(),

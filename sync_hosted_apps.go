@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/applications"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/model"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/pagination"
 	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
 )
@@ -142,6 +143,19 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 	})
 	if upload.Err != nil {
 		s.record(SectionApplications, spec.Name, ActionFailed, "upload binary", upload.Err)
+		return "", false
+	}
+
+	// Web application binaries are not activated on upload
+	binaryID := upload.Data.ID()
+	if binaryID == "" {
+		s.record(SectionApplications, spec.Name, ActionFailed, "activate binary",
+			fmt.Errorf("the upload response has no binary id"))
+		return "", false
+	}
+	activate := s.Client.Applications.Update(ctx, app.ID(), &model.Application{ActiveVersionID: binaryID}).IgnoreConflict()
+	if activate.Err != nil {
+		s.record(SectionApplications, spec.Name, ActionFailed, "activate binary "+binaryID, activate.Err)
 		return "", false
 	}
 

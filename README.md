@@ -866,6 +866,7 @@ On each run:
     ↻ [applications] devicemanagement (updated): version 1025.14.0 -> 1025.15.3 (uploaded devicemanagement-1025.15.3.zip)
   ```
 
+- The uploaded archive is activated (`activeVersionId`) and the tenant is subscribed to its copy; a subscription to the built-in application of the same name does not count.
 - `--force` re-uploads the archive even when the version is already active. When no version can be read from the source, an existing application is only re-uploaded with `--force`.
 
 Uploading a new archive replaces the application binary only. The plugins installed into the application through the Administration application are stored in the application `config` and are kept.

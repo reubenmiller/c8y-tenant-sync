@@ -26,7 +26,7 @@ jobs:
         with:
           showTenant: false
           extensions: |
-            reubenmiller/c8y-tenant-sync@v0.10.5
+            reubenmiller/c8y-tenant-sync@v0.11.0
       - run: c8y tenant-sync run -f tenant.yaml </dev/null
         env:
           C8Y_HOST: ${{ vars.C8Y_HOST }}
@@ -78,7 +78,7 @@ jobs:
         with:
           showVersion: false
           showTenant: false
-          extensions: reubenmiller/c8y-tenant-sync@v0.10.5
+          extensions: reubenmiller/c8y-tenant-sync@v0.11.0
       # No tenant access needed, so this also runs for pull requests from forks
       - run: |
           for manifest in tenants/*.yaml; do
@@ -111,15 +111,15 @@ jobs:
       - uses: reubenmiller/setup-go-c8y-cli@main
         with:
           showVersion: false
-          extensions: reubenmiller/c8y-tenant-sync@v0.10.5
+          extensions: reubenmiller/c8y-tenant-sync@v0.11.0
 
       - name: Preview changes
         if: github.event_name == 'pull_request'
-        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry-run --report report.json </dev/null
+        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry --report report.json </dev/null
 
       - name: Check for drift
         if: github.event_name == 'schedule'
-        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry-run --fail-on-change --report report.json </dev/null
+        run: c8y tenant-sync run -f tenants/${{ matrix.tenant }}.yaml --dry --fail-on-change --report report.json </dev/null
 
       - name: Apply
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -166,7 +166,7 @@ The tenant-sync binary also runs on its own with the same `C8Y_*` variables. Dow
       - uses: actions/setup-go@v6
         with:
           go-version: stable
-      - run: go run github.com/reubenmiller/c8y-tenant-sync@v0.10.5 run -f tenant.yaml
+      - run: go run github.com/reubenmiller/c8y-tenant-sync@v0.11.0 run -f tenant.yaml
         env:
           C8Y_HOST: ${{ vars.C8Y_HOST }}
           C8Y_USER: ${{ secrets.C8Y_USER }}

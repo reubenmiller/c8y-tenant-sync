@@ -1707,7 +1707,7 @@ jobs:
         with:
           showTenant: false
           extensions: |
-            reubenmiller/c8y-tenant-sync@v0.10.5
+            reubenmiller/c8y-tenant-sync@v0.11.0
       - run: c8y tenant-sync run -f tenant.yaml </dev/null
         env:
           C8Y_HOST: ${{ vars.C8Y_HOST }}

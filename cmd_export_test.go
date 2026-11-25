@@ -78,7 +78,40 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 		},
 		"statistics": stats(),
 	})
+	f.JSON("GET /tenant/loginOptions", http.StatusOK, map[string]any{
+		"loginOptions": exportLoginOptions(),
+		"statistics":   stats(),
+	})
+	f.JSON("GET /user/t123/groups/3", http.StatusOK, map[string]any{"id": 3, "name": "admins"})
+	f.JSON("GET /application/applications/11", http.StatusOK, map[string]any{"id": "11", "name": "smartrule", "type": "MICROSERVICE"})
 	return f
+}
+
+// exportLoginOptions are the login options of the exported fake tenant:
+// OAI-Secure is preferred and SSO is configured (with its client secret)
+func exportLoginOptions() []map[string]any {
+	return []map[string]any{
+		{"id": "b1", "type": "BASIC", "visibleOnLoginPage": false, "userManagementSource": "INTERNAL",
+			"authenticationRestrictions": map[string]any{"forbiddenClients": "WEB_BROWSERS"}},
+		{"id": "o1", "type": "OAUTH2_INTERNAL", "visibleOnLoginPage": true, "grantType": "PASSWORD",
+			"sessionConfiguration": map[string]any{"absoluteTimeoutMillis": 1209600000, "renewalTimeoutMillis": 86400000,
+				"maximumNumberOfParallelSessions": 5, "userAgentValidationRequired": false}},
+		{"id": "s1", "type": "OAUTH2", "visibleOnLoginPage": true, "providerName": "Acme", "buttonName": "Log in with Acme",
+			"issuer": "https://idp.example.com/realms/acme", "clientId": "cumulocity", "useIdToken": true,
+			"authorizationRequest":         map[string]any{"requestParams": map[string]any{"scope": "openid profile email groups"}},
+			"tokenRequest":                 map[string]any{"body": "grant_type=authorization_code&client_secret=top-secret-value"},
+			"userIdConfig":                 map[string]any{"jwtField": "preferred_username"},
+			"accessTokenToUserDataMapping": map[string]any{"emailClaimName": "email", "firstNameClaimName": "given_name", "lastNameClaimName": "family_name"},
+			"onNewUser": map[string]any{"dynamicMapping": map[string]any{
+				"configuration": map[string]any{"mapRolesOnlyForNewUser": false, "manageRolesOnlyFromAccessMapping": true, "mapFromIdToken": true},
+				"mappings": []any{map[string]any{
+					"id":               "m1",
+					"when":             map[string]any{"operator": "AND", "childPredicates": []any{map[string]any{"parameterPath": "groups", "operator": "IN", "value": "c8y-admins"}}},
+					"thenGroups":       []any{3},
+					"thenApplications": []any{11},
+				}},
+			}}},
+	}
 }
 
 func TestExportAllSections(t *testing.T) {
@@ -119,8 +152,14 @@ func TestExportAllSections(t *testing.T) {
 	}, manifest.DeviceGroups)
 
 	// Subscribed (not owned) microservices and web applications of the
-	// current tenant
-	apps := f.Requests(http.MethodGet, "/application/applications")
+	// current tenant (the application of the SSO access mapping is read by
+	// ID)
+	var apps []recordedRequest
+	for _, r := range f.Requests(http.MethodGet, "/application/applications") {
+		if r.Path == "/application/applications" {
+			apps = append(apps, r)
+		}
+	}
 	require.Len(t, apps, 2)
 	assert.Contains(t, apps[0].Query, "providedFor=t123")
 	assert.Contains(t, apps[0].Query, "type=MICROSERVICE")
@@ -137,6 +176,34 @@ func TestExportAllSections(t *testing.T) {
 			{Scope: "OPERATION", Permission: "ADMIN"},
 		}},
 	}, manifest.InventoryRoles)
+
+	// Login options: the SSO client secret is replaced by an env reference,
+	// group and application IDs by names
+	five := 5
+	assert.Equal(t, &LoginOptionsSpec{
+		Preferred: LoginModeOAISecure,
+		Basic:     &BasicLoginOptionSpec{ForbiddenClients: []string{"WEB_BROWSERS"}},
+		OAISecure: &OAISecureLoginSpec{Session: &OAISecureSessionSpec{
+			AbsoluteTimeout: "336h", RenewalTimeout: "24h", MaximumParallelSessions: &five, UserAgentValidationRequired: boolPtr(false),
+		}},
+		SSO: &SSOLoginSpec{
+			DiscoveryURL:     "https://idp.example.com/realms/acme/.well-known/openid-configuration",
+			ClientID:         "cumulocity",
+			ClientSecretFrom: &SecretRef{Env: "SSO_CLIENT_SECRET"},
+			Scopes:           []string{"openid", "profile", "email", "groups"},
+			ProviderName:     "Acme",
+			ButtonName:       "Log in with Acme",
+			UserIDClaim:      "preferred_username",
+			Access: &SSOAccessMappingSpec{
+				ManageRolesOnlyFromAccessMapping: true,
+				Rules: []SSOAccessRuleSpec{{
+					When:         []SSOConditionSpec{{Claim: "groups", Operator: "IN", Value: "c8y-admins"}},
+					Groups:       []string{"admins"},
+					Applications: []string{"smartrule"},
+				}},
+			},
+		},
+	}, manifest.LoginOptions)
 }
 
 func TestExportAllFeaturesAndSelectedSections(t *testing.T) {
@@ -195,6 +262,7 @@ func TestExportedManifestRoundTrip(t *testing.T) {
 	assert.Contains(t, text, "value: \"true\"", "string values which look like booleans stay strings")
 
 	assert.Contains(t, text, "/home/$$USER", "$ is escaped")
+	assert.NotContains(t, text, "top-secret-value", "the SSO client secret is never exported")
 
 	// The escaped value is not expanded, even when the variable is set
 	t.Setenv("USER", "someone")

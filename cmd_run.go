@@ -329,6 +329,7 @@ func manifestSecretValues(manifest *Manifest) []string {
 	for _, tenant := range manifest.Tenants {
 		values = append(values, tenant.AdminPass)
 	}
+	values = append(values, ssoSecretForms(manifest.ssoLogin())...)
 	for _, source := range manifest.allSources() {
 		if source.GitHub != nil {
 			values = append(values, source.GitHub.Token)

@@ -94,6 +94,33 @@
         "name"
       ]
     },
+    "BasicLoginOptionSpec": {
+      "properties": {
+        "forbiddenClients": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Clients which may not use basic authentication; the only supported value is WEB_BROWSERS"
+        },
+        "trustedUserAgents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "User agents (User-Agent header) which may always use basic authentication"
+        },
+        "forbiddenUserAgents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "User agents (User-Agent header) which may not use basic authentication"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "CertificateAuthoritySpec": {
       "properties": {
         "enabled": {
@@ -991,6 +1018,33 @@
         "name"
       ]
     },
+    "LoginOptionsSpec": {
+      "properties": {
+        "preferred": {
+          "type": "string",
+          "enum": [
+            "oaiSecure",
+            "basic",
+            "sso"
+          ],
+          "description": "Preferred login mode of the login page: oaiSecure (recommended) or basic or sso (single sign-on redirect which hides the username/password form); omitted leaves it unchanged"
+        },
+        "basic": {
+          "$ref": "#/$defs/BasicLoginOptionSpec",
+          "description": "Restrictions of basic authentication (the BASIC login option)"
+        },
+        "oaiSecure": {
+          "$ref": "#/$defs/OAISecureLoginSpec",
+          "description": "Settings of the OAI-Secure login option (OAUTH2_INTERNAL)"
+        },
+        "sso": {
+          "$ref": "#/$defs/SSOLoginSpec",
+          "description": "Single sign-on (OAUTH2) login option generated from an OpenID Connect provider's discovery document"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "MicroserviceSpec": {
       "properties": {
         "name": {
@@ -1023,6 +1077,44 @@
       "required": [
         "name"
       ]
+    },
+    "OAISecureLoginSpec": {
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/OAISecureSessionSpec",
+          "description": "OAI-Secure session configuration"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "OAISecureSessionSpec": {
+      "properties": {
+        "absoluteTimeout": {
+          "type": "string",
+          "description": "Maximum session duration after which users have to log in again (Go duration; at least 15m)",
+          "examples": [
+            "336h"
+          ]
+        },
+        "renewalTimeout": {
+          "type": "string",
+          "description": "Time before the token expires during which it may be renewed (Go duration; shorter than absoluteTimeout)",
+          "examples": [
+            "24h"
+          ]
+        },
+        "maximumParallelSessions": {
+          "type": "integer",
+          "description": "Maximum number of parallel sessions of one user (at least 1)"
+        },
+        "userAgentValidationRequired": {
+          "type": "boolean",
+          "description": "Check the user agent during the session"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "ProfileConfigurationRef": {
       "properties": {
@@ -1179,6 +1271,208 @@
         "dataType",
         "maximumAge"
       ]
+    },
+    "SSOAccessMappingSpec": {
+      "properties": {
+        "mapRolesOnlyForNewUser": {
+          "type": "boolean",
+          "description": "Only map the roles when a user logs in for the first time"
+        },
+        "manageRolesOnlyFromAccessMapping": {
+          "type": "boolean",
+          "description": "Only manage the groups and applications listed in the rules; others assigned in Cumulocity are kept"
+        },
+        "mapFromIdToken": {
+          "type": "boolean",
+          "description": "Evaluate the rules against the ID token instead of the access token (default: useIdToken)"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/SSOAccessRuleSpec"
+          },
+          "type": "array",
+          "description": "Rules which assign user groups and applications when their conditions match"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "SSOAccessRuleSpec": {
+      "properties": {
+        "match": {
+          "type": "string",
+          "enum": [
+            "all",
+            "any"
+          ],
+          "description": "Whether all (default) or any of the conditions must match"
+        },
+        "when": {
+          "items": {
+            "$ref": "#/$defs/SSOConditionSpec"
+          },
+          "type": "array",
+          "description": "Conditions on token claims"
+        },
+        "groups": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "User group names to assign"
+        },
+        "applications": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Application names to give access to"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "when"
+      ]
+    },
+    "SSOConditionSpec": {
+      "properties": {
+        "claim": {
+          "type": "string",
+          "description": "Path of the claim in the token",
+          "examples": [
+            "groups"
+          ]
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "EQ",
+            "NEQ",
+            "GT",
+            "LT",
+            "GTE",
+            "LTE",
+            "IN"
+          ],
+          "description": "Comparison operator (default: EQ; IN matches a value in a list claim)"
+        },
+        "value": {
+          "type": "string",
+          "description": "Value compared with the claim"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "claim",
+        "value"
+      ]
+    },
+    "SSOLoginSpec": {
+      "properties": {
+        "discoveryUrl": {
+          "type": "string",
+          "description": "OpenID Connect discovery document of the provider (https://.../.well-known/openid-configuration); the issuer and the authorization/token/logout/JWKS endpoints are taken from it",
+          "examples": [
+            "https://idp.example.com/realms/acme/.well-known/openid-configuration"
+          ]
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Client ID of Cumulocity at the provider"
+        },
+        "clientSecret": {
+          "type": "string",
+          "description": "Client secret; supports ${VAR} expansion and sops-encrypted values; mutually exclusive with clientSecretFrom"
+        },
+        "clientSecretFrom": {
+          "$ref": "#/$defs/SecretRef",
+          "description": "Take the client secret from an environment variable (env) or a generated value (generate); mutually exclusive with clientSecret"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Scopes requested at login (default: openid profile email)"
+        },
+        "providerName": {
+          "type": "string",
+          "description": "Name of the provider (default: the host of the issuer)"
+        },
+        "buttonName": {
+          "type": "string",
+          "description": "Text of the login button (default: Log in with \u003cproviderName\u003e)"
+        },
+        "audience": {
+          "type": "string",
+          "description": "Expected audience of the tokens"
+        },
+        "template": {
+          "type": "string",
+          "description": "Template name shown by the Administration application (left unset by default)"
+        },
+        "redirectToPlatform": {
+          "type": "string",
+          "description": "URL to redirect to after login; leave unset to let the UI applications control the SSO flow"
+        },
+        "visibleOnLoginPage": {
+          "type": "boolean",
+          "description": "Show the SSO button on the login page (default: true; always true when preferred is sso)"
+        },
+        "useIdToken": {
+          "type": "boolean",
+          "description": "Read the user ID and user data from the ID token instead of the access token (default: true)"
+        },
+        "userIdClaim": {
+          "type": "string",
+          "description": "Claim used as the Cumulocity username (default: sub)",
+          "examples": [
+            "preferred_username"
+          ]
+        },
+        "userData": {
+          "$ref": "#/$defs/SSOUserDataSpec",
+          "description": "Claims holding the user data (defaults: email / given_name / family_name)"
+        },
+        "accessMappings": {
+          "$ref": "#/$defs/SSOAccessMappingSpec",
+          "description": "Dynamic access mapping: which user groups and applications users get based on their token claims"
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Raw login option fields merged last into the generated configuration (escape platform placeholders as $${code})"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "discoveryUrl",
+        "clientId"
+      ]
+    },
+    "SSOUserDataSpec": {
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Claim holding the email address (default: email)"
+        },
+        "firstName": {
+          "type": "string",
+          "description": "Claim holding the first name (default: given_name)"
+        },
+        "lastName": {
+          "type": "string",
+          "description": "Claim holding the last name (default: family_name)"
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Claim holding the phone number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "SecretRef": {
       "oneOf": [
@@ -2114,6 +2408,10 @@
       },
       "type": "array",
       "description": "Users to create/update and assign to user groups (additive: existing memberships are never removed)"
+    },
+    "loginOptions": {
+      "$ref": "#/$defs/LoginOptionsSpec",
+      "description": "Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"
     },
     "software": {
       "items": {

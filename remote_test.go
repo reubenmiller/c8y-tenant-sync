@@ -118,6 +118,8 @@ func TestRemoteManifestErrors(t *testing.T) {
 		"/commands.yaml": "commands:\n  - name: x\n    actions: [echo hi]\n",
 		"/nested.yaml":   "include:\n  - path: inner.yaml\n    optional: true\n",
 		"/inner.yaml":    "include:\n  - gone.yaml\n",
+		"/sf.yaml":       "smartFunctions:\n  - name: r\n    input: {topicPattern: 'x/*'}\n    codeFile: rule.js\n",
+		"/dtm.yaml":      "digitalTwin:\n  propertyDefinitions:\n    - source: {path: ./dtm}\n",
 	})
 
 	cases := map[string]string{
@@ -127,6 +129,8 @@ func TestRemoteManifestErrors(t *testing.T) {
 		"/path.yaml":     `source.path "./packages" is not supported in a remote manifest`,
 		"/hooks.yaml":    "--allow-remote-commands",
 		"/commands.yaml": "--allow-remote-commands",
+		"/sf.yaml":       `smartFunctions[0].codeFile: source.path "rule.js" is not supported`,
+		"/dtm.yaml":      `digitalTwin.propertyDefinitions[0]: source.path "./dtm" is not supported`,
 		// optional only skips the include itself, not a file it includes
 		"/nested.yaml": "/gone.yaml",
 	}

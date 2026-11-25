@@ -196,6 +196,29 @@ func (m *Manifest) forEachSource(fn func(label string, source *Source)) {
 	for i := range m.SmartRestTemplates {
 		fn(fmt.Sprintf("smartrestTemplates[%d]", i), &m.SmartRestTemplates[i].Source)
 	}
+	for i := range m.SmartFunctions {
+		fn(fmt.Sprintf("smartFunctions[%d]", i), &m.SmartFunctions[i].Source)
+		if file := m.SmartFunctions[i].CodeFile; file != "" {
+			// A local file like a source path (changes are not kept)
+			fn(fmt.Sprintf("smartFunctions[%d].codeFile", i), &Source{Path: file})
+		}
+	}
+	if m.DigitalTwin != nil {
+		sections := []struct {
+			name string
+			defs []DigitalTwinDefinitionSpec
+		}{
+			{"digitalTwin.propertyDefinitions", m.DigitalTwin.PropertyDefinitions},
+			{"digitalTwin.assetDefinitions", m.DigitalTwin.AssetDefinitions},
+		}
+		for _, section := range sections {
+			for i := range section.defs {
+				if section.defs[i].Source != nil {
+					fn(fmt.Sprintf("%s[%d]", section.name, i), section.defs[i].Source)
+				}
+			}
+		}
+	}
 }
 
 // checkRemoteManifest rejects what a manifest fetched from a URL or a

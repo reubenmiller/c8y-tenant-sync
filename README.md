@@ -939,6 +939,14 @@ With a `source`, the microservice is also created when missing (`contextPath` de
 
 The source is downloaded before the microservice is created, so a failed download does not leave a microservice without a binary behind.
 
+Hosting your own microservices requires the tenant running the sync to be subscribed to the `feature-microservice-hosting` application, which its parent tenant (or your Cumulocity provider) controls. Before uploading, the subscriptions of the tenant are checked. Without the feature application, the entry fails before anything is downloaded or created:
+
+```
+  ✗ [microservices] cloud-http-proxy (failed): the tenant t12345 is not subscribed to feature-microservice-hosting, so it can't host microservices: ask its parent tenant (or your Cumulocity provider) to subscribe it, or use --force to try the upload anyway
+```
+
+The check only applies when an upload is needed, and is skipped when the subscriptions can't be read. A parent tenant can enable hosting for its child tenants with tenant-sync, for example with `tenants[].applications: [feature-microservice-hosting]`.
+
 ```yaml
 microservices:
   - name: my-microservice

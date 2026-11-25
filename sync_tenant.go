@@ -466,6 +466,16 @@ func (s *Syncer) ensureApplication(ctx context.Context, entry appEntry) (string,
 		}
 	}
 
+	// A microservice can only be uploaded into a tenant which may host
+	// microservices: fail before downloading and creating anything
+	if entry.section == SectionMicroservices && !s.Force {
+		if owner, hosting := s.microserviceHosting(ctx); !hosting {
+			s.record(entry.section, entry.name, ActionFailed, "",
+				fmt.Errorf("the tenant %s is not subscribed to %s, so it can't host microservices: ask its parent tenant (or your Cumulocity provider) to subscribe it, or use --force to try the upload anyway", owner, FeatureMicroserviceHosting))
+			return "", false
+		}
+	}
+
 	// Download before creating the application, so a failed download does
 	// not leave an application without a binary behind
 	files, ok := s.resolveSource(entry.section, entry.name, *entry.source)
@@ -521,7 +531,7 @@ func (s *Syncer) ensureApplication(ctx context.Context, entry appEntry) (string,
 		}
 		err := upload.Err
 		if entry.section == SectionMicroservices && core.ErrHasStatus(err, http.StatusForbidden) {
-			err = fmt.Errorf("%w (uploading microservices requires microservice hosting to be enabled for the tenant, which the management tenant or your Cumulocity provider controls, and ROLE_APPLICATION_MANAGEMENT_ADMIN)", err)
+			err = fmt.Errorf("%w (uploading microservices requires the tenant to be subscribed to %s, which its parent tenant or your Cumulocity provider controls, and ROLE_APPLICATION_MANAGEMENT_ADMIN)", err, FeatureMicroserviceHosting)
 		}
 		s.record(entry.section, entry.name, ActionFailed, detail, err)
 		return "", false
@@ -542,6 +552,27 @@ func (s *Syncer) ensureApplication(ctx context.Context, entry appEntry) (string,
 		s.record(entry.section, entry.name, ActionUpdated, "re-uploaded "+files[0].Filename, nil)
 	}
 	return s.cacheAppSelfLink(entry.name, app.Data.Self()), true
+}
+
+// FeatureMicroserviceHosting is the feature application which allows a tenant
+// to host its own microservices. The parent tenant subscribes it.
+const FeatureMicroserviceHosting = "feature-microservice-hosting"
+
+// microserviceHosting reports whether the tenant running the sync (which
+// owns the microservices it uploads) may host microservices. Only a
+// subscription list which could be read and lacks the feature application
+// counts as "no": when it can't be read, the upload is tried.
+func (s *Syncer) microserviceHosting(ctx context.Context) (string, bool) {
+	owner := s.baseTenant(ctx)
+	if owner == "" {
+		return owner, true
+	}
+	subs, known := s.tenantSubscriptions(ctx, owner, true)
+	if !known {
+		return owner, true
+	}
+	_, subscribed := subs.find(FeatureMicroserviceHosting, "")
+	return owner, subscribed
 }
 
 // cacheAppSelfLink stores an application self link for reuse by later targets

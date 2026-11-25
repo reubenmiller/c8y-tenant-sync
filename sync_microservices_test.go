@@ -11,13 +11,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeMicroserviceTenant serves tenant t123 with the given microservices
-// (none subscribed) and accepts creating, uploading and subscribing
+// fakeMicroserviceTenant serves tenant t123, which may host microservices,
+// with the given microservices (none subscribed) and accepts creating,
+// uploading and subscribing
 func fakeMicroserviceTenant(t *testing.T, apps ...map[string]any) *fakeC8y {
+	return fakeHostingTenant(t, true, apps...)
+}
+
+// fakeHostingTenant is fakeMicroserviceTenant, with or without the
+// subscription to feature-microservice-hosting
+func fakeHostingTenant(t *testing.T, hosting bool, apps ...map[string]any) *fakeC8y {
 	f := newFakeC8y(t)
 	url := f.server.URL
+	refs := []any{}
+	if hosting {
+		refs = append(refs, map[string]any{"application": map[string]any{
+			"id": "4", "name": FeatureMicroserviceHosting, "type": "HOSTED",
+			"owner": map[string]any{"tenant": map[string]any{"id": "management"}},
+		}})
+	}
 	f.JSON("GET /tenant/currentTenant", http.StatusOK, map[string]any{
-		"name": "t123", "applications": map[string]any{"references": []any{}},
+		"name": "t123", "applications": map[string]any{"references": refs},
 	})
 	f.Handle("GET /application/applications", func(w http.ResponseWriter, r *http.Request) {
 		found := []map[string]any{}
@@ -91,7 +105,7 @@ func TestMicroserviceUploadDeniedExplainsHosting(t *testing.T) {
 
 	r := firstResult(s, "my-service")
 	assert.Equal(t, ActionFailed, r.Action)
-	assert.ErrorContains(t, r.Err, "microservice hosting to be enabled for the tenant")
+	assert.ErrorContains(t, r.Err, "requires the tenant to be subscribed to feature-microservice-hosting")
 	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants/t123/applications"), "a microservice without a binary is not subscribed")
 }
 
@@ -149,4 +163,43 @@ func TestMicroserviceWithoutSourceVersionIsOnlyUploadedWithForce(t *testing.T) {
 	r = firstResult(s, "my-service")
 	assert.Equal(t, ActionUpdated, r.Action, r.Err)
 	assert.Equal(t, "re-uploaded my-service.zip", r.Detail)
+}
+
+func TestMicroserviceWithoutHostingFailsBeforeDownloading(t *testing.T) {
+	f := fakeHostingTenant(t, false)
+	zip := serviceZip(t, "my-service-1.1.0.zip")
+	r := syncService(t, f, Source{Path: zip})
+
+	assert.Equal(t, ActionFailed, r.Action)
+	assert.EqualError(t, r.Err, "the tenant t123 is not subscribed to feature-microservice-hosting, so it can't host microservices: ask its parent tenant (or your Cumulocity provider) to subscribe it, or use --force to try the upload anyway")
+	assert.Empty(t, exactRequests(f, http.MethodPost, "/application/applications"), "nothing is created")
+	assert.Empty(t, f.Requests(http.MethodPost, "/application/applications/50/binaries"))
+	assert.Empty(t, f.Requests(http.MethodPost, "/tenant/tenants/t123/applications"), "nothing is subscribed")
+
+	// --force tries the upload anyway
+	s := newFakeSyncer(t, f)
+	s.Force = true
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{{Name: "my-service", Source: &Source{Path: zip}}}))
+	assert.Equal(t, ActionCreated, firstResult(s, "my-service").Action, firstResult(s, "my-service").Err)
+}
+
+func TestMicroserviceHostingCheckNeedsAnUpload(t *testing.T) {
+	// Already at the source version: no upload, so no hosting check
+	f := newFakeC8y(t)
+	f = fakeHostingTenant(t, false, microservice(f.server.URL, map[string]any{
+		"activeVersionId": "9", "manifest": map[string]any{"version": "1.1.0"},
+	}))
+	r := syncService(t, f, Source{Path: serviceZip(t, "my-service-1.1.0.zip")})
+	assert.Equal(t, ActionUnchanged, r.Action, r.Err)
+}
+
+func TestMicroserviceHostingUnknownTriesTheUpload(t *testing.T) {
+	f := fakeHostingTenant(t, false)
+	s := newFakeSyncer(t, f)
+	// The subscriptions could not be read: the upload decides
+	s.baseTenantID = "t123"
+	s.activeTarget = &Target{TenantID: "t123", Current: true}
+	f.JSON("GET /tenant/currentTenant", http.StatusForbidden, forbidden)
+	require.NoError(t, s.SyncMicroservices(context.Background(), []MicroserviceSpec{{Name: "my-service", Source: &Source{Path: serviceZip(t, "my-service.zip")}}}))
+	assert.Equal(t, ActionCreated, firstResult(s, "my-service").Action, firstResult(s, "my-service").Err)
 }

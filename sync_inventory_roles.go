@@ -77,6 +77,7 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
 			case ActionDeleted:
 				s.pending().removedRoles[spec.Name] = true
+				s.pending().deletedRoleIDs[plan.roleID] = true
 				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
 			default:
 				s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, plan.describe(), nil)
@@ -277,6 +278,8 @@ type dryRunPending struct {
 	// removedRoles are the names which would no longer exist: the old names
 	// of renamed roles and the roles which would be deleted
 	removedRoles map[string]bool
+	// deletedRoleIDs are the IDs of the roles which would be deleted
+	deletedRoleIDs map[int64]bool
 	// deviceGroups by path and by name
 	deviceGroups map[string]bool
 }
@@ -288,6 +291,7 @@ func (s *Syncer) pending() *dryRunPending {
 			inventoryRoles: map[string]bool{},
 			renamedRoles:   map[string]int64{},
 			removedRoles:   map[string]bool{},
+			deletedRoleIDs: map[int64]bool{},
 			deviceGroups:   map[string]bool{},
 		}
 	}
@@ -380,7 +384,8 @@ func describeInventoryAssignments(assignments []InventoryAssignmentSpec) string 
 	return strings.Join(parts, "; ")
 }
 
-// inventoryRoleRef is an inventory role to add to an assignment
+// inventoryRoleRef is an inventory role to add to (or remove from) an
+// assignment
 type inventoryRoleRef struct {
 	id   int64
 	name string
@@ -393,7 +398,8 @@ type inventoryRoleRef struct {
 // device group: shared by the dry run (which reports it) and the real run
 // (which applies it)
 type inventoryAssignmentChange struct {
-	// group is the group as written in the manifest
+	// group is the group as written in the manifest (or the name of the
+	// group of an assignment which is not in the manifest)
 	group string
 	// groupID is the managed object ID of the group (empty for a pending
 	// group)
@@ -407,11 +413,20 @@ type inventoryAssignmentChange struct {
 	currentRoles []int64
 	// add are the roles to add
 	add []inventoryRoleRef
+	// remove are the roles to remove (inventoryRolesMode exact only)
+	remove []inventoryRoleRef
+	// unlisted is set for an assignment on a group which is not in the
+	// manifest: it is deleted (inventoryRolesMode exact only)
+	unlisted bool
+	// duplicates are the IDs of the user's other assignments on the same
+	// group: they are merged into the first one (inventoryRolesMode exact
+	// only)
+	duplicates []int64
 }
 
-// describe describes the change, e.g. "inventory roles on Plant Berlin: +Site operator"
+// describe describes the change, e.g. "inventory roles on Plant Berlin: +Site operator, -Reader"
 func (c inventoryAssignmentChange) describe() string {
-	parts := make([]string, 0, len(c.add))
+	parts := make([]string, 0, len(c.add)+len(c.remove)+1)
 	for _, role := range c.add {
 		part := "+" + role.name
 		if role.pending {
@@ -419,22 +434,44 @@ func (c inventoryAssignmentChange) describe() string {
 		}
 		parts = append(parts, part)
 	}
+	for _, role := range c.remove {
+		parts = append(parts, "-"+role.name)
+	}
+	if n := len(c.duplicates); n > 0 && !c.unlisted {
+		parts = append(parts, fmt.Sprintf("merge %d assignments", n+1))
+	}
 	group := c.group
 	if c.pendingGroup {
 		group += " (new group)"
 	}
+	if c.unlisted {
+		group += " (not listed)"
+	}
 	return "inventory roles on " + group + ": " + strings.Join(parts, ", ")
+}
+
+// existingAssignment is a user's assignment on a managed object. Several
+// assignments on one object are merged into the first one.
+type existingAssignment struct {
+	groupID    string
+	id         int64
+	roles      []int64
+	duplicates []int64
 }
 
 // planInventoryAssignments compares the user's inventory roles in the
 // manifest with the user's assignments in the tenant and returns the changes
-// needed to add the missing roles. Roles and assignments not in the manifest
-// are never removed. For a user which does not exist (yet) the lookup of
-// existing assignments is skipped. A group or role which cannot be resolved
-// fails its assignment only: the changes of the other assignments are still
-// returned, together with the joined errors.
-func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, exists bool, assignments []InventoryAssignmentSpec, cache *inventoryAssignmentCache) ([]inventoryAssignmentChange, error) {
-	if len(assignments) == 0 {
+// needed. Additive mode only adds the missing roles: roles and assignments
+// not in the manifest are never removed. Exact mode also removes the roles
+// which are not listed on a listed group, deletes the assignments on groups
+// which are not listed, and merges several assignments on one group. For a
+// user which does not exist (yet) the lookup of existing assignments is
+// skipped. A group or role which cannot be resolved fails its assignment
+// only: the changes of the other assignments are still returned, together
+// with the joined errors. In exact mode no unlisted assignment is deleted
+// when a listed group cannot be resolved, since it could be that group.
+func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, exists, exact bool, assignments []InventoryAssignmentSpec, cache *inventoryAssignmentCache) ([]inventoryAssignmentChange, error) {
+	if len(assignments) == 0 && (!exact || !exists) {
 		return nil, nil
 	}
 
@@ -449,12 +486,9 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 		cache.groupIDs = map[string]string{}
 	}
 
-	// Existing assignments by managed object ID
-	type existingAssignment struct {
-		id    int64
-		roles []int64
-	}
+	// Existing assignments by managed object ID, and in the order listed
 	existing := map[string]*existingAssignment{}
+	var existingOrder []*existingAssignment
 	if exists {
 		result := s.readClient().DevicePermissions.ListInventoryRoleAssignments(ctx, devicepermissions.ListInventoryRoleAssignmentOptions{
 			UserScopedOptions: devicepermissions.UserScopedOptions{UserID: userID},
@@ -466,15 +500,20 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 			}
 			if current, ok := existing[item.ManagedObjectID()]; ok {
 				// Several assignments for one group: extend the first one
-				current.roles = append(current.roles, item.RoleIDs()...)
+				current.roles = appendUnique(current.roles, s.currentRoleIDs(item.RoleIDs())...)
+				current.duplicates = append(current.duplicates, item.ID())
 				continue
 			}
-			existing[item.ManagedObjectID()] = &existingAssignment{id: item.ID(), roles: item.RoleIDs()}
+			current := &existingAssignment{groupID: item.ManagedObjectID(), id: item.ID(), roles: appendUnique(nil, s.currentRoleIDs(item.RoleIDs())...)}
+			existing[item.ManagedObjectID()] = current
+			existingOrder = append(existingOrder, current)
 		}
 	}
 
 	var changes []inventoryAssignmentChange
 	var errs []error
+	listed := map[string]bool{}
+	unresolvedGroup := false
 	for _, assignment := range assignments {
 		ref := strings.TrimSpace(assignment.Group)
 		change := inventoryAssignmentChange{group: assignment.Group}
@@ -482,18 +521,24 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 		switch {
 		case err == nil:
 			change.groupID = groupID
+			listed[groupID] = true
 			if current, ok := existing[groupID]; ok {
 				change.assignmentID = current.id
 				change.currentRoles = current.roles
+				if exact {
+					change.duplicates = current.duplicates
+				}
 			}
 		case s.DryRun && errors.Is(err, errNotFound) && s.pending().deviceGroups[ref]:
 			change.pendingGroup = true
 		default:
+			unresolvedGroup = true
 			errs = append(errs, err)
 			continue
 		}
 
 		var roleErr error
+		var desired []int64
 		for _, roleName := range assignment.Roles {
 			roleID, err := cache.roleID(roleName)
 			if s.DryRun {
@@ -515,6 +560,7 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 				roleErr = err
 				break
 			}
+			desired = append(desired, roleID)
 			if slices.Contains(change.currentRoles, roleID) {
 				continue
 			}
@@ -527,11 +573,89 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 			errs = append(errs, roleErr)
 			continue
 		}
-		if len(change.add) > 0 {
+		if exact {
+			for _, roleID := range change.currentRoles {
+				if !slices.Contains(desired, roleID) {
+					change.remove = append(change.remove, inventoryRoleRef{id: roleID, name: s.roleName(cache, roleID)})
+				}
+			}
+		}
+		if len(change.add) > 0 || len(change.remove) > 0 || len(change.duplicates) > 0 {
+			changes = append(changes, change)
+		}
+	}
+
+	if exact && !unresolvedGroup {
+		// The assignments on groups which are not listed are deleted
+		for _, current := range existingOrder {
+			if listed[current.groupID] {
+				continue
+			}
+			change := inventoryAssignmentChange{
+				group:        s.assignmentGroupName(ctx, current.groupID),
+				groupID:      current.groupID,
+				assignmentID: current.id,
+				currentRoles: current.roles,
+				unlisted:     true,
+				duplicates:   current.duplicates,
+			}
+			for _, roleID := range current.roles {
+				change.remove = append(change.remove, inventoryRoleRef{id: roleID, name: s.roleName(cache, roleID)})
+			}
 			changes = append(changes, change)
 		}
 	}
 	return changes, errors.Join(errs...)
+}
+
+// currentRoleIDs returns the role IDs of an existing assignment. In a dry
+// run the roles which the inventoryRoles section would delete are left out,
+// since a real run deletes them (with their assignments) first.
+func (s *Syncer) currentRoleIDs(ids []int64) []int64 {
+	if !s.DryRun || s.dryRunPending == nil || len(s.dryRunPending.deletedRoleIDs) == 0 {
+		return ids
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id int64) bool { return s.dryRunPending.deletedRoleIDs[id] })
+}
+
+// roleName returns the name of an existing inventory role for the output (in
+// a dry run, the new name of a role which would be renamed)
+func (s *Syncer) roleName(cache *inventoryAssignmentCache, id int64) string {
+	if s.DryRun && s.dryRunPending != nil {
+		for name, renamedID := range s.dryRunPending.renamedRoles {
+			if renamedID == id {
+				return name
+			}
+		}
+	}
+	for name, roles := range cache.roles {
+		for _, role := range roles {
+			if role.ID() == id {
+				return name
+			}
+		}
+	}
+	return fmt.Sprintf("role %d", id)
+}
+
+// assignmentGroupName returns the name of the group of an assignment which is
+// not in the manifest, for the output (the ID when it cannot be read)
+func (s *Syncer) assignmentGroupName(ctx context.Context, groupID string) string {
+	result := s.readClient().ManagedObjects.Get(ctx, groupID, managedobjects.GetOptions{})
+	if result.Err != nil || result.Data.Name() == "" {
+		return "device group " + groupID
+	}
+	return result.Data.Name()
+}
+
+// appendUnique appends the IDs which are not in the list yet
+func appendUnique(list []int64, ids ...int64) []int64 {
+	for _, id := range ids {
+		if !slices.Contains(list, id) {
+			list = append(list, id)
+		}
+	}
+	return list
 }
 
 // applyInventoryAssignments writes the changes of the user's assignments and
@@ -540,34 +664,68 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 func (s *Syncer) applyInventoryAssignments(ctx context.Context, userID string, changes []inventoryAssignmentChange) ([]string, error) {
 	var details []string
 	var errs []error
+	userScope := devicepermissions.UserScopedOptions{UserID: userID}
 	for _, change := range changes {
-		addIDs := make([]int64, 0, len(change.add))
-		for _, role := range change.add {
-			addIDs = append(addIDs, role.id)
-		}
-		if change.assignmentID != 0 {
-			roleIDs := append(slices.Clone(change.currentRoles), addIDs...)
-			result := s.Client.DevicePermissions.UpdateInventoryRoleAssignment(ctx, devicepermissions.GetInventoryRoleAssignmentOptions{
-				UserScopedOptions: devicepermissions.UserScopedOptions{UserID: userID},
-				ID:                change.assignmentID,
-			}, map[string]any{"roles": roleRefs(roleIDs)})
-			if result.Err != nil {
-				errs = append(errs, fmt.Errorf("inventory assignment for group %q: %w", change.group, result.Err))
-				continue
-			}
-		} else {
-			result := s.Client.DevicePermissions.AssignInventoryRole(ctx, devicepermissions.UserScopedOptions{UserID: userID}, map[string]any{
-				"managedObject": change.groupID,
-				"roles":         roleRefs(addIDs),
-			})
-			if result.Err != nil {
-				errs = append(errs, fmt.Errorf("inventory assignment for group %q: %w", change.group, result.Err))
-				continue
-			}
+		if err := s.applyInventoryAssignment(ctx, userScope, change); err != nil {
+			errs = append(errs, fmt.Errorf("inventory assignment for group %q: %w", change.group, err))
+			continue
 		}
 		details = append(details, change.describe())
 	}
 	return details, errors.Join(errs...)
+}
+
+// applyInventoryAssignment writes the change of one assignment
+func (s *Syncer) applyInventoryAssignment(ctx context.Context, userScope devicepermissions.UserScopedOptions, change inventoryAssignmentChange) error {
+	deleteAssignment := func(id int64) error {
+		result := s.Client.DevicePermissions.DeleteInventoryRoleAssignment(ctx, devicepermissions.GetInventoryRoleAssignmentOptions{
+			UserScopedOptions: userScope,
+			ID:                id,
+		})
+		return result.Err
+	}
+
+	if change.unlisted {
+		for _, id := range append([]int64{change.assignmentID}, change.duplicates...) {
+			if err := deleteAssignment(id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	addIDs := make([]int64, 0, len(change.add))
+	for _, role := range change.add {
+		addIDs = append(addIDs, role.id)
+	}
+	if change.assignmentID == 0 {
+		result := s.Client.DevicePermissions.AssignInventoryRole(ctx, userScope, map[string]any{
+			"managedObject": change.groupID,
+			"roles":         roleRefs(addIDs),
+		})
+		return result.Err
+	}
+
+	roleIDs := slices.DeleteFunc(slices.Clone(change.currentRoles), func(id int64) bool {
+		return slices.ContainsFunc(change.remove, func(r inventoryRoleRef) bool { return r.id == id })
+	})
+	roleIDs = append(roleIDs, addIDs...)
+	if len(change.add) > 0 || len(change.remove) > 0 || len(change.duplicates) > 0 {
+		result := s.Client.DevicePermissions.UpdateInventoryRoleAssignment(ctx, devicepermissions.GetInventoryRoleAssignmentOptions{
+			UserScopedOptions: userScope,
+			ID:                change.assignmentID,
+		}, map[string]any{"roles": roleRefs(roleIDs)})
+		if result.Err != nil {
+			return result.Err
+		}
+	}
+	// The other assignments on the group are merged into the first one
+	for _, id := range change.duplicates {
+		if err := deleteAssignment(id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // roleID resolves an inventory role name to its ID

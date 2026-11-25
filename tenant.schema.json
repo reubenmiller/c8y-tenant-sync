@@ -2333,7 +2333,15 @@
             "$ref": "#/$defs/InventoryAssignmentSpec"
           },
           "type": "array",
-          "description": "Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"
+          "description": "Inventory roles the user gets on device groups (additive by default: roles and assignments not listed are kept; see inventoryRolesMode)"
+        },
+        "inventoryRolesMode": {
+          "type": "string",
+          "enum": [
+            "additive",
+            "exact"
+          ],
+          "description": "additive (default) only adds the inventory roles listed in inventoryRoles; exact makes them the user's full inventory access: on each listed group the roles are set to exactly the listed roles and the assignments on groups which are not listed are deleted (an empty or missing inventoryRoles removes all inventory access). Not allowed for the user running the sync"
         }
       },
       "additionalProperties": false,
@@ -2445,7 +2453,7 @@
         "$ref": "#/$defs/UserSpec"
       },
       "type": "array",
-      "description": "Users to create/update (or delete with state absent) and give global roles and inventory roles (additive: existing roles are never removed)"
+      "description": "Users to create/update (or delete with state absent) and give global roles and inventory roles (additive by default: existing roles are never removed unless a user sets inventoryRolesMode exact)"
     },
     "loginOptions": {
       "$ref": "#/$defs/LoginOptionsSpec",

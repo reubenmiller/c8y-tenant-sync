@@ -45,7 +45,7 @@ type Manifest struct {
 	// InventoryRoles are permission sets which users get on specific device
 	// groups through users[].inventoryRoles
 	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"`
-	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update (or delete with state absent) and give global roles and inventory roles (additive: existing roles are never removed)"`
+	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update (or delete with state absent) and give global roles and inventory roles (additive by default: existing roles are never removed unless a user sets inventoryRolesMode exact)"`
 	// LoginOptions configures how users log in (basic, OAI-Secure, SSO)
 	LoginOptions  *LoginOptionsSpec   `yaml:"loginOptions" json:"loginOptions,omitempty" jsonschema:"description=Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"`
 	Software      []SoftwareSpec      `yaml:"software" json:"software,omitempty" jsonschema:"description=Software packages to sync into the software repository"`
@@ -599,9 +599,12 @@ type UserSpec struct {
 	GlobalRoles []string `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global role names the user is assigned to (additive; global roles not listed are never removed),example=operators"`
 
 	// InventoryRoles give the user inventory roles on device groups.
-	// Missing roles are added; roles and assignments not listed are never
-	// removed.
-	InventoryRoles []InventoryAssignmentSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive; roles and assignments not listed are never removed)"`
+	// Missing roles are added; with inventoryRolesMode additive (the
+	// default) roles and assignments not listed are never removed.
+	InventoryRoles []InventoryAssignmentSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles the user gets on device groups (additive by default: roles and assignments not listed are kept; see inventoryRolesMode)"`
+
+	// InventoryRolesMode is additive (the default) or exact
+	InventoryRolesMode string `yaml:"inventoryRolesMode" json:"inventoryRolesMode,omitempty" jsonschema:"description=additive (default) only adds the inventory roles listed in inventoryRoles; exact makes them the user's full inventory access: on each listed group the roles are set to exactly the listed roles and the assignments on groups which are not listed are deleted (an empty or missing inventoryRoles removes all inventory access). Not allowed for the user running the sync,enum=additive,enum=exact"`
 }
 
 // InventoryRoleScopes are the scopes of inventory role permissions
@@ -709,6 +712,35 @@ const (
 // UserIfMissingValues are the values of users[].ifMissing
 var UserIfMissingValues = []string{UserIfMissingCreate, UserIfMissingSkip, UserIfMissingFail}
 
+// Modes of a user's inventory roles (users[].inventoryRolesMode)
+const (
+	UserInventoryRolesAdditive = "additive"
+	UserInventoryRolesExact    = "exact"
+)
+
+// UserInventoryRolesModes are the values of users[].inventoryRolesMode
+var UserInventoryRolesModes = []string{UserInventoryRolesAdditive, UserInventoryRolesExact}
+
+// ExactInventoryRoles reports whether the listed inventory roles are the
+// user's full inventory access (inventoryRolesMode: exact)
+func (u UserSpec) ExactInventoryRoles() bool {
+	return strings.TrimSpace(u.InventoryRolesMode) == UserInventoryRolesExact
+}
+
+// UserWarnings reports user entries which are valid but likely a mistake: a
+// user with inventoryRolesMode exact and no inventoryRoles loses all of its
+// inventory access
+func (m *Manifest) UserWarnings() []string {
+	var warnings []string
+	for i, user := range m.Users {
+		if user.ExactInventoryRoles() && !user.Absent() && len(user.InventoryRoles) == 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"users[%d]: inventoryRolesMode exact without inventoryRoles removes all inventory roles of %q", i, user.Username))
+		}
+	}
+	return warnings
+}
+
 // Absent reports whether the user is to be deleted
 func (u UserSpec) Absent() bool {
 	return strings.TrimSpace(u.State) == UserStateAbsent
@@ -748,6 +780,7 @@ func (u UserSpec) absentExtraFields() []string {
 	add(u.SendPasswordResetEmail, "sendPasswordResetEmail")
 	add(u.GlobalRoles != nil, "globalRoles")
 	add(u.InventoryRoles != nil, "inventoryRoles")
+	add(u.InventoryRolesMode != "", "inventoryRolesMode")
 	return fields
 }
 
@@ -1807,6 +1840,9 @@ func (m *Manifest) Validate() error {
 		}
 		if user.IfMissing != "" && !slices.Contains(UserIfMissingValues, user.IfMissing) {
 			errs = append(errs, fmt.Sprintf("users[%d]: unknown ifMissing %q: supported values are %s", i, user.IfMissing, strings.Join(UserIfMissingValues, ", ")))
+		}
+		if user.InventoryRolesMode != "" && !slices.Contains(UserInventoryRolesModes, user.InventoryRolesMode) {
+			errs = append(errs, fmt.Sprintf("users[%d]: unknown inventoryRolesMode %q: supported values are %s", i, user.InventoryRolesMode, strings.Join(UserInventoryRolesModes, ", ")))
 		}
 		if user.Absent() {
 			if extra := user.absentExtraFields(); len(extra) > 0 {

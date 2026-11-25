@@ -163,7 +163,8 @@ func (s *Syncer) SyncUsers(ctx context.Context, specs []UserSpec) error {
 	groupIDs := map[string]string{}
 	// Inventory roles and device groups are looked up once as well
 	inventory := &inventoryAssignmentCache{}
-	// The user running the sync is only looked up when a user is deleted
+	// The user running the sync is only looked up when a user is deleted or
+	// uses inventoryRolesMode exact
 	syncUser := &syncUserCache{}
 
 	for _, spec := range specs {
@@ -201,6 +202,9 @@ func plannedUserDetail(spec UserSpec) string {
 	}
 	if len(spec.InventoryRoles) > 0 {
 		detail += "; inventory roles: " + describeInventoryAssignments(spec.InventoryRoles)
+	}
+	if spec.ExactInventoryRoles() {
+		detail += "; inventoryRolesMode exact: other inventory roles are removed"
 	}
 	switch spec.MissingAction() {
 	case UserIfMissingSkip:
@@ -253,7 +257,7 @@ func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *invento
 			return plan, nil
 		}
 		plan.userID = existing.Data.ID()
-		if err := syncUser.refuse(ctx, s, plan.userID, existing.Data.UserName()); err != nil {
+		if err := syncUser.refuse(ctx, s, plan.userID, existing.Data.UserName(), errSyncUser); err != nil {
 			plan.failure = "delete user"
 			return plan, err
 		}
@@ -280,6 +284,13 @@ func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *invento
 		plan.exists = true
 		plan.userID = existing.Data.ID()
 		plan.userSelf = existing.Data.Self()
+		if spec.ExactInventoryRoles() {
+			// Exact mode must not revoke the access of the sync itself
+			if err := syncUser.refuse(ctx, s, plan.userID, existing.Data.UserName(), errSyncUserExact); err != nil {
+				plan.failure = "inventoryRolesMode exact"
+				return plan, err
+			}
+		}
 		plan.profile = userDiff(spec, existing.Data)
 		missing, err := s.missingGlobalRoles(ctx, plan.userID, spec.GlobalRoles)
 		if err != nil {
@@ -288,7 +299,7 @@ func (s *Syncer) planUser(ctx context.Context, spec UserSpec, inventory *invento
 		}
 		plan.globalRoles = missing
 	}
-	plan.inventory, plan.inventoryErr = s.planInventoryAssignments(ctx, plan.userID, plan.exists, spec.InventoryRoles, inventory)
+	plan.inventory, plan.inventoryErr = s.planInventoryAssignments(ctx, plan.userID, plan.exists, spec.ExactInventoryRoles(), spec.InventoryRoles, inventory)
 	return plan, nil
 }
 
@@ -313,9 +324,13 @@ type syncUserCache struct {
 // the sync
 var errSyncUser = errors.New("refusing to delete the user running the sync")
 
-// refuse returns an error when the user is the one running the sync (or when
-// that user cannot be determined)
-func (c *syncUserCache) refuse(ctx context.Context, s *Syncer, userID, userName string) error {
+// errSyncUserExact is returned when the manifest gives the user running the
+// sync inventoryRolesMode exact, which could revoke its own access
+var errSyncUserExact = errors.New("refusing to use inventoryRolesMode exact for the user running the sync")
+
+// refuse returns refusal when the user is the one running the sync (or an
+// error when that user cannot be determined)
+func (c *syncUserCache) refuse(ctx context.Context, s *Syncer, userID, userName string, refusal error) error {
 	if !c.loaded {
 		c.loaded = true
 		current := s.readClient().Users.CurrentUser.Get(ctx)
@@ -329,7 +344,7 @@ func (c *syncUserCache) refuse(ctx context.Context, s *Syncer, userID, userName 
 		return c.err
 	}
 	if isSameUser(userID, c.id) || isSameUser(userName, c.id) || isSameUser(userName, c.userName) {
-		return errSyncUser
+		return refusal
 	}
 	return nil
 }

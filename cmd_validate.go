@@ -111,7 +111,7 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	printSectionCount(SectionDeviceProfiles, len(manifest.DeviceProfiles))
 
 	if !checkSources {
-		printWarnings(manifest.ExtensionReferenceWarnings(nil))
+		printWarnings(append(manifest.ExtensionReferenceWarnings(nil), manifest.UserWarnings()...))
 		return nil
 	}
 
@@ -208,7 +208,7 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 		check(SectionCertificateRevocations, i, spec.resolvedSource())
 	}
 
-	printWarnings(manifest.ExtensionReferenceWarnings(contextPaths))
+	printWarnings(append(manifest.ExtensionReferenceWarnings(contextPaths), manifest.UserWarnings()...))
 
 	if failures > 0 {
 		return fmt.Errorf("%d source(s) failed to resolve", failures)

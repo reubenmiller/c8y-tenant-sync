@@ -45,7 +45,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
 - 👥 **Users & global roles**: create global roles with permissions, create users and give them global roles, additively and idempotently; skip SSO users until their first login and delete offboarded users
 - 🚪 **Login options**: choose the preferred login mode (OAI-Secure, basic or single sign-on) and configure basic restrictions, OAI-Secure sessions and SSO generated from a provider's OpenID Connect discovery URL, with safeguards against locking anyone out
-- 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site
+- 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site; opt in per user to make the listed roles their exact inventory access
 - 📡 **SmartREST 2.0 templates**: sync template collections from JSON files exported by the platform — matched by external identity, updated only when the templates differ (order-insensitive)
 - 🧬 **Digital Twin Manager definitions**: create and update property and asset definitions (plus measurement, event and alarm definitions) inline or from model files, in dependency order, with optional pruning of definitions the manifest no longer declares
 - 🧪 **Smart functions**: deploy Data Preparation rules from package folders or exported `.tar.gz` archives, only when the code, configuration or tests changed, and report deployment errors
@@ -1195,7 +1195,7 @@ users:
 - A user that cannot be read (for example because of missing permissions) fails with `read user`. Only a user that does not exist is created, skipped or failed as `ifMissing` says.
 - `enabled` stays a separate field: it is the account state in Cumulocity, while `state` and `ifMissing` say what tenant-sync does with the entry.
 
-A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add per device group. A user who is already in the desired state is `unchanged`. A missing user with `ifMissing: skip` is `skipped`, a missing user with `ifMissing: fail` fails, and a user with `state: absent` shows `delete` (or `unchanged` when it does not exist).
+A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add (and, with `inventoryRolesMode: exact`, to remove) per device group. A user who is already in the desired state is `unchanged`. A missing user with `ifMissing: skip` is `skipped`, a missing user with `ifMissing: fail` fails, and a user with `state: absent` shows `delete` (or `unchanged` when it does not exist).
 
 ### Inventory roles and device group access
 
@@ -1253,13 +1253,43 @@ inventoryRoles:
 - A role with `state: absent` must not have `permissions` or `renamedFrom`. Validation fails when a user's `inventoryRoles` refers to a role with `state: absent` or to a previous name in `renamedFrom` (refer to the new name instead).
 - There is no option to delete every role which is not in the manifest: inventory roles have no field to mark who manages them, so this would also delete roles created by other teams in the UI.
 
-A user's inventory roles are applied in the `users` section, after the user is created or updated, and are **additive**:
+A user's inventory roles are applied in the `users` section, after the user is created or updated, and are **additive** by default (see [Exact inventory roles](#exact-inventory-roles) to also remove access):
 
 - `group` is the name of a device group (`has(c8y_IsDeviceGroup)`). The name must match exactly one group, otherwise the user fails with "not found" or "ambiguous" (with the IDs of the matching groups). For groups with the same name, use a path of names separated by `/`, such as `Europe/Plant Berlin`, where each group is a direct child of the previous one. A value with a `/` is first looked up as a plain group name.
 - `roles` are inventory role names, declared in `inventoryRoles` or already in the tenant. They are checked when the manifest is applied, so a role which is in neither fails the user with "not found".
 - Missing roles are added to the user's existing assignment for the group, or a new assignment is created. Roles and assignments which are not in the manifest are never removed.
 
 The `inventoryRoles` section is applied after `globalRoles` and before `users`, so assignments can use roles created in the same run. Device groups are only looked up, never created.
+
+#### Exact inventory roles
+
+With `inventoryRolesMode: exact`, the listed assignments become the user's full inventory access:
+
+```yaml
+users:
+  - email: berlin-ops@example.com
+    inventoryRolesMode: exact        # additive (default) or exact
+    inventoryRoles:
+      - group: Europe/Plant Berlin
+        roles: [Site operator]
+      - group: Europe/Plant Paris
+        roles: [Restart only]
+```
+
+- On each listed group, the user's roles are set to exactly the listed roles: missing roles are added and other roles are removed. If the user has several assignments on one group, they are merged into one.
+- The user's assignments on groups which are not listed are deleted.
+- `inventoryRolesMode: exact` without `inventoryRoles` (or with an empty list) removes all of the user's inventory access. This is allowed, but `validate` prints a warning so it is not done by accident.
+- If a listed group cannot be found, the user fails and no assignment on an unlisted group is deleted, since it could be the missing group.
+- The user running the sync cannot use `exact`, so a run cannot revoke its own access. Such a user fails with "refusing to use inventoryRolesMode exact for the user running the sync".
+- Only users with `exact` are affected; all other users stay additive. Global roles are always additive.
+
+A dry run lists every role which would be removed, per group:
+
+```
+→ [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: -Reader, merge 2 assignments; inventory roles on Europe/Plant Paris: +Restart only; inventory roles on Plant Hamburg (not listed): -Reader
+```
+
+`(not listed)` marks an assignment on a group which is not in the manifest, which a real run deletes. A role which the `inventoryRoles` section of the same run deletes is not listed as removed.
 
 A dry run (`--dry`) reads the inventory roles, device groups and assignments of the tenant and reports what a real run would change, without writing anything:
 
@@ -1276,6 +1306,7 @@ A dry run (`--dry`) reads the inventory roles, device groups and assignments of 
 - Users of the same dry run already refer to a renamed role by its new name, and no longer by its old name or the name of a deleted role.
 - A role or device group which the same dry run would create (declared in `inventoryRoles` or `deviceGroups` but not in the tenant yet) is marked `(new role)` or `(new group)` instead of failing with "not found".
 - A user who does not exist yet shows the inventory roles they would get when created.
+- A user with `inventoryRolesMode: exact` also lists the roles they would lose (`-`), see [Exact inventory roles](#exact-inventory-roles).
 
 A real run reports the same details. Without an active session, and for tenants other than the current one in a dry run with `targets`, the dry run lists the desired roles and assignments without comparing them.
 

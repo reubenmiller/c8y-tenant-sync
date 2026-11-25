@@ -19,8 +19,9 @@ import (
 // description and permissions. Roles are matched by name. The permissions of
 // a role are compared as a set and replaced when they differ (the manifest
 // owns the definition of the role); a role without permissions in the
-// manifest keeps its permissions. Roles absent from the manifest are never
-// touched.
+// manifest keeps its permissions. A role found only under one of its
+// previous names (renamedFrom) is renamed, and a role with state absent is
+// deleted. Roles not in the manifest are never touched.
 //
 // A dry run reads the roles of the tenant (when it can) and reports the same
 // changes as a real run, without writing them.
@@ -33,6 +34,10 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 		// The tenant cannot be read: list the desired roles without
 		// comparing them
 		for _, spec := range specs {
+			if spec.Absent() {
+				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, "delete if it exists", nil)
+				continue
+			}
 			detail := "ensure inventory role"
 			if desired := normalizedPermissions(spec.Permissions); len(desired) > 0 {
 				detail += " with permissions: " + strings.Join(permissionKeys(desired), ", ")
@@ -51,7 +56,7 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 	}
 
 	for _, spec := range specs {
-		plan := planInventoryRole(spec, existing[spec.Name])
+		plan := planInventoryRole(spec, existing)
 		if plan.err != nil {
 			s.record(SectionInventoryRoles, spec.Name, ActionFailed, "", plan.err)
 			continue
@@ -63,9 +68,18 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 				s.pending().inventoryRoles[spec.Name] = true
 				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
 			case ActionUpdated:
+				if plan.renamedFrom != "" {
+					// Users of the same dry run resolve the new name to
+					// the existing role, and no longer the old name
+					s.pending().renamedRoles[spec.Name] = plan.roleID
+					s.pending().removedRoles[plan.renamedFrom] = true
+				}
+				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
+			case ActionDeleted:
+				s.pending().removedRoles[spec.Name] = true
 				s.record(SectionInventoryRoles, spec.Name, ActionPlanned, plan.describe(), nil)
 			default:
-				s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, "", nil)
+				s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, plan.describe(), nil)
 			}
 			continue
 		}
@@ -85,8 +99,17 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 				continue
 			}
 			s.record(SectionInventoryRoles, spec.Name, ActionUpdated, plan.describe(), nil)
+		case ActionDeleted:
+			// A role still assigned to users may be refused by the API:
+			// the role fails with the error of the API
+			result := s.Client.InventoryRoles.Delete(ctx, plan.roleID)
+			if result.Err != nil {
+				s.record(SectionInventoryRoles, spec.Name, ActionFailed, "delete inventory role", result.Err)
+				continue
+			}
+			s.record(SectionInventoryRoles, spec.Name, ActionDeleted, "", nil)
 		default:
-			s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, "", nil)
+			s.record(SectionInventoryRoles, spec.Name, ActionUnchanged, plan.describe(), nil)
 		}
 	}
 	return nil
@@ -95,10 +118,15 @@ func (s *Syncer) SyncInventoryRoles(ctx context.Context, specs []InventoryRoleSp
 // inventoryRolePlan is the change an inventory role needs: shared by the dry
 // run (which reports it) and the real run (which applies it)
 type inventoryRolePlan struct {
-	// action is created, updated or unchanged
+	// action is created, updated (which includes a rename), deleted or
+	// unchanged
 	action Action
-	// roleID is the ID of the existing role (updates only)
+	// roleID is the ID of the existing role (updates and deletes)
 	roleID int64
+	// renamedFrom is the previous name of a role to rename
+	renamedFrom string
+	// absent is set for a role with state absent
+	absent bool
 	// body is the request body of the create or update
 	body map[string]any
 	// permissions are the desired permissions (normalized)
@@ -109,8 +137,47 @@ type inventoryRolePlan struct {
 }
 
 // planInventoryRole compares the role of the manifest with the roles of the
-// tenant with the same name
-func planInventoryRole(spec InventoryRoleSpec, matches []jsonmodels.InventoryRole) inventoryRolePlan {
+// tenant (by name). A role with state absent is deleted when it exists. A
+// role which does not exist under its name but under exactly one of its
+// previous names is renamed.
+func planInventoryRole(spec InventoryRoleSpec, roles map[string][]jsonmodels.InventoryRole) inventoryRolePlan {
+	matches := roles[spec.Name]
+	if spec.Absent() {
+		switch len(matches) {
+		case 0:
+			return inventoryRolePlan{action: ActionUnchanged, absent: true}
+		case 1:
+			return inventoryRolePlan{action: ActionDeleted, roleID: matches[0].ID(), absent: true}
+		default:
+			return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role name: %d roles are named %q", len(matches), spec.Name)}
+		}
+	}
+
+	// Roles under a previous name
+	var previous []jsonmodels.InventoryRole
+	var previousNames []string
+	for _, name := range spec.RenamedFrom {
+		if name == spec.Name || slices.Contains(previousNames, name) {
+			continue
+		}
+		if found := roles[name]; len(found) > 0 {
+			previous = append(previous, found...)
+			previousNames = append(previousNames, name)
+		}
+	}
+	if len(matches) > 0 && len(previous) > 0 {
+		return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role: roles named %q and %s (renamedFrom) both exist", spec.Name, quoteJoin(previousNames))}
+	}
+
+	renamedFrom := ""
+	if len(matches) == 0 && len(previous) > 0 {
+		if len(previous) > 1 {
+			return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role: %d roles are named %s (renamedFrom)", len(previous), quoteJoin(previousNames))}
+		}
+		matches = previous
+		renamedFrom = previousNames[0]
+	}
+
 	desired := normalizedPermissions(spec.Permissions)
 	switch len(matches) {
 	case 0:
@@ -124,8 +191,11 @@ func planInventoryRole(spec InventoryRoleSpec, matches []jsonmodels.InventoryRol
 		return inventoryRolePlan{action: ActionCreated, body: body, permissions: desired}
 	case 1:
 		role := matches[0]
-		plan := inventoryRolePlan{action: ActionUnchanged, roleID: role.ID(), permissions: desired}
+		plan := inventoryRolePlan{action: ActionUnchanged, roleID: role.ID(), permissions: desired, renamedFrom: renamedFrom}
 		body := map[string]any{"name": spec.Name}
+		if renamedFrom != "" {
+			plan.changes = append(plan.changes, fmt.Sprintf("name: %q → %q", renamedFrom, spec.Name))
+		}
 		if spec.Description != "" && role.Description() != spec.Description {
 			body["description"] = spec.Description
 			plan.changes = append(plan.changes, fmt.Sprintf("description: %q → %q", role.Description(), spec.Description))
@@ -146,6 +216,15 @@ func planInventoryRole(spec InventoryRoleSpec, matches []jsonmodels.InventoryRol
 	}
 }
 
+// quoteJoin quotes and joins names, e.g. "a", "b"
+func quoteJoin(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, fmt.Sprintf("%q", name))
+	}
+	return strings.Join(quoted, ", ")
+}
+
 // describe returns the detail reported for the plan: the permissions of a
 // role to create, or the changes of an update
 func (p inventoryRolePlan) describe() string {
@@ -157,6 +236,12 @@ func (p inventoryRolePlan) describe() string {
 		return "create with permissions: " + strings.Join(permissionKeys(p.permissions), ", ")
 	case ActionUpdated:
 		return strings.Join(p.changes, "; ")
+	case ActionDeleted:
+		return "delete"
+	case ActionUnchanged:
+		if p.absent {
+			return "absent"
+		}
 	}
 	return ""
 }
@@ -186,6 +271,12 @@ func permissionDiff(current, desired []InventoryRolePermissionSpec) string {
 type dryRunPending struct {
 	// inventoryRoles by name
 	inventoryRoles map[string]bool
+	// renamedRoles are the IDs of existing roles which would be renamed, by
+	// their new name
+	renamedRoles map[string]int64
+	// removedRoles are the names which would no longer exist: the old names
+	// of renamed roles and the roles which would be deleted
+	removedRoles map[string]bool
 	// deviceGroups by path and by name
 	deviceGroups map[string]bool
 }
@@ -193,7 +284,12 @@ type dryRunPending struct {
 // pending returns the objects a dry run would create in the active target
 func (s *Syncer) pending() *dryRunPending {
 	if s.dryRunPending == nil {
-		s.dryRunPending = &dryRunPending{inventoryRoles: map[string]bool{}, deviceGroups: map[string]bool{}}
+		s.dryRunPending = &dryRunPending{
+			inventoryRoles: map[string]bool{},
+			renamedRoles:   map[string]int64{},
+			removedRoles:   map[string]bool{},
+			deviceGroups:   map[string]bool{},
+		}
 	}
 	return s.dryRunPending
 }
@@ -400,6 +496,15 @@ func (s *Syncer) planInventoryAssignments(ctx context.Context, userID string, ex
 		var roleErr error
 		for _, roleName := range assignment.Roles {
 			roleID, err := cache.roleID(roleName)
+			if s.DryRun {
+				// The inventoryRoles section of the same dry run would
+				// rename or delete roles
+				if id, ok := s.pending().renamedRoles[roleName]; ok {
+					roleID, err = id, nil
+				} else if s.pending().removedRoles[roleName] {
+					roleID, err = 0, fmt.Errorf("inventory role %q: %w", roleName, errNotFound)
+				}
+			}
 			if err != nil {
 				if s.DryRun && errors.Is(err, errNotFound) && s.pending().inventoryRoles[roleName] {
 					if !slices.ContainsFunc(change.add, func(r inventoryRoleRef) bool { return r.pending && r.name == roleName }) {

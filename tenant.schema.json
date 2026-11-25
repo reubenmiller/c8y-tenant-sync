@@ -1034,6 +1034,24 @@
           "type": "string",
           "description": "Description of the inventory role (only updated when set)"
         },
+        "state": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "description": "present (default) creates or updates the role; absent deletes the role if it exists (the role must not be referenced in users[].inventoryRoles)"
+        },
+        "renamedFrom": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "Site operators"
+            ]
+          },
+          "type": "array",
+          "description": "Previous names of the role: when no role has the name but exactly one role has a previous name that role is renamed (keeping its assignments) instead of creating a new role; fails as ambiguous when both the name and a previous name exist"
+        },
         "permissions": {
           "items": {
             "$ref": "#/$defs/InventoryRolePermissionSpec"
@@ -2403,7 +2421,7 @@
         "$ref": "#/$defs/InventoryRoleSpec"
       },
       "type": "array",
-      "description": "Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryRoles"
+      "description": "Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"
     },
     "users": {
       "items": {

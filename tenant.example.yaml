@@ -222,9 +222,12 @@ globalRoles:
 # specific device groups (see users[].inventoryRoles). Roles are matched
 # by name; the permissions are replaced when the set differs. scope: ALARM,
 # AUDIT, EVENT, MANAGED_OBJECT, MEASUREMENT, OPERATION or *; type defaults to
-# *; permission: READ, ADMIN or * (ALL)
+# *; permission: READ, ADMIN or * (ALL). renamedFrom renames a role found
+# under a previous name (instead of creating a new one); state: absent deletes
+# a role. Roles not in the manifest are never deleted.
 inventoryRoles:
   - name: Site operator
+    renamedFrom: [Site operators]
     description: Alarms and operations for one site
     permissions:
       - {scope: ALARM, permission: ADMIN}
@@ -234,6 +237,8 @@ inventoryRoles:
   - name: Restart only
     permissions:
       - {scope: OPERATION, type: c8y_Restart, permission: ADMIN}
+  - name: Legacy viewer
+    state: absent
 
 # Create users and give them global roles and inventory roles. The password is
 # only used when creating a user (never updated afterwards); roles are

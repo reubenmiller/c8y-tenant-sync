@@ -1190,7 +1190,27 @@ Inventory roles:
 - are matched by **name** and created when missing;
 - get their **description** updated when it is set and differs;
 - get their **permissions replaced** when the set differs from the manifest (the order does not matter). The manifest owns the definition of a declared role. A role without `permissions` in the manifest keeps the permissions it has;
-- are never deleted, and roles not in the manifest are left alone.
+- are renamed when `renamedFrom` lists their previous names (see below);
+- are deleted only when they have `state: absent`. Roles not in the manifest are left alone.
+
+#### Renaming and deleting roles
+
+```yaml
+inventoryRoles:
+  - name: Site operator
+    renamedFrom: [Site operators, Operator (site)]
+    permissions:
+      - {scope: ALARM, permission: ADMIN}
+      - {scope: OPERATION, permission: ADMIN}
+
+  - name: Legacy viewer
+    state: absent
+```
+
+- `renamedFrom` lists previous names of a role. When no role has `name` but exactly one role has one of the previous names, that role is renamed (and its description and permissions are updated as usual) instead of creating a new role. Users keep the role, because their assignments refer to the role ID. If roles with both the new name and a previous name exist, or several roles have previous names, the role fails as ambiguous and nothing is changed. Once no role has a previous name, `renamedFrom` has no effect and can be removed.
+- `state: absent` (the default is `present`) deletes the role if it exists; a role which does not exist is reported as unchanged. Assignments of the role to users are not revoked first: if Cumulocity refuses to delete a role which is still assigned, the role fails with the error of the API.
+- A role with `state: absent` must not have `permissions` or `renamedFrom`. Validation fails when a user's `inventoryRoles` refers to a role with `state: absent` or to a previous name in `renamedFrom` (refer to the new name instead).
+- There is no option to delete every role which is not in the manifest: inventory roles have no field to mark who manages them, so this would also delete roles created by other teams in the UI.
 
 A user's inventory roles are applied in the `users` section, after the user is created or updated, and are **additive**:
 
@@ -1205,11 +1225,14 @@ A dry run (`--dry`) reads the inventory roles, device groups and assignments of 
 ```
 → [inventoryRoles] Site operator (planned): permissions: +OPERATION:c8y_Restart:ADMIN, -ALARM:*:READ
 → [inventoryRoles] Reader (planned): create with permissions: *:*:READ
+→ [inventoryRoles] Plant operator (planned): name: "Plant operators" → "Plant operator"
+→ [inventoryRoles] Legacy viewer (planned): delete
 ✓ [inventoryRoles] Restart only (unchanged)
 → [users] berlin-ops@example.com (planned): inventory roles on Europe/Plant Berlin: +Site operator, +Reader (new role)
 ```
 
-- A role to update lists the permissions it gains (`+`) and loses (`-`), and the old and new description.
+- A role to update lists the permissions it gains (`+`) and loses (`-`), and the old and new description. A role to rename shows its old and new name, and a role to delete shows `delete`.
+- Users of the same dry run already refer to a renamed role by its new name, and no longer by its old name or the name of a deleted role.
 - A role or device group which the same dry run would create (declared in `inventoryRoles` or `deviceGroups` but not in the tenant yet) is marked `(new role)` or `(new group)` instead of failing with "not found".
 - A user who does not exist yet shows the inventory roles they would get when created.
 

@@ -44,7 +44,7 @@ type Manifest struct {
 	GlobalRoles   []GlobalRoleSpec   `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed)"`
 	// InventoryRoles are permission sets which users get on specific device
 	// groups through users[].inventoryRoles
-	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update (matched by name); users get them on device groups through users[].inventoryRoles"`
+	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"`
 	Users          []UserSpec          `yaml:"users" json:"users,omitempty" jsonschema:"description=Users to create/update and give global roles and inventory roles (additive: existing roles are never removed)"`
 	// LoginOptions configures how users log in (basic, OAI-Secure, SSO)
 	LoginOptions  *LoginOptionsSpec   `yaml:"loginOptions" json:"loginOptions,omitempty" jsonschema:"description=Login options of the tenant: the preferred login mode and the basic and OAI-Secure and single sign-on (SSO) settings; additive: login options are never deleted and the preferred mode is switched last once the new option is checked"`
@@ -602,16 +602,37 @@ var InventoryRoleScopes = []string{"ALARM", "AUDIT", "EVENT", "MANAGED_OBJECT", 
 // ALL is an alias of "*" (the name used in the Cumulocity UI).
 var InventoryRolePermissionLevels = []string{"READ", "ADMIN", "*", "ALL"}
 
+// Inventory role states
+const (
+	InventoryRoleStatePresent = "present"
+	InventoryRoleStateAbsent  = "absent"
+)
+
+// InventoryRoleStates are the values of inventoryRoles[].state
+var InventoryRoleStates = []string{InventoryRoleStatePresent, InventoryRoleStateAbsent}
+
 // InventoryRoleSpec ensures an inventory role exists with the given
-// description and permissions. The role is matched by name; its permissions
-// are replaced when the set differs from the manifest (the manifest owns the
-// role definition).
+// description and permissions, or (state: absent) that it does not exist.
+// The role is matched by name; its permissions are replaced when the set
+// differs from the manifest (the manifest owns the role definition). A role
+// found only under one of its previous names (renamedFrom) is renamed.
 type InventoryRoleSpec struct {
 	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the inventory role (used to match an existing role),example=Site operator"`
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the inventory role (only updated when set)"`
 
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the role; absent deletes the role if it exists (the role must not be referenced in users[].inventoryRoles),enum=present,enum=absent"`
+
+	// RenamedFrom are previous names of the role
+	RenamedFrom []string `yaml:"renamedFrom" json:"renamedFrom,omitempty" jsonschema:"description=Previous names of the role: when no role has the name but exactly one role has a previous name that role is renamed (keeping its assignments) instead of creating a new role; fails as ambiguous when both the name and a previous name exist,example=Site operators"`
+
 	// Permissions is the full set of permissions of the role
 	Permissions []InventoryRolePermissionSpec `yaml:"permissions" json:"permissions,omitempty" jsonschema:"description=Permissions of the role (compared as a set; the role is updated when the set differs)"`
+}
+
+// Absent reports whether the role is to be deleted
+func (r InventoryRoleSpec) Absent() bool {
+	return strings.TrimSpace(r.State) == InventoryRoleStateAbsent
 }
 
 // InventoryRolePermissionSpec is a single permission of an inventory role,
@@ -1631,6 +1652,30 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: duplicate inventory role name %q", i, role.Name))
 		}
 		roleNames[role.Name] = true
+		if role.State != "" && !slices.Contains(InventoryRoleStates, role.State) {
+			errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: unknown state %q: supported values are %s", i, role.State, strings.Join(InventoryRoleStates, ", ")))
+		}
+		if role.Absent() {
+			if role.Permissions != nil {
+				errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: a role with state absent must not have permissions", i))
+			}
+			if role.RenamedFrom != nil {
+				errs = append(errs, fmt.Sprintf("inventoryRoles[%d]: a role with state absent must not have renamedFrom", i))
+			}
+		}
+		previousNames := make(map[string]bool, len(role.RenamedFrom))
+		for j, previous := range role.RenamedFrom {
+			prefix := fmt.Sprintf("inventoryRoles[%d].renamedFrom[%d]", i, j)
+			switch {
+			case strings.TrimSpace(previous) == "":
+				errs = append(errs, prefix+": previous name must not be empty")
+			case previous == role.Name:
+				errs = append(errs, fmt.Sprintf("%s: previous name %q is the name of the role", prefix, previous))
+			case previousNames[previous]:
+				errs = append(errs, fmt.Sprintf("%s: duplicate previous name %q", prefix, previous))
+			}
+			previousNames[previous] = true
+		}
 		permissionKeys := make(map[string]bool, len(role.Permissions))
 		for j, permission := range role.Permissions {
 			prefix := fmt.Sprintf("inventoryRoles[%d].permissions[%d]", i, j)
@@ -1648,6 +1693,29 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: duplicate permission %s", prefix, permission.Key()))
 			}
 			permissionKeys[permission.Key()] = true
+		}
+	}
+	// A previous name must not be declared as a role of its own (or be the
+	// previous name of two roles), and users must not reference a role
+	// which is deleted or renamed
+	absentRoles := map[string]bool{}
+	renamedTo := map[string]string{}
+	for i, role := range m.InventoryRoles {
+		if role.Absent() {
+			absentRoles[role.Name] = true
+		}
+		for j, previous := range role.RenamedFrom {
+			if strings.TrimSpace(previous) == "" || previous == role.Name {
+				continue
+			}
+			prefix := fmt.Sprintf("inventoryRoles[%d].renamedFrom[%d]", i, j)
+			if roleNames[previous] {
+				errs = append(errs, fmt.Sprintf("%s: previous name %q is also declared as an inventory role", prefix, previous))
+			}
+			if other, ok := renamedTo[previous]; ok && other != role.Name {
+				errs = append(errs, fmt.Sprintf("%s: previous name %q is also a previous name of %q", prefix, previous, other))
+			}
+			renamedTo[previous] = role.Name
 		}
 	}
 	usernames := make(map[string]bool, len(m.Users))
@@ -1688,8 +1756,13 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, prefix+": at least one role is required")
 			}
 			for k, role := range assignment.Roles {
-				if strings.TrimSpace(role) == "" {
+				switch {
+				case strings.TrimSpace(role) == "":
 					errs = append(errs, fmt.Sprintf("%s.roles[%d]: role must not be empty", prefix, k))
+				case absentRoles[role]:
+					errs = append(errs, fmt.Sprintf("%s.roles[%d]: inventory role %q has state absent in inventoryRoles", prefix, k, role))
+				case renamedTo[role] != "":
+					errs = append(errs, fmt.Sprintf("%s.roles[%d]: inventory role %q is renamed to %q in inventoryRoles", prefix, k, role, renamedTo[role]))
 				}
 			}
 		}

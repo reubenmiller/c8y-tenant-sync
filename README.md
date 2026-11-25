@@ -153,12 +153,14 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `run [path]` | Apply the manifest to the tenant (alias: `apply`) |
 | `schema` | Generate the JSON schema for the manifest (`-o file` to write to a file) |
 | `export` | Create a manifest from the current state of the tenant (`-o file` to write to a file), see [Exporting a tenant](#exporting-a-tenant) |
+| `bundle [path] -o file` | Package a manifest with the files it uses into a `.tar.gz` or `.zip` bundle, see [Bundles](#bundles) |
 
 ### Run flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-f`, `--manifest` | `tenant.yaml` | Path to the manifest file (also accepted as a positional argument) |
+| `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file (also accepted as a positional argument), see [Remote manifests](#remote-manifests) |
+| `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry-run`, `--dry` | | Preview changes without applying them |
 | `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `applications`, `deviceGroups`, `userGroups`, `inventoryRoles`, `users`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
@@ -457,6 +459,85 @@ When to use which:
 
 - Use `include` when a manifest always needs its base, e.g. `prod.yaml` is never applied without `base/common.yaml`. The composition is then part of the reviewed file, and `run -f prod.yaml` is enough.
 - Use several files on the command line to combine independent manifests per call, e.g. a CI job which applies `base.yaml` with a different customer file for each tenant, or a local overlay file which is not committed.
+
+#### Remote manifests
+
+A manifest can be an http(s) URL, on the command line or in an `include` list. Repository owners can then publish a manifest which users apply directly, without downloading it first:
+
+```bash
+c8y tenant-sync run https://raw.githubusercontent.com/org/repo/main/tenant.yaml --dry-run
+```
+
+```yaml
+# tenant.yaml
+include:
+  - https://raw.githubusercontent.com/org/repo/v1.2.0/base.yaml   # pin a tag or commit
+tenantOptions:
+  - category: configuration
+    key: system.timezone.default
+    value: Europe/Berlin
+```
+
+Rules:
+
+- **Includes**: relative include paths in a remote manifest are resolved against its URL (`base/common.yaml` next to `https://example.com/repo/tenant.yaml` is `https://example.com/repo/base/common.yaml`). A remote manifest can't include local files or glob patterns. `optional: true` skips an include which returns HTTP 404.
+- **Sources**: a remote manifest has no local directory, so `source.path` is an error. Use `url`, `github` or `cloudsmith` sources, or publish a [bundle](#bundles), which carries its files.
+- **Hooks and commands**: hooks and `commands` run shell commands on your machine, so they are errors in a remote manifest unless `--allow-remote-commands` is set. They then run from the directory of the main manifest, or the current directory when the main manifest is a URL.
+- **Same pipeline**: remote manifests are decrypted with sops and expanded like local files, so `${VAR}` references are filled from your environment. Only apply manifests from sources you trust, and pin a tag or commit in the URL so the content can't change between runs.
+- **Secrets file**: when the main manifest is a URL, the default secrets file is in the current directory and named after the URL (`.../prod.yaml` → `prod.secrets.yaml`). Use `--secrets-file` to pick another file.
+- **Authentication**: `GITHUB_TOKEN` (or `GH_TOKEN`) is sent to `github.com` and `raw.githubusercontent.com`, so manifests in private repositories work. No credentials are sent to other hosts.
+
+#### Bundles
+
+A bundle is an archive (`.tar.gz`, `.tgz` or `.zip`) with a manifest and the files it uses: included manifests, certificates, packages, and scripts for hooks and commands. Repository owners publish it, for example as a GitHub release asset, and other manifests include it like any other manifest. Unlike a plain [remote manifest](#remote-manifests), a bundle can use local `source.path` values, because its files travel with it.
+
+Create a bundle with the `bundle` command:
+
+```bash
+c8y tenant-sync bundle blueprint.yaml -o blueprint.tar.gz --add scripts
+```
+
+It adds the manifest, the local manifests it includes, and the files of its local sources (`source.path`), and prints the archive's SHA-256 checksum. Includes from URLs and GitHub releases stay remote. The files used by hooks and commands aren't known to the manifest, so add them with `--add` (a file or a directory, repeatable). All files must be in the manifest's directory or below it, and the default secrets file is never added. The archive is reproducible: the same files give the same checksum. A `.tenant-sync-bundle.yaml` file in the archive names the entry manifest.
+
+To publish a bundle with each release, build it in the release workflow and upload it as an asset (`bundle` needs no Cumulocity session):
+
+```yaml
+# .github/workflows/release.yaml (on: release: types: [published])
+- run: c8y tenant-sync bundle blueprint.yaml -o blueprint-${{ github.ref_name }}.tar.gz --add scripts
+- run: gh release upload "${{ github.ref_name }}" blueprint-${{ github.ref_name }}.tar.gz
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+Include a bundle from a GitHub release with the same `github` keys as other sources:
+
+```yaml
+include:
+  - github:
+      repo: org/tenant-blueprints
+      release: v1.2.0                 # latest (default) or a tag
+      assets: ["blueprint-*.tar.gz"]  # default: *.tar.gz, *.tgz, *.zip
+  - path: vendor/certs-bundle.zip     # a local bundle
+  - path: https://example.com/releases/blueprint.tar.gz
+    sha256: 212fb365858261be6b1bfe0f95ff54564291686a8bc177034414ecf4dce11de9
+    manifest: blueprint.yaml          # entry manifest inside the bundle
+```
+
+A bundle can also be applied directly:
+
+```bash
+c8y tenant-sync run blueprint.tar.gz --dry-run
+c8y tenant-sync run https://example.com/releases/blueprint.tar.gz --dry-run
+```
+
+Rules:
+
+- **Selection**: a `github` include needs exactly one release and exactly one asset. `release` is `latest` or a tag (`tags` patterns and `includePrereleases` work as for sources). Several matching assets are an error; narrow them with `assets`. `optional: true` skips the entry when no release or asset matches. `token`, `tokenFrom.env`, `GITHUB_TOKEN` and `GH_TOKEN` work for private repositories.
+- **Entry manifest**: `manifest` names the entry manifest. Without it, the manifest named in `.tenant-sync-bundle.yaml` is used, else `tenant.yaml`, else the only YAML file at the top level. An archive which wraps all files in a single folder (like a GitHub source archive) is searched in that folder.
+- **Integrity**: the download of a release asset is checked against the SHA-256 digest GitHub publishes for it (assets uploaded before GitHub added digests have none). `sha256` pins the exact archive for any bundle.
+- **Paths**: a bundle is extracted to a temp folder for the run. Its relative paths are resolved inside it, so hooks run from the folder of the bundled file that declares them. A bundle from a URL or GitHub can't reach outside itself: includes and `source.path` values which leave the bundle are errors, and archive entries with `..` or absolute paths are rejected. A local bundle is trusted like local files.
+- **Hooks and commands**: hooks and `commands` of a bundle from a URL or GitHub need `--allow-remote-commands`, like those of a remote manifest.
+- **Output**: included files are shown as `bundle!path`, e.g. `org/tenant-blueprints@v1.2.0/blueprint.tar.gz!base.yaml`.
 
 ### Sources
 

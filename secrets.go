@@ -149,7 +149,13 @@ type SecretStore struct {
 
 // DefaultSecretsPath returns the secrets file of a manifest, e.g.
 // tenant.yaml -> tenant.secrets.yaml
+//
+// For a manifest URL, the file is in the current directory and named after
+// the URL, e.g. https://example.com/prod.yaml -> prod.secrets.yaml
 func DefaultSecretsPath(manifestPath string) string {
+	if isRemoteManifest(manifestPath) {
+		manifestPath = remoteManifestName(manifestPath)
+	}
 	ext := filepath.Ext(manifestPath)
 	return strings.TrimSuffix(manifestPath, ext) + ".secrets.yaml"
 }

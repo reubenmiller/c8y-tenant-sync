@@ -78,6 +78,9 @@ func decryptSops(path string) ([]byte, error) {
 // readManifestFile reads a manifest, decrypting it first when it is
 // encrypted with sops
 func readManifestFile(path string) ([]byte, error) {
+	if isRemoteManifest(path) {
+		return readRemoteManifest(path)
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
@@ -93,6 +96,29 @@ func readManifestFile(path string) ([]byte, error) {
 		return nil, err
 	}
 	if err := checkSopsValues(path, decrypted, true); err != nil {
+		return nil, err
+	}
+	return decrypted, nil
+}
+
+// readRemoteManifest fetches a manifest from a URL, decrypting it with sops
+// when it is encrypted
+func readRemoteManifest(location string) ([]byte, error) {
+	raw, err := fetchRemoteManifest(location)
+	if err != nil {
+		return nil, err
+	}
+	if !isSopsEncrypted(raw) {
+		if err := checkSopsValues(location, raw, false); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	}
+	decrypted, err := decryptRemoteSops(location, raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSopsValues(location, decrypted, true); err != nil {
 		return nil, err
 	}
 	return decrypted, nil

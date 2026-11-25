@@ -68,6 +68,7 @@ The "run" command uses the active go-c8y-cli session.`,
 		newRunCmd(),
 		newSchemaCmd(),
 		newExportCmd(),
+		newBundleCmd(),
 	)
 	addExamplesFlag(root)
 	return root

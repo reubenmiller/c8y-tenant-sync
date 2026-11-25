@@ -711,28 +711,103 @@
           "type": "string",
           "examples": [
             "base.yaml",
-            "common/*.yaml"
+            "common/*.yaml",
+            "https://raw.githubusercontent.com/org/repo/main/base.yaml",
+            "vendor/blueprint.tar.gz"
           ]
         },
         {
+          "oneOf": [
+            {
+              "required": [
+                "path"
+              ]
+            },
+            {
+              "required": [
+                "github"
+              ]
+            }
+          ],
           "properties": {
             "path": {
               "type": "string",
-              "description": "File path or glob pattern (*, ?, [...]) relative to the directory of the including file"
+              "description": "File path or glob pattern (*, ?, [...]) relative to the directory of the including file, an http(s) URL, or a bundle archive (.tar.gz, .tgz or .zip)"
+            },
+            "github": {
+              "properties": {
+                "repo": {
+                  "type": "string",
+                  "pattern": "^[^/]+/[^/]+$",
+                  "description": "Repository in the form owner/name"
+                },
+                "release": {
+                  "type": "string",
+                  "description": "Release to use: latest (default) or a tag; with tags: the latest release matching the patterns"
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "description": "Glob patterns matched against the release tags"
+                },
+                "assets": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "description": "Glob patterns matched against the release asset names; exactly one asset must match (default: *.tar.gz, *.tgz, *.zip)"
+                },
+                "includePrereleases": {
+                  "type": "boolean",
+                  "description": "Include prereleases when release is latest"
+                },
+                "token": {
+                  "type": "string",
+                  "description": "GitHub API token (falls back to GITHUB_TOKEN / GH_TOKEN env vars; supports ${VAR} expansion)"
+                },
+                "tokenFrom": {
+                  "properties": {
+                    "env": {
+                      "type": "string",
+                      "description": "Name of an environment variable which holds the token"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "env"
+                  ],
+                  "description": "Take the GitHub API token from an environment variable"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "repo"
+              ],
+              "description": "Include a bundle from a GitHub release asset"
+            },
+            "manifest": {
+              "type": "string",
+              "description": "Entry manifest inside a bundle (default: from .tenant-sync-bundle.yaml, else tenant.yaml, else the only YAML file at the top level)"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^(sha256:)?[0-9a-fA-F]{64}$",
+              "description": "Expected SHA-256 checksum of a bundle archive"
             },
             "optional": {
               "type": "boolean",
-              "description": "Skip the entry instead of failing when the file does not exist or the glob pattern matches nothing"
+              "description": "Skip the entry instead of failing when the file does not exist, the glob pattern matches nothing, or no release asset matches"
             }
           },
           "additionalProperties": false,
-          "type": "object",
-          "required": [
-            "path"
-          ]
+          "type": "object"
         }
       ],
-      "description": "Manifest file path or glob pattern relative to the including file, or an object with path and optional"
+      "description": "Manifest file path or glob pattern relative to the including file, an http(s) URL, or an object with path or github (bundle)"
     },
     "InventoryAssignmentSpec": {
       "properties": {

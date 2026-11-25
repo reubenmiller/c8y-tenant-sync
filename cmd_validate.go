@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,7 +9,7 @@ import (
 
 func newValidateCmd() *cobra.Command {
 	var manifestFlags []string
-	var checkSources, verbose bool
+	var checkSources, verbose, allowRemoteCommands bool
 	cmd := &cobra.Command{
 		Use:   "validate [manifest.yaml...]",
 		Short: "Validate a manifest file",
@@ -20,10 +19,14 @@ Unknown fields are errors. Use --check-sources to also resolve every source (loc
 paths must exist, GitHub releases must have matching assets).
 
 Several manifests (repeated -f flags or several arguments) are validated and merged
-in order, like files included in that order: later files win.`,
+in order, like files included in that order: later files win.
+
+A manifest can also be an http(s) URL. Hooks and commands of remote manifests
+are errors unless --allow-remote-commands is set.`,
 		Example: formatExamples(
 			example{"validate tenant.yaml", "Validate the manifest schema (unknown fields are errors)"},
 			example{"validate base.yaml prod.yaml", "Validate the merge of two manifests (prod.yaml wins)"},
+			example{"validate https://example.com/tenant.yaml", "Validate a manifest fetched from a URL"},
 			example{"validate tenant.yaml --check-sources", "Also check that every local path exists and every GitHub release has matching assets"},
 		),
 		Args:              cobra.ArbitraryArgs,
@@ -34,21 +37,23 @@ in order, like files included in that order: later files win.`,
 			if err != nil {
 				return err
 			}
-			return runValidate(manifestPaths, checkSources)
+			return runValidate(manifestPaths, checkSources, allowRemoteCommands)
 		},
 	}
 	cmd.Flags().StringArrayVarP(&manifestFlags, "manifest", "f", nil, "Path to the tenant manifest file (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
 	cmd.Flags().BoolVar(&checkSources, "check-sources", false, "Also resolve every source (local paths must exist, GitHub releases must have matching assets)")
+	cmd.Flags().BoolVar(&allowRemoteCommands, "allow-remote-commands", false, "Allow hooks and commands in manifests fetched from a URL")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Enable detailed logging")
 	_ = cmd.RegisterFlagCompletionFunc("manifest", completeManifestFileList)
 	return cmd
 }
 
-func runValidate(manifestPaths []string, checkSources bool) error {
-	manifest, err := LoadManifestsWith(manifestPaths, LoadOptions{})
+func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool) error {
+	manifest, err := LoadManifestsWith(manifestPaths, LoadOptions{AllowRemoteCommands: allowRemoteCommands})
 	if err != nil {
 		return err
 	}
+	defer manifest.Cleanup()
 	// Relative source paths are based on the first manifest
 	manifestPath := manifestPaths[0]
 
@@ -93,7 +98,7 @@ func runValidate(manifestPaths []string, checkSources bool) error {
 	}
 
 	fmt.Println("\nChecking sources...")
-	resolver := NewSourceResolver(filepath.Dir(manifestPath), "", true)
+	resolver := NewSourceResolver(manifestBaseDir(manifestPath), "", true)
 
 	failures := 0
 	check := func(section string, index int, source Source) {

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,17 +26,20 @@ type fakeInventory struct {
 	objects map[string]map[string]any
 	// children maps a parent ID to its child asset IDs
 	children map[string][]string
-	nextID   int
+	// childDevices maps a parent ID to its child device IDs
+	childDevices map[string][]string
+	nextID       int
 }
 
 var fakeNameFilter = regexp.MustCompile(`name eq '((?:[^']|'')*)'`)
 
 func newFakeInventory(t *testing.T) *fakeInventory {
 	inv := &fakeInventory{
-		f:        newFakeC8y(t),
-		objects:  map[string]map[string]any{},
-		children: map[string][]string{},
-		nextID:   100,
+		f:            newFakeC8y(t),
+		objects:      map[string]map[string]any{},
+		children:     map[string][]string{},
+		childDevices: map[string][]string{},
+		nextID:       100,
 	}
 	inv.f.Handle("GET /inventory/managedObjects", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
@@ -132,7 +137,31 @@ func (inv *fakeInventory) add(id string, obj map[string]any) {
 			}})
 		}
 		inv.mu.Unlock()
+		statistics := stats()
+		statistics["totalElements"] = len(refs)
+		if size, err := strconv.Atoi(r.URL.Query().Get("pageSize")); err == nil && size < len(refs) {
+			refs = refs[:size]
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"references": refs, "statistics": statistics})
+	})
+	inv.f.Handle("GET /inventory/managedObjects/"+id+"/childDevices", func(w http.ResponseWriter, r *http.Request) {
+		inv.mu.Lock()
+		refs := []any{}
+		for _, child := range inv.childDevices[id] {
+			refs = append(refs, map[string]any{"managedObject": map[string]any{"id": child, "name": inv.objects[child]["name"]}})
+		}
+		inv.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"references": refs, "statistics": stats()})
+	})
+	inv.f.Handle("DELETE /inventory/managedObjects/"+id, func(w http.ResponseWriter, r *http.Request) {
+		inv.mu.Lock()
+		delete(inv.objects, id)
+		delete(inv.children, id)
+		for parent, children := range inv.children {
+			inv.children[parent] = slices.DeleteFunc(children, func(child string) bool { return child == id })
+		}
+		inv.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	})
 	inv.f.Handle("POST /inventory/managedObjects/"+id+"/childAssets", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any

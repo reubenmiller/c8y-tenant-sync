@@ -422,6 +422,14 @@
             "Europe"
           ]
         },
+        "state": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "description": "present (default) creates or updates the group; absent deletes the group if it exists"
+        },
         "description": {
           "type": "string",
           "description": "Description of the device group (left alone when omitted)"

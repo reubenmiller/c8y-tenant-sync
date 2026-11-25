@@ -532,10 +532,24 @@ func (a ApplicationSpec) IsSubscribed() bool {
 	return a.Subscribed == nil || *a.Subscribed
 }
 
+// Device group states
+const (
+	DeviceGroupStatePresent = "present"
+	DeviceGroupStateAbsent  = "absent"
+)
+
+// DeviceGroupStates are the values of deviceGroups[].state
+var DeviceGroupStates = []string{DeviceGroupStatePresent, DeviceGroupStateAbsent}
+
 // DeviceGroupSpec ensures a device group exists below its parent (or at the
-// root level) together with its child groups
+// root level) together with its child groups, or (state: absent) that it
+// does not exist
 type DeviceGroupSpec struct {
-	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the device group; identifies the group among the groups of its parent (or among the root groups),minLength=1,example=Europe"`
+	Name string `yaml:"name" json:"name" jsonschema:"description=Name of the device group; identifies the group among the groups of its parent (or among the root groups),minLength=1,example=Europe"`
+
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the group; absent deletes the group if it exists, after the users section, children first (an absent entry may only have name and groups, its child groups must be absent too, and it must not be referenced in users[].inventoryRoles; a group which still has child assets or child devices is never deleted: the sync fails and lists them),enum=present,enum=absent"`
+
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the device group (left alone when omitted)"`
 
 	// Fragments are merged into the managed object; a fragment is only
@@ -543,6 +557,11 @@ type DeviceGroupSpec struct {
 	Fragments map[string]any `yaml:"fragments" json:"fragments,omitempty" jsonschema:"description=Additional fragments merged into the group managed object (updated when the existing value does not contain the desired values)"`
 
 	Groups []DeviceGroupSpec `yaml:"groups" json:"groups,omitempty" jsonschema:"description=Child groups linked to this group as child assets"`
+}
+
+// Absent reports whether the device group is to be deleted
+func (g DeviceGroupSpec) Absent() bool {
+	return strings.TrimSpace(g.State) == DeviceGroupStateAbsent
 }
 
 // Global role states
@@ -1505,7 +1524,7 @@ func validateExplicitConfiguration(label string, spec ConfigurationSpec) []strin
 // validateDeviceGroups checks a level of the device group tree: names are
 // required and unique among siblings, and fragments must not set reserved
 // properties
-func validateDeviceGroups(label string, groups []DeviceGroupSpec) []string {
+func validateDeviceGroups(label string, groups []DeviceGroupSpec, parentAbsent bool) []string {
 	var errs []string
 	names := make(map[string]bool, len(groups))
 	for i, group := range groups {
@@ -1525,9 +1544,48 @@ func validateDeviceGroups(label string, groups []DeviceGroupSpec) []string {
 				errs = append(errs, fmt.Sprintf("%s.fragments: %q can not be set as a fragment", itemLabel, key))
 			}
 		}
-		errs = append(errs, validateDeviceGroups(itemLabel+".groups", group.Groups)...)
+		if group.State != "" && !slices.Contains(DeviceGroupStates, group.State) {
+			errs = append(errs, fmt.Sprintf("%s: unknown state %q: supported values are %s", itemLabel, group.State, strings.Join(DeviceGroupStates, ", ")))
+		}
+		if group.Absent() {
+			var extra []string
+			if group.Description != "" {
+				extra = append(extra, "description")
+			}
+			if group.Fragments != nil {
+				extra = append(extra, "fragments")
+			}
+			if len(extra) > 0 {
+				errs = append(errs, fmt.Sprintf("%s: a group with state absent may only have name and groups (remove %s)", itemLabel, strings.Join(extra, ", ")))
+			}
+		} else if parentAbsent {
+			errs = append(errs, fmt.Sprintf("%s: the parent group has state absent, so group %q must have state absent too (or be removed from the manifest)", itemLabel, group.Name))
+		}
+		errs = append(errs, validateDeviceGroups(itemLabel+".groups", group.Groups, group.Absent())...)
 	}
 	return errs
+}
+
+// absentDeviceGroups returns the paths ("Europe/Plant Berlin") and the names
+// of the device groups with state absent
+func absentDeviceGroups(groups []DeviceGroupSpec) (paths, names map[string]bool) {
+	paths, names = map[string]bool{}, map[string]bool{}
+	var walk func(parentPath string, groups []DeviceGroupSpec)
+	walk = func(parentPath string, groups []DeviceGroupSpec) {
+		for _, group := range groups {
+			path := group.Name
+			if parentPath != "" {
+				path = parentPath + "/" + group.Name
+			}
+			if group.Absent() {
+				paths[path] = true
+				names[group.Name] = true
+			}
+			walk(path, group.Groups)
+		}
+	}
+	walk("", groups)
+	return paths, names
 }
 
 // validateAbsoluteURL checks that an optional url is absolute
@@ -1770,7 +1828,8 @@ func (m *Manifest) Validate() error {
 			seen[ext.Name] = true
 		}
 	}
-	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)
+	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups, false)...)
+	absentGroupPaths, absentGroupNames := absentDeviceGroups(m.DeviceGroups)
 	groupNames := make(map[string]bool, len(m.GlobalRoles))
 	absentGlobalRoles := map[string]bool{}
 	for i, group := range m.GlobalRoles {
@@ -1931,6 +1990,9 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: duplicate group %q (list all roles of a group in one entry)", prefix, assignment.Group))
 			} else {
 				assignedGroups[key] = true
+				if absentGroupPaths[key] || absentGroupNames[key] {
+					errs = append(errs, fmt.Sprintf("%s: device group %q has state absent in deviceGroups", prefix, assignment.Group))
+				}
 			}
 			if len(assignment.Roles) == 0 {
 				errs = append(errs, prefix+": at least one role is required")

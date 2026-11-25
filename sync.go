@@ -160,6 +160,9 @@ type Syncer struct {
 	// globalRoles section found; they are deleted after the inventory roles
 	// (reset per target)
 	globalRoleDeletes []globalRoleDelete
+	// deviceGroupDeletes are the device groups with state absent which the
+	// deviceGroups section found; they are deleted last (reset per target)
+	deviceGroupDeletes []deviceGroupDelete
 	// multiTarget is set when the run covers tenants other than the current
 	// one, enabling per-tenant labels in the output
 	multiTarget bool
@@ -410,6 +413,7 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 	s.dryRunPending = nil
 	s.roleDeletes = nil
 	s.globalRoleDeletes = nil
+	s.deviceGroupDeletes = nil
 	deleteAfter := deferredDeleteSection(only)
 	if err := s.runHooks(ctx, "pre", manifest.Hooks.Pre); err != nil {
 		return err

@@ -37,6 +37,7 @@ func deferredDeleteSection(only []string) string {
 func (s *Syncer) runDeferredDeletes(ctx context.Context) {
 	s.DeleteInventoryRoles(ctx)
 	s.DeleteGlobalRoles(ctx)
+	s.DeleteDeviceGroups(ctx)
 }
 
 // globalRoleDelete is a global role with state absent which exists in the

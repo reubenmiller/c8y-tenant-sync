@@ -89,7 +89,7 @@ func (s *Syncer) ensureExtension(ctx context.Context, spec ExtensionSpec) {
 		s.record(SectionExtensions, spec.Name, ActionFailed, "read "+files[0].Filename, err)
 		return
 	}
-	if manifest.Name != "" && manifest.Name != spec.Name {
+	if manifest.Name != "" && !sameName(manifest.Name, spec.Name) {
 		s.record(SectionExtensions, spec.Name, ActionFailed, "",
 			fmt.Errorf("%s contains the extension %q, not %q", files[0].Filename, manifest.Name, spec.Name))
 		return
@@ -136,6 +136,7 @@ func (s *Syncer) ensureExtension(ctx context.Context, spec ExtensionSpec) {
 	if tags == nil {
 		tags = []string{applicationplugins.VersionLatest}
 	}
+	s.extensionCache = nil // the extension or its versions change
 	upload := s.Client.ApplicationVersions.CreateFromFile(ctx, appID, files[0].Path, version, tags)
 	if upload.Err != nil {
 		s.record(SectionExtensions, spec.Name, ActionFailed, "upload version "+version, upload.Err)
@@ -168,37 +169,62 @@ func (s *Syncer) recordExtensionSourceError(spec ExtensionSpec, err error) {
 	s.record(SectionExtensions, spec.Name, ActionFailed, "resolve source", err)
 }
 
-// ownedExtension returns the extension of the given name owned by the owner
-// tenant (nil if none)
-func (s *Syncer) ownedExtension(ctx context.Context, name, owner string) (*jsonmodels.UIPlugin, error) {
-	result := s.Client.UIPlugins.List(ctx, plugins.ListOptions{
-		Name:              name,
-		PaginationOptions: pagination.PaginationOptions{PageSize: 100},
-	})
-	for plugin, err := range result.Items() {
-		if err != nil {
-			return nil, err
+// extensionCatalog lists the extensions the tenant can install: its own and
+// the shared ones. The list is read once and read again after an extension
+// was created or uploaded.
+func (s *Syncer) extensionCatalog(ctx context.Context) ([]jsonmodels.UIPlugin, error) {
+	if s.extensionCache != nil {
+		return s.extensionCache, nil
+	}
+	catalog := []jsonmodels.UIPlugin{}
+	seen := map[string]bool{}
+	for _, opt := range []plugins.ListOptions{
+		{Type: "HOSTED"},
+		{Availability: "SHARED"},
+	} {
+		opt.PaginationOptions = pagination.PaginationOptions{PageSize: 2000}
+		for plugin, err := range s.Client.UIPlugins.List(ctx, opt).Items() {
+			if err != nil {
+				return nil, err
+			}
+			if !seen[plugin.ID()] {
+				seen[plugin.ID()] = true
+				catalog = append(catalog, plugin)
+			}
 		}
-		if plugin.Name() == name && plugin.Get("owner.tenant.id").String() == owner {
+	}
+	s.extensionCache = catalog
+	return catalog, nil
+}
+
+// ownedExtension returns the extension of the given name (ignoring case)
+// owned by the owner tenant (nil if none)
+func (s *Syncer) ownedExtension(ctx context.Context, name, owner string) (*jsonmodels.UIPlugin, error) {
+	catalog, err := s.extensionCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, plugin := range catalog {
+		if sameName(plugin.Name(), name) && plugin.Get("owner.tenant.id").String() == owner {
 			return &plugin, nil
 		}
 	}
 	return nil, nil
 }
 
-// visibleExtension returns the extension of the given name (or context path)
-// which the tenant can install, preferring one owned by the owner tenant
+// visibleExtension returns the extension of the given name or context path
+// (ignoring case) which the tenant can install, preferring one owned by the
+// owner tenant. When there is none, the error suggests close names.
 func (s *Syncer) visibleExtension(ctx context.Context, name, owner string) (*jsonmodels.UIPlugin, error) {
-	result := s.Client.UIPlugins.List(ctx, plugins.ListOptions{
-		Name:              name,
-		PaginationOptions: pagination.PaginationOptions{PageSize: 100},
-	})
+	catalog, err := s.extensionCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var found *jsonmodels.UIPlugin
-	for plugin, err := range result.Items() {
-		if err != nil {
-			return nil, err
-		}
-		if plugin.Name() != name && plugin.ContextPath() != name {
+	var candidates []string
+	for _, plugin := range catalog {
+		candidates = append(candidates, plugin.Name(), plugin.ContextPath())
+		if !sameName(plugin.Name(), name) && !sameName(plugin.ContextPath(), name) {
 			continue
 		}
 		if plugin.Get("owner.tenant.id").String() == owner {
@@ -208,7 +234,23 @@ func (s *Syncer) visibleExtension(ctx context.Context, name, owner string) (*jso
 			found = &plugin
 		}
 	}
+	if found == nil {
+		return nil, errExtensionNotFound{name: name, suggestions: suggestNames(name, candidates, 3)}
+	}
 	return found, nil
+}
+
+// errExtensionNotFound is returned for an extension the tenant can't install
+type errExtensionNotFound struct {
+	name        string
+	suggestions []string
+}
+
+func (e errExtensionNotFound) Error() string {
+	if len(e.suggestions) > 0 {
+		return fmt.Sprintf("extension %q not found%s", e.name, didYouMean(e.suggestions))
+	}
+	return fmt.Sprintf("extension %q not found (upload it with the extensions section, or check its name or context path in the Extensions page of the Administration application)", e.name)
 }
 
 // recordUploadedExtension records an extension whose version is already
@@ -234,6 +276,7 @@ func (s *Syncer) recordUploadedExtension(ctx context.Context, spec ExtensionSpec
 		s.record(SectionExtensions, spec.Name, ActionFailed, detail, fmt.Errorf("no binary found for version %s to activate", active))
 		return
 	}
+	s.extensionCache = nil
 	if result := s.Client.UIPlugins.Activate(ctx, plugin.ID(), binaryID); result.Err != nil {
 		s.record(SectionExtensions, spec.Name, ActionFailed, detail+"; activate version "+active, result.Err)
 		return
@@ -372,15 +415,29 @@ func (s *Syncer) syncApplicationExtensions(ctx context.Context, spec Application
 	var pending []pendingExtension
 	for _, ext := range spec.Extensions {
 		plugin, err := s.visibleExtension(ctx, ext.Name, owner)
-		if err != nil {
+		var notFound errExtensionNotFound
+		switch {
+		case errors.As(err, &notFound) && ext.IsInstalled():
+			s.record(SectionApplications, item(ext), ActionFailed, "", err)
+			continue
+		case err != nil && !errors.As(err, &notFound):
 			s.record(SectionApplications, item(ext), ActionFailed, "lookup", err)
 			continue
 		}
+		// An extension which no longer exists can still be removed by its
+		// context path
 		contextPath := ext.Name
 		if plugin != nil {
 			contextPath = plugin.ContextPath()
 		}
 		have, isInstalled := installed[contextPath]
+		if !isInstalled && plugin == nil {
+			for cp, p := range installed {
+				if sameName(cp, ext.Name) {
+					contextPath, have, isInstalled = cp, p, true
+				}
+			}
+		}
 
 		if !ext.IsInstalled() {
 			if !isInstalled {
@@ -392,11 +449,6 @@ func (s *Syncer) syncApplicationExtensions(ctx context.Context, spec Application
 			continue
 		}
 
-		if plugin == nil {
-			s.record(SectionApplications, item(ext), ActionFailed, "",
-				fmt.Errorf("extension %q not found (upload it with the extensions section)", ext.Name))
-			continue
-		}
 		version := resolveExtensionVersion(*plugin, ext.VersionOrLatest())
 		if version == "" {
 			s.record(SectionApplications, item(ext), ActionFailed, "",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/jsonmodels"
 	"os"
 	"reflect"
 	"sort"
@@ -151,6 +152,9 @@ type Syncer struct {
 	// per run in the tenant running the sync (not once per target)
 	extensionsDone    map[string]bool
 	appExtensionsDone map[string]bool
+	// extensionCache is the catalog of the extensions the tenant can install
+	// (nil: not read yet, or changed since)
+	extensionCache []jsonmodels.UIPlugin
 	// subscriptionCache caches the subscribed applications by tenant ID
 	subscriptionCache map[string]subscriptions
 	// baseTenantID is the tenant of the credentials running the sync

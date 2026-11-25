@@ -989,7 +989,12 @@ extensions:
 ```
 
 - The version is read from the archive filename (`my-widget-plugin-1.2.0.zip`) or the release tag without downloading. When the version is already on the extension, nothing is downloaded. Otherwise the archive is downloaded and the version in its `cumulocity.json` is used.
-- The `name` must match the name in the `cumulocity.json` of the archive. The key and context path of a new extension are also taken from it.
+- The `name` must match the name in the `cumulocity.json` of the archive (ignoring case). The key and context path of a new extension are also taken from it. `validate --check-sources` downloads the archive and reports a wrong name with the right one:
+
+  ```
+    ✗ extensions[0]: cloud-http-proxy-ui.zip contains the extension "Cloud HTTP proxy", not "cloud-http-proxy-ui": set name to "Cloud HTTP proxy"
+    ✓ extensions[0]: Cloud HTTP proxy 2.13.1 (context path sag-pkg-remote-access-cloud-http-proxy)
+  ```
 - A version uploaded with the `latest` tag becomes the active version of the extension, as when you upload it in the Administration application. An extension without an active version gets its `latest` version activated on the next run.
 - Versions are never deleted, and `--force` does not upload a version which is already on the extension.
 
@@ -1012,7 +1017,22 @@ applications:
 ```
 
 - This is the manifest version of opening the application in the Administration application and selecting the extension under **Plugins > Install plugin**. Both write the extension into the application's `config.remotes` as `"<contextPath>@<version>": [<modules>]`. The modules are the `exports` of the `cumulocity.json` of that version. The application loads the extension the next time it is opened.
+- An entry references the extension by its name or its context path, ignoring case.
 - Installing is additive: extensions installed through the Administration application which are not listed are kept. `installed: false` removes one.
+- Names are easy to get wrong, so they are checked twice:
+  - `validate` warns about an entry which is not uploaded by the `extensions` section, and suggests the closest declared names. It is only a warning, since the extension may already be on the tenant (for example a shared one). With `--check-sources` the context paths and names in the archives count too.
+
+    ```
+      ⚠ applications[0].extensions[0]: "Cloud HTTP Proxi" is not uploaded by the extensions section, so it must already be on the tenant (matched by name or context path); did you mean "Cloud HTTP proxy"?
+    ```
+
+  - At run time, an extension which the tenant can't install fails with the closest names and context paths of the extensions on the tenant:
+
+    ```
+      ✗ [applications] devicemanagement/Cloud HTTP Proxi (failed): extension "Cloud HTTP Proxi" not found; did you mean "Cloud HTTP proxy"?
+    ```
+
+- The `extensions` section runs before `applications`, so an extension uploaded in a run can be installed in the same run. With `--only applications`, the extension must already be on the tenant.
 - An extension is only changed when the version (or the version the tag points to) or its modules differ from the installed ones, so `latest` follows new uploads on the next run:
 
   ```

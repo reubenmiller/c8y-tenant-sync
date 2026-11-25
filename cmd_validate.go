@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/reubenmiller/go-c8y/v2/pkg/c8y/api/ui/plugins"
 	"github.com/spf13/cobra"
 )
 
@@ -96,6 +98,7 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	printSectionCount(SectionDeviceProfiles, len(manifest.DeviceProfiles))
 
 	if !checkSources {
+		printWarnings(manifest.ExtensionReferenceWarnings(nil))
 		return nil
 	}
 
@@ -155,8 +158,30 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 			check(SectionMicroservices, i, *spec.Source)
 		}
 	}
-	for i, spec := range manifest.Extensions {
-		check(SectionExtensions, i, spec.Source)
+	// Extension archives are downloaded to compare the name in their
+	// cumulocity.json; their context paths can also be referenced
+	contextPaths := map[string]string{}
+	if len(manifest.Extensions) > 0 {
+		workDir, err := os.MkdirTemp("", "tenant-sync-validate-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(workDir)
+		downloader := NewSourceResolver(manifestBaseDir(manifestPath), workDir, false)
+		for i, spec := range manifest.Extensions {
+			label := fmt.Sprintf("%s[%d]", SectionExtensions, i)
+			info, err := checkExtensionArchive(downloader, spec)
+			if info.Name != "" && info.ContextPath != "" {
+				// Also when the name does not match, for the suggestions
+				contextPaths[info.ContextPath] = info.Name
+			}
+			if err != nil {
+				failures++
+				fmt.Printf("  ✗ %s: %v\n", label, err)
+				continue
+			}
+			fmt.Printf("  ✓ %s: %s %s (context path %s)\n", label, info.Name, info.Version, info.ContextPath)
+		}
 	}
 	for i, spec := range manifest.Applications {
 		if spec.Source != nil {
@@ -170,6 +195,8 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 		check(SectionCertificateRevocations, i, spec.resolvedSource())
 	}
 
+	printWarnings(manifest.ExtensionReferenceWarnings(contextPaths))
+
 	if failures > 0 {
 		return fmt.Errorf("%d source(s) failed to resolve", failures)
 	}
@@ -179,4 +206,35 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 
 func printSectionCount(section string, count int) {
 	fmt.Printf("  %-27s %d item(s)\n", section+":", count)
+}
+
+// checkExtensionArchive downloads the extension archive and checks that the
+// name in its cumulocity.json matches the entry
+func checkExtensionArchive(resolver *SourceResolver, spec ExtensionSpec) (plugins.ManifestFile, error) {
+	info := plugins.ManifestFile{}
+	files, err := resolver.Resolve(spec.Source)
+	if err != nil {
+		return info, err
+	}
+	if len(files) != 1 || files[0].Path == "" {
+		return info, fmt.Errorf("must resolve to exactly one local file, got %d", len(files))
+	}
+	if err := plugins.GetManifestContents(files[0].Path, &info); err != nil {
+		return info, fmt.Errorf("%s: %w", files[0].Filename, err)
+	}
+	if !sameName(info.Name, spec.Name) {
+		return info, fmt.Errorf("%s contains the extension %q, not %q: set name to %q", files[0].Filename, info.Name, spec.Name, info.Name)
+	}
+	return info, nil
+}
+
+// printWarnings prints manifest warnings (which do not fail validation)
+func printWarnings(warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Println()
+	for _, warning := range warnings {
+		fmt.Printf("  ⚠ %s\n", warning)
+	}
 }

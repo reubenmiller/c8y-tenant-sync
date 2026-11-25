@@ -35,9 +35,22 @@ var ExportSections = []string{
 	SectionApplications,
 	SectionDeviceGroups,
 	SectionInventoryRoles,
+	SectionUsers,
 	SectionLoginOptions,
 	SectionDigitalTwin,
 	SectionSmartFunctions,
+}
+
+// defaultExportSections are the sections exported without --only: all
+// sections except the opt-in ones
+func defaultExportSections() []string {
+	var sections []string
+	for _, section := range ExportSections {
+		if !slices.Contains(optInExportSections, section) {
+			sections = append(sections, section)
+		}
+	}
+	return sections
 }
 
 // exportOptions holds the flags of the export command
@@ -57,7 +70,8 @@ func newExportCmd() *cobra.Command {
 		Short: "Create a manifest from the current state of a tenant",
 		Long: `Read the tenant of the active go-c8y-cli session and write a manifest which describes it.
 
-Exported sections: ` + strings.Join(ExportSections, ", ") + `.
+Exported sections: ` + strings.Join(defaultExportSections(), ", ") + `.
+The users section is opt-in: it is only exported when it is named in --only.
 
 - tenantOptions: all options except credentials (credentials.* keys are never exported)
 - features: feature toggles set for the tenant (use --all-features for all toggles)
@@ -69,8 +83,13 @@ Exported sections: ` + strings.Join(ExportSections, ", ") + `.
   built-in Cockpit and Device Management applications)
 - deviceGroups: the tree of device groups with name and description (other fragments
   and the devices in the groups are not exported)
-- inventoryRoles: all inventory roles with their permissions (users' inventory assignments
-  are not exported)
+- inventoryRoles: all inventory roles with their permissions (users' inventory roles are
+  exported in the users section)
+- users (opt-in, only with --only users): the users with userName, email, firstName,
+  lastName, enabled (only when false), their global roles and their inventory roles by
+  device group. Each user gets ifMissing: skip, so applying the export never creates
+  accounts. Passwords and other personal fields are never exported. Microservice service
+  users (service_*) and device users are left out. The output contains personal data
 - loginOptions: the preferred login mode, the basic restrictions, the OAI-Secure session
   and the SSO login option (its client secret is never exported: it is replaced by a
   clientSecretFrom reference to the SSO_CLIENT_SECRET environment variable)
@@ -85,6 +104,7 @@ Review the manifest before applying it to other tenants.`,
 			example{"export -o tenant.yaml", "Write the manifest of the current tenant to a file"},
 			example{"export --only tenantOptions,features", "Export only the tenant options and feature toggles"},
 			example{"export --only microservices,applications", "Export only the subscribed microservices and web applications"},
+			example{"export --only users", "Export only the users with their global and inventory roles (opt-in)"},
 		),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -94,7 +114,7 @@ Review the manifest before applying it to other tenants.`,
 
 	flags := cmd.Flags()
 	flags.StringVarP(&opts.output, "output", "o", "", "Write the manifest to a file instead of stdout")
-	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to export (default: all). Sections: "+strings.Join(ExportSections, ", "))
+	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to export (default: all except users, which is opt-in). Sections: "+strings.Join(ExportSections, ", "))
 	flags.BoolVar(&opts.allFeatures, "all-features", false, "Export all feature toggles, not only the ones set for the tenant")
 	flags.BoolVar(&opts.force, "force", false, "Overwrite the output file if it already exists")
 	flags.BoolVar(&opts.verbose, "verbose", false, "Enable detailed logging")
@@ -168,16 +188,22 @@ func isExportSection(name string) bool {
 // Exporter reads the state of a tenant into a manifest
 type Exporter struct {
 	Client *api.Client
-	// Sections to export (all ExportSections when empty)
+	// Sections to export (all ExportSections except the opt-in ones when
+	// empty)
 	Sections []string
 	// AllFeatures exports all feature toggles instead of only the ones set
 	// for the tenant
 	AllFeatures bool
+
+	// groups are the device groups of the tenant, listed once per export
+	groups []deviceGroupNode
 }
 
+// enabled reports whether a section is exported: all sections except the
+// opt-in ones when no sections are selected
 func (e *Exporter) enabled(section string) bool {
 	if len(e.Sections) == 0 {
-		return true
+		return !slices.Contains(optInExportSections, section)
 	}
 	for _, name := range e.Sections {
 		if strings.EqualFold(strings.TrimSpace(name), section) {
@@ -208,10 +234,12 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 		{SectionMicroservices, func() (err error) { manifest.Microservices, err = e.microservices(ctx, tenantID); return }},
 		{SectionApplications, func() (err error) { manifest.Applications, err = e.applications(ctx, tenantID); return }},
 		{SectionDeviceGroups, func() (err error) {
-			manifest.DeviceGroups, err = listDeviceGroupTree(ctx, e.Client.DeviceGroups)
+			groups, err := e.deviceGroupNodes(ctx)
+			manifest.DeviceGroups = deviceGroupTree(groups)
 			return
 		}},
 		{SectionInventoryRoles, func() (err error) { manifest.InventoryRoles, err = e.inventoryRoles(ctx); return }},
+		{SectionUsers, func() (err error) { manifest.Users, err = e.users(ctx); return }},
 		{SectionLoginOptions, func() (err error) { manifest.LoginOptions, err = e.loginOptions(ctx); return }},
 		{SectionDigitalTwin, func() (err error) { manifest.DigitalTwin, err = e.digitalTwin(ctx); return }},
 		{SectionSmartFunctions, func() (err error) { manifest.SmartFunctions, err = e.smartFunctions(ctx); return }},

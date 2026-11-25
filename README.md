@@ -358,7 +358,8 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 | `microservices` | Microservices the tenant is subscribed to but does not own, such as the built-in microservices |
 | `applications` | Web applications the tenant is subscribed to but does not own, such as the built-in Cockpit and Device Management applications |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
-| `inventoryRoles` | All inventory roles with their permissions (the inventory assignments of users are not exported) |
+| `inventoryRoles` | All inventory roles with their permissions (the inventory roles of users are exported in the opt-in `users` section) |
+| `users` | **Opt-in**: only exported with `--only users`, never in a plain export. See [Exporting users](#exporting-users) |
 | `loginOptions` | The preferred login mode, the basic authentication restrictions, the OAI-Secure session, and the SSO login option as the discovery URL of its issuer with the client ID, scopes and claim and access mappings (group and application IDs as names). The client secret is never exported: it is replaced by `clientSecretFrom: {env: SSO_CLIENT_SECRET}`. The export notes on stderr when the discovery URL derived from the issuer does not work (some providers, such as Azure AD v1, serve it elsewhere), leaves out an SSO option without issuer, and leaves out `preferred: sso` when there are no access mapping rules (which `validate` requires). A mapped group or application which cannot be read fails the export |
 | `digitalTwin` | The tenant's own property and asset definitions. Library definitions and definitions shared from the enterprise tenant are not exported, and neither are fields the server generates (such as `$schema`) or maintains (such as `lastUpdated`). Other custom fields, such as an asset definition's `icon`, are exported as `fragments` |
 | `smartFunctions` | The deployed Data Preparation rules as [inline rules](#inline-rules), with their code and tests. Drafts and the AI chat history are not exported |
@@ -366,7 +367,7 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Write the manifest to a file instead of stdout |
-| `--only` | Comma-separated sections to export (default: all of the above). |
+| `--only` | Comma-separated sections to export (default: all of the above except `users`, which is opt-in). |
 | `--all-features` | Export all feature toggles, not only the ones set for the tenant |
 | `--force` | Overwrite the output file |
 
@@ -375,6 +376,52 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 A tenant without the Digital Twin Manager or Data Preparation skips that section with a note, so a full export also works there.
 
 Review the manifest before applying it to other tenants: tenant options can contain values which only apply to the exported tenant.
+
+#### Exporting users
+
+The `users` section contains personal data (user names and email addresses), so it is only exported when it is named in `--only`:
+
+```bash
+c8y tenant-sync export --only users -o users.yaml
+c8y tenant-sync export --only deviceGroups,inventoryRoles,users -o access.yaml
+```
+
+Each user is exported with:
+
+- `userName`, and `email`, `firstName` and `lastName` when they are set. Passwords, phone numbers and other personal fields are never exported.
+- `ifMissing: skip`, so applying the export never creates accounts: a user who does not exist in the target tenant is reported as skipped.
+- `enabled: false` for a disabled user (`enabled` is left out for enabled users).
+- `globalRoles`: the names of the user's global roles, sorted.
+- `inventoryRoles`: the user's inventory roles by device group, sorted by group and role name. Several assignments on one group are merged into one entry. A group is written by its name when the name is unique, otherwise as the shortest `Parent/Child` path which is unique.
+
+`inventoryRolesMode` is left out, so the export uses the default additive mode, and `state` is not written. Applying the export to the same tenant changes nothing.
+
+Not exported:
+
+- Microservice service users (user names starting with `service_`) and device users (`device_*`, which the API does not list).
+- Inventory roles on managed objects which are not device groups (the users section only targets device groups), and roles which cannot be found. The export notes each of them on stderr.
+
+A group whose name and paths are all ambiguous (for example two root groups with the same name) is written as its path with a note on stderr: rename one of the groups or fix the entry by hand.
+
+```yaml
+users:
+  - userName: berlin-ops@example.com
+    ifMissing: skip
+    email: berlin-ops@example.com
+    firstName: Berlin
+    lastName: Ops
+    globalRoles:
+      - business
+      - operators
+    inventoryRoles:
+      - group: Berlin
+        roles:
+          - Reader
+      - group: Europe/Plant A   # "Plant A" also exists below Asia
+        roles:
+          - Reader
+          - Site operator
+```
 
 ## The Manifest
 
@@ -1194,6 +1241,8 @@ users:
 - The user running the sync is never deleted: such an entry fails with `refusing to delete the user running the sync`. When that user cannot be looked up, no user is deleted.
 - A user that cannot be read (for example because of missing permissions) fails with `read user`. Only a user that does not exist is created, skipped or failed as `ifMissing` says.
 - `enabled` stays a separate field: it is the account state in Cumulocity, while `state` and `ifMissing` say what tenant-sync does with the entry.
+
+To start from the users of an existing tenant, `export --only users` writes them with `ifMissing: skip` and their global and inventory roles, see [Exporting users](#exporting-users).
 
 A dry run (`--dry`) reads the users of the tenant and reports what a real run would change, without writing anything: `create user` for a missing user, the profile fields to update, the global roles to assign, and the inventory roles to add (and, with `inventoryRolesMode: exact`, to remove) per device group. A user who is already in the desired state is `unchanged`. A missing user with `ifMissing: skip` is `skipped`, a missing user with `ifMissing: fail` fails, and a user with `state: absent` shows `delete` (or `unchanged` when it does not exist).
 

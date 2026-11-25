@@ -1694,7 +1694,7 @@ c8y inventory list --query "has(c8y_TenantSync)"
 
 ## CI/CD Integration
 
-The manifest is designed to live in git next to your artifacts and run from CI. In CI you can run the binary directly with the `C8Y_*` variables, without installing go-c8y-cli:
+The manifest is designed to live in git next to your artifacts and run from CI. In GitHub Actions, [setup-go-c8y-cli](https://github.com/reubenmiller/setup-go-c8y-cli) installs go-c8y-cli and the extension:
 
 ```yaml
 # GitHub Actions example
@@ -1703,19 +1703,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: reubenmiller/setup-go-c8y-cli@main
         with:
-          go-version: stable
-      - run: go run github.com/reubenmiller/c8y-tenant-sync@latest run -f tenant.yaml
+          showTenant: false
+          extensions: |
+            reubenmiller/c8y-tenant-sync@v0.10.5
+      - run: c8y tenant-sync run -f tenant.yaml </dev/null
         env:
-          C8Y_BASEURL: ${{ secrets.C8Y_BASEURL }}
-          C8Y_TENANT: ${{ secrets.C8Y_TENANT }}
-          C8Y_USERNAME: ${{ secrets.C8Y_USERNAME }}
+          C8Y_HOST: ${{ vars.C8Y_HOST }}
+          C8Y_USER: ${{ secrets.C8Y_USER }}
           C8Y_PASSWORD: ${{ secrets.C8Y_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Run the job per tenant (e.g. a matrix over credential sets) to maintain multiple tenants from the same source. Add `--report` to keep a record of each run, see [Run reports](#run-reports).
+The **[GitHub Actions guide](docs/github-actions.md)** has a complete workflow: validation and a dry-run preview on pull requests, applying on `main` after an approval, a nightly drift check, several tenants, and encrypted manifests. The binary also runs on its own with the same `C8Y_*` variables, without go-c8y-cli. Add `--report` to keep a record of each run, see [Run reports](#run-reports).
 
 ## Architecture
 

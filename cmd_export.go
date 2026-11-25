@@ -91,9 +91,6 @@ Review the manifest before applying it to other tenants.`,
 	flags := cmd.Flags()
 	flags.StringVarP(&opts.output, "output", "o", "", "Write the manifest to a file instead of stdout")
 	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to export (default: all). Sections: "+strings.Join(ExportSections, ", "))
-	// --sections is the earlier name of --only
-	flags.StringSliceVar(&opts.only, "sections", nil, "Comma-separated list of sections to export")
-	_ = flags.MarkDeprecated("sections", "use --only instead")
 	flags.BoolVar(&opts.allFeatures, "all-features", false, "Export all feature toggles, not only the ones set for the tenant")
 	flags.BoolVar(&opts.force, "force", false, "Overwrite the output file if it already exists")
 	flags.BoolVar(&opts.verbose, "verbose", false, "Enable detailed logging")

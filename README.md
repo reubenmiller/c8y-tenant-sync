@@ -363,7 +363,7 @@ c8y tenant-sync run -f tenant.yaml --dry-run   # nothing to change on the same t
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Write the manifest to a file instead of stdout |
-| `--only` | Comma-separated sections to export (default: all of the above). `--sections` is accepted as a deprecated alias |
+| `--only` | Comma-separated sections to export (default: all of the above). |
 | `--all-features` | Export all feature toggles, not only the ones set for the tenant |
 | `--force` | Overwrite the output file |
 

@@ -242,8 +242,3 @@ func TestExportCommandWritesFile(t *testing.T) {
 func TestExportCommandRejectsUnknownSection(t *testing.T) {
 	assert.ErrorContains(t, runRoot(t, "export", "--only", "software"), "unknown section")
 }
-
-func TestExportCommandAcceptsDeprecatedSectionsFlag(t *testing.T) {
-	// --sections is the earlier name of --only and still selects the sections
-	assert.ErrorContains(t, runRoot(t, "export", "--sections", "software"), "unknown section")
-}

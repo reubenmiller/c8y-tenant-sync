@@ -328,3 +328,70 @@ func TestDescriptionRequiresHostedWithSource(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "description requires type HOSTED and a source")
 }
+
+// fakeBinaries serves the binaries of application 42 and accepts deleting any
+// of them
+func fakeBinaries(f *fakeC8y, ids ...string) {
+	attachments := []map[string]any{}
+	for i, id := range ids {
+		attachments = append(attachments, map[string]any{"id": id, "created": "2026-0" + string(rune('1'+i)) + "-01T00:00:00Z"})
+		f.JSON("DELETE /application/applications/42/binaries/"+id, http.StatusNoContent, nil)
+	}
+	f.JSON("GET /application/applications/42/binaries", http.StatusOK, map[string]any{"attachments": attachments, "statistics": stats()})
+}
+
+func TestHostedApplicationRotatesBinariesWhenUnchanged(t *testing.T) {
+	f := newFakeC8y(t)
+	own := ownDeviceManagement(f.server.URL, "1025.15.3")
+	own["activeVersionId"] = "b3"
+	f = fakeHostedTenant(t, own)
+	fakeBinaries(f, "b1", "b2", "b3") // oldest first
+	s, downloads := hostedSyncer(t, f, "1025.15.3")
+	spec := hostedSpec()
+	spec.KeepBinaries = 1
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{spec}))
+
+	r := firstResult(s, "devicemanagement")
+	assert.Equal(t, ActionUpdated, r.Action, r.Detail)
+	assert.Equal(t, "version 1025.15.3 already active; deleted 2 old binaries", r.Detail)
+	assert.Equal(t, 0, *downloads)
+	assert.Len(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/b1"), 1)
+	assert.Len(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/b2"), 1)
+	assert.Empty(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/b3"), "the active binary is kept")
+}
+
+func TestHostedApplicationRotationKeepsOldestActiveBinary(t *testing.T) {
+	f := newFakeC8y(t)
+	own := ownDeviceManagement(f.server.URL, "1025.15.3")
+	own["activeVersionId"] = "b1"
+	f = fakeHostedTenant(t, own)
+	fakeBinaries(f, "b1", "b2", "b3")
+	s, _ := hostedSyncer(t, f, "1025.15.3")
+	spec := hostedSpec()
+	spec.KeepBinaries = 2
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{spec}))
+
+	assert.Equal(t, "version 1025.15.3 already active; deleted 1 old binaries", firstResult(s, "devicemanagement").Detail)
+	assert.Empty(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/b1"), "the active binary is kept even when it is the oldest")
+	assert.Len(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/b2"), 1)
+	assert.Empty(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/b3"))
+}
+
+func TestHostedApplicationWithinKeepBinariesIsUnchanged(t *testing.T) {
+	f := newFakeC8y(t)
+	own := ownDeviceManagement(f.server.URL, "1025.15.3")
+	own["activeVersionId"] = "b2"
+	f = fakeHostedTenant(t, own)
+	fakeBinaries(f, "b1", "b2")
+	s, _ := hostedSyncer(t, f, "1025.15.3")
+	spec := hostedSpec()
+	spec.KeepBinaries = 3
+
+	require.NoError(t, s.SyncApplications(context.Background(), []ApplicationSpec{spec}))
+
+	r := firstResult(s, "devicemanagement")
+	assert.Equal(t, ActionUnchanged, r.Action, r.Detail)
+	assert.Empty(t, f.Requests(http.MethodDelete, "/application/applications/42/binaries/"))
+}

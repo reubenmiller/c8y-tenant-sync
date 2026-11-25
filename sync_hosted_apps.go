@@ -111,6 +111,23 @@ func (s *Syncer) ensureHostedApplication(ctx context.Context, spec ApplicationSp
 				action = ActionUpdated
 				detail = descriptionNote + "; " + detail
 			}
+
+			// Binaries are otherwise only rotated after an upload, so also
+			// delete leftovers (e.g. after lowering keepBinaries) here
+			if spec.KeepBinaries > 0 {
+				rotate := s.Client.Applications.RotateBinaries(ctx, own.ID(), applications.RotateBinariesOptions{
+					Keep:            spec.KeepBinaries,
+					ActiveVersionID: own.Get("activeVersionId").String(),
+				})
+				if deleted, _ := rotate.Meta["deletedBinaries"].([]string); len(deleted) > 0 {
+					action = ActionUpdated
+					detail += fmt.Sprintf("; deleted %d old binaries", len(deleted))
+				}
+				if rotate.Err != nil {
+					s.record(SectionApplications, spec.Name, ActionFailed, detail+"; delete old binaries", rotate.Err)
+					return s.cacheAppSelfLink(spec.Name, own.Self()), true
+				}
+			}
 			s.record(SectionApplications, spec.Name, action, detail, nil)
 			return s.cacheAppSelfLink(spec.Name, own.Self()), true
 		}

@@ -32,6 +32,8 @@ github.com/reubenmiller/go-c8y/v2 v2.0.0-20261119064753-3d2e6729d3e0 h1:VTtnVzdG
 github.com/reubenmiller/go-c8y/v2 v2.0.0-20261119064753-3d2e6729d3e0/go.mod h1:lRo1Q+bHYGaDXezkaWm9B30IPRDhdXtFGdS1cdnCWPY=
 github.com/reubenmiller/go-c8y/v2 v2.0.0-20261124234056-c93e8ca745d4 h1:L5NWHrRZ/6lP1rPoQLwPd7HyM1dL1Kt9xfNYLkXpMPU=
 github.com/reubenmiller/go-c8y/v2 v2.0.0-20261124234056-c93e8ca745d4/go.mod h1:lRo1Q+bHYGaDXezkaWm9B30IPRDhdXtFGdS1cdnCWPY=
+github.com/reubenmiller/go-c8y/v2 v2.0.0-20261125030112-3648bfa259dd h1:E0NA5y7vesEHdls4YOwfm1t7fFIl+4kUUekHOExo3xo=
+github.com/reubenmiller/go-c8y/v2 v2.0.0-20261125030112-3648bfa259dd/go.mod h1:lRo1Q+bHYGaDXezkaWm9B30IPRDhdXtFGdS1cdnCWPY=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 h1:KRzFb2m7YtdldCEkzs6KqmJw4nqEVZGK7IN2kJkjTuQ=
 github.com/santhosh-tekuri/jsonschema/v6 v6.0.2/go.mod h1:JXeL+ps8p7/KNMjDQk3TCwPpBy0wYklyWTfbkIzdIFU=

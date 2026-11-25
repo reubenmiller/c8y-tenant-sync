@@ -220,6 +220,9 @@ func (l *manifestLoader) displayPath(abs string) string {
 	if isRemoteManifest(abs) {
 		return abs
 	}
+	if isStdinManifest(abs) {
+		return stdinManifestName
+	}
 	for root, name := range l.bundleRoots {
 		if isWithin(root, abs) {
 			rel, _ := filepath.Rel(root, abs)
@@ -296,6 +299,10 @@ func (l *manifestLoader) loadAll(paths []string) (*Manifest, error) {
 func (l *manifestLoader) load(ref manifestRef, chain []string) (*Manifest, error) {
 	abs := ref.key
 	isURL := isRemoteManifest(abs)
+	// A manifest from a URL or stdin is not a local file: its local paths
+	// are based on the main manifest directory (the current directory when
+	// the main manifest is not a local file either)
+	isFile := !isURL && !isStdinManifest(abs)
 	isRoot := len(chain) == 0
 	if slices.Contains(chain, abs) {
 		names := make([]string, 0, len(chain)+1)
@@ -308,7 +315,7 @@ func (l *manifestLoader) load(ref manifestRef, chain []string) (*Manifest, error
 	if !isRoot {
 		l.files = append(l.files, l.displayPath(abs))
 	}
-	if !isURL && !l.inBundle(abs) {
+	if isFile && !l.inBundle(abs) {
 		l.localFiles = append(l.localFiles, abs)
 	}
 
@@ -351,7 +358,7 @@ func (l *manifestLoader) load(ref manifestRef, chain []string) (*Manifest, error
 	// directory (the current directory when it is remote too); those of a
 	// bundle run from the directory of the file in the extracted bundle
 	dir := l.rootDir
-	if !isURL {
+	if isFile {
 		dir = filepath.Dir(abs)
 	}
 	if ref.origin.remote {

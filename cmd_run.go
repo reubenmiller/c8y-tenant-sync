@@ -53,13 +53,17 @@ Several manifests (repeated -f flags or several arguments) are merged in order,
 like files included in that order: later files win.
 
 A manifest can also be an http(s) URL. Hooks and commands of remote manifests
-only run with --allow-remote-commands.`,
+only run with --allow-remote-commands.
+
+Use - to read a manifest from stdin. Its relative paths are based on the
+current directory.`,
 		Example: formatExamples(
 			example{"run -f tenant.yaml --dry", "Preview the changes without applying them"},
 			example{"run -f tenant.yaml", "Apply the manifest to the tenant of the active session"},
 			example{"run -f base.yaml -f prod.yaml --dry", "Merge two manifests (prod.yaml wins) and preview the changes"},
 			example{"run base.yaml customer-a.yaml", "Apply the merge of two manifests given as arguments"},
 			example{"run https://example.com/tenant.yaml --dry", "Preview a manifest fetched from a URL"},
+			example{"run -f - --dry < tenant.yaml", "Preview a manifest read from stdin"},
 			example{"run -f tenant.yaml --only firmware,deviceProfiles", "Apply only the firmware and device profile sections"},
 			example{"run -f tenant.yaml --force", "Replace existing version binaries and configuration files"},
 			example{"run -f tenant.yaml --all-children", "Apply the manifest to all child tenants of the current tenant"},
@@ -76,7 +80,7 @@ only run with --allow-remote-commands.`,
 	}
 
 	flags := cmd.Flags()
-	flags.StringArrayVarP(&opts.manifests, "manifest", "f", nil, "Path to the tenant manifest file (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
+	flags.StringArrayVarP(&opts.manifests, "manifest", "f", nil, "Path or URL of the tenant manifest file, or - to read it from stdin (default: tenant.yaml); repeat to merge several manifests in order (later files win)")
 	flags.StringSliceVar(&opts.only, "only", nil, "Comma-separated list of sections to apply (default: all). Sections: "+strings.Join(SectionOrder, ", "))
 	flags.BoolVar(&opts.dryRun, "dry", false, "Preview the changes without applying them")
 	flags.BoolVar(&opts.force, "force", false, "Replace existing version binaries and configuration files")
@@ -212,7 +216,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 	fmt.Println("╚══════════════════════════════════════════╝")
 	fmt.Println()
 	for _, path := range manifestPaths {
-		fmt.Printf("📄 Manifest: %s\n", path)
+		fmt.Printf("📄 Manifest: %s\n", manifestDisplayName(path))
 	}
 	for _, file := range manifest.IncludedFiles {
 		fmt.Printf("   includes %s\n", file)
@@ -276,7 +280,7 @@ func runSync(opts *runOptions, args []string) (err error) {
 		if len(reportOutputs) == 0 {
 			return
 		}
-		report := BuildRunReport(syncer.Results, redactor, manifestPath, secrets.Host, startTime, elapsed, dryRun, applyErr)
+		report := BuildRunReport(syncer.Results, redactor, manifestDisplayName(manifestPath), secrets.Host, startTime, elapsed, dryRun, applyErr)
 		if reportErr := WriteReports(report, reportOutputs); reportErr != nil {
 			if err == nil {
 				err = reportErr

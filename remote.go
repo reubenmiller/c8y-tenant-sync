@@ -45,8 +45,11 @@ func isRemoteManifest(value string) bool {
 }
 
 // manifestKey returns the identity of a manifest: the URL of a remote
-// manifest, or the absolute path of a local file
+// manifest, "-" for stdin, or the absolute path of a local file
 func manifestKey(value string) (string, error) {
+	if isStdinManifest(value) {
+		return stdinManifest, nil
+	}
 	if isRemoteManifest(value) {
 		parsed, err := url.Parse(strings.TrimSpace(value))
 		if err != nil {
@@ -62,9 +65,9 @@ func manifestKey(value string) (string, error) {
 
 // manifestBaseDir returns the directory which relative local paths (sources,
 // hooks, commands) of the main manifest are resolved against: the manifest
-// directory, or the current directory for a remote manifest
+// directory, or the current directory for a remote manifest or stdin
 func manifestBaseDir(manifestPath string) string {
-	if isRemoteManifest(manifestPath) {
+	if isRemoteManifest(manifestPath) || isStdinManifest(manifestPath) {
 		return "."
 	}
 	return filepath.Dir(manifestPath)
@@ -122,7 +125,14 @@ func isGitHubHost(host string) bool {
 // decryptRemoteSops decrypts a sops encrypted remote manifest via a
 // temporary file (sops decrypts files)
 func decryptRemoteSops(location string, raw []byte) ([]byte, error) {
-	ext := path.Ext(remoteManifestName(location))
+	return decryptSopsData(location, path.Ext(remoteManifestName(location)), raw)
+}
+
+// decryptSopsData decrypts sops encrypted content which is not in a local
+// file (a remote manifest or stdin) via a temporary file with the extension
+// ext (sops decrypts files and picks the format by the extension). Errors
+// name the content by name instead of the temporary file.
+func decryptSopsData(name, ext string, raw []byte) ([]byte, error) {
 	if ext == "" {
 		ext = ".yaml"
 	}
@@ -140,7 +150,7 @@ func decryptRemoteSops(location string, raw []byte) ([]byte, error) {
 	}
 	decrypted, err := decryptSops(file.Name())
 	if err != nil {
-		return nil, errors.New(strings.ReplaceAll(err.Error(), file.Name(), location))
+		return nil, errors.New(strings.ReplaceAll(err.Error(), file.Name(), name))
 	}
 	return decrypted, nil
 }

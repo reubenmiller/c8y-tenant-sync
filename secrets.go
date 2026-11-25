@@ -151,8 +151,13 @@ type SecretStore struct {
 // tenant.yaml -> tenant.secrets.yaml
 //
 // For a manifest URL, the file is in the current directory and named after
-// the URL, e.g. https://example.com/prod.yaml -> prod.secrets.yaml
+// the URL, e.g. https://example.com/prod.yaml -> prod.secrets.yaml. For a
+// manifest read from stdin, it is tenant.secrets.yaml in the current
+// directory.
 func DefaultSecretsPath(manifestPath string) string {
+	if isStdinManifest(manifestPath) {
+		manifestPath = "tenant.yaml"
+	}
 	if isRemoteManifest(manifestPath) {
 		manifestPath = remoteManifestName(manifestPath)
 	}

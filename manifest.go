@@ -1429,10 +1429,10 @@ func loadManifests(paths []string, opts LoadOptions) (*Manifest, *manifestLoader
 	if err != nil {
 		return nil, nil, err
 	}
-	// Relative local paths of a remote main manifest are based on the
-	// current directory
+	// Relative local paths of a remote main manifest, or of one read from
+	// stdin, are based on the current directory
 	rootDir := filepath.Dir(abs)
-	if isRemoteManifest(abs) {
+	if isRemoteManifest(abs) || isStdinManifest(abs) {
 		if rootDir, err = filepath.Abs("."); err != nil {
 			return nil, nil, err
 		}

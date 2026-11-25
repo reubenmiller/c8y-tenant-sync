@@ -81,6 +81,9 @@ func readManifestFile(path string) ([]byte, error) {
 	if isRemoteManifest(path) {
 		return readRemoteManifest(path)
 	}
+	if isStdinManifest(path) {
+		return readStdinManifestDecrypted()
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
@@ -119,6 +122,29 @@ func readRemoteManifest(location string) ([]byte, error) {
 		return nil, err
 	}
 	if err := checkSopsValues(location, decrypted, true); err != nil {
+		return nil, err
+	}
+	return decrypted, nil
+}
+
+// readStdinManifestDecrypted reads the manifest from stdin, decrypting it
+// with sops when it is encrypted
+func readStdinManifestDecrypted() ([]byte, error) {
+	raw, err := readStdinManifest()
+	if err != nil {
+		return nil, err
+	}
+	if !isSopsEncrypted(raw) {
+		if err := checkSopsValues(stdinManifestName, raw, false); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	}
+	decrypted, err := decryptSopsData(stdinManifestName, ".yaml", raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSopsValues(stdinManifestName, decrypted, true); err != nil {
 		return nil, err
 	}
 	return decrypted, nil

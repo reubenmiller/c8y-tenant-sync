@@ -174,17 +174,17 @@ func TestSyncInventoryRoleRenameAmbiguous(t *testing.T) {
 		{
 			name:     "new and old name exist",
 			roles:    []map[string]any{siteOperatorRole(), {"id": 8, "name": "Site operators"}},
-			expected: `ambiguous inventory role: roles named "Site operator" and "Site operators" (renamedFrom) both exist`,
+			expected: `ambiguous inventory role: roles named "Site operator" and "Site operators" (renamedFrom) both exist; delete the role which is no longer needed, or remove renamedFrom to keep both`,
 		},
 		{
 			name:     "two old names exist",
 			roles:    []map[string]any{{"id": 8, "name": "Site operators"}, {"id": 9, "name": "Operator (site)"}},
-			expected: `ambiguous inventory role: 2 roles are named "Site operators", "Operator (site)" (renamedFrom)`,
+			expected: `ambiguous inventory role: 2 roles are named "Site operators", "Operator (site)" (renamedFrom); delete all but the one to rename`,
 		},
 		{
 			name:     "old name exists twice",
 			roles:    []map[string]any{{"id": 8, "name": "Site operators"}, {"id": 9, "name": "Site operators"}},
-			expected: `ambiguous inventory role: 2 roles are named "Site operators" (renamedFrom)`,
+			expected: `ambiguous inventory role: 2 roles are named "Site operators" (renamedFrom); delete all but the one to rename`,
 		},
 	}
 	for _, tc := range testCases {

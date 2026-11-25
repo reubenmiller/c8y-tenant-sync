@@ -163,13 +163,13 @@ func planInventoryRole(spec InventoryRoleSpec, roles map[string][]jsonmodels.Inv
 		}
 	}
 	if len(matches) > 0 && len(previous) > 0 {
-		return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role: roles named %q and %s (renamedFrom) both exist", spec.Name, quoteJoin(previousNames))}
+		return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role: roles named %q and %s (renamedFrom) both exist; delete the role which is no longer needed, or remove renamedFrom to keep both", spec.Name, quoteJoin(previousNames))}
 	}
 
 	renamedFrom := ""
 	if len(matches) == 0 && len(previous) > 0 {
 		if len(previous) > 1 {
-			return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role: %d roles are named %s (renamedFrom)", len(previous), quoteJoin(previousNames))}
+			return inventoryRolePlan{err: fmt.Errorf("ambiguous inventory role: %d roles are named %s (renamedFrom); delete all but the one to rename", len(previous), quoteJoin(previousNames))}
 		}
 		matches = previous
 		renamedFrom = previousNames[0]

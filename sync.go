@@ -39,6 +39,7 @@ const SyncToolFragment = "c8y_TenantSync"
 const (
 	SectionTenants                = "tenants"
 	SectionTenantOptions          = "tenantOptions"
+	SectionAlarmMapping           = "alarmMapping"
 	SectionFeatures               = "features"
 	SectionRetentionRules         = "retentionRules"
 	SectionCertificateAuthority   = "certificateAuthority"
@@ -82,6 +83,7 @@ const (
 var SectionOrder = []string{
 	SectionTenants,
 	SectionTenantOptions,
+	SectionAlarmMapping,
 	SectionFeatures,
 	SectionRetentionRules,
 	SectionCertificateAuthority,
@@ -137,8 +139,8 @@ type Syncer struct {
 	Secrets *SecretStore
 
 	// DryRunReader is a client for read-only lookups in dry-run mode (nil
-	// without a session). The loginOptions, inventoryRoles and users
-	// sections use it to compare the manifest with the tenant; it never
+	// without a session). The alarmMapping, loginOptions, inventoryRoles
+	// and users sections use it to compare the manifest with the tenant; it never
 	// writes.
 	DryRunReader *api.Client
 
@@ -439,6 +441,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 		switch section {
 		case SectionTenantOptions:
 			err = s.SyncTenantOptions(ctx, manifest.TenantOptions)
+		case SectionAlarmMapping:
+			err = s.SyncAlarmMapping(ctx, manifest.AlarmMapping)
 		case SectionFeatures:
 			err = s.SyncFeatures(baseCtx, manifest.Features)
 		case SectionRetentionRules:

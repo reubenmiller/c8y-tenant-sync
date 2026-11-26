@@ -28,7 +28,10 @@ type Manifest struct {
 	Tenants []ChildTenantSpec `yaml:"tenants" json:"tenants,omitempty" jsonschema:"description=Child tenants of the current (parent/management) tenant to create or update (matched by domain); runs once with the base credentials before the targets are resolved; tenants are never deleted or suspended"`
 
 	TenantOptions []TenantOptionSpec `yaml:"tenantOptions" json:"tenantOptions,omitempty" jsonschema:"description=Tenant options to set (created if missing and updated when the value differs)"`
-	Features      []FeatureSpec      `yaml:"features" json:"features,omitempty" jsonschema:"description=Feature toggles to enable or disable for the current tenant"`
+	// AlarmMapping is stored in the tenant options of the
+	// alarm.type.mapping category
+	AlarmMapping AlarmMappingSpec `yaml:"alarmMapping" json:"alarmMapping,omitempty" jsonschema:"description=Alarm mapping (the Alarm mapping page of the Administration application): the new severity and text of alarms by alarm type; stored as the tenant options of the alarm.type.mapping category; additive: alarm types which are not listed keep their mapping"`
+	Features     []FeatureSpec    `yaml:"features" json:"features,omitempty" jsonschema:"description=Feature toggles to enable or disable for the current tenant"`
 
 	RetentionRules []RetentionRuleSpec `yaml:"retentionRules" json:"retentionRules,omitempty" jsonschema:"description=Retention rules to ensure exist (matched by dataType/fragmentType/type/source; maximumAge updated when it differs)"`
 
@@ -1727,6 +1730,7 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
+	errs = append(errs, validateAlarmMapping(m.AlarmMapping, m.TenantOptions)...)
 	for i, feature := range m.Features {
 		if feature.Key == "" {
 			errs = append(errs, fmt.Sprintf("features[%d]: key is required", i))

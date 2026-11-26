@@ -28,6 +28,7 @@ import (
 // ExportSections are the manifest sections which export can read from a tenant
 var ExportSections = []string{
 	SectionTenantOptions,
+	SectionAlarmMapping,
 	SectionFeatures,
 	SectionRetentionRules,
 	SectionCertificateAuthority,
@@ -74,6 +75,8 @@ Exported sections: ` + strings.Join(defaultExportSections(), ", ") + `.
 The users section is opt-in: it is only exported when it is named in --only.
 
 - tenantOptions: all options except credentials (credentials.* keys are never exported)
+  and the alarm mapping (exported in the alarmMapping section)
+- alarmMapping: the alarm types mapped to a severity and text, sorted by alarm type
 - features: feature toggles set for the tenant (use --all-features for all toggles)
 - retentionRules: all retention rules
 - certificateAuthority: the state of the Cumulocity CA, if the tenant has one
@@ -228,6 +231,7 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 		run     func() error
 	}{
 		{SectionTenantOptions, func() (err error) { manifest.TenantOptions, err = e.tenantOptions(ctx); return }},
+		{SectionAlarmMapping, func() (err error) { manifest.AlarmMapping, err = e.alarmMapping(ctx); return }},
 		{SectionFeatures, func() (err error) { manifest.Features, err = e.features(ctx); return }},
 		{SectionRetentionRules, func() (err error) { manifest.RetentionRules, err = e.retentionRules(ctx); return }},
 		{SectionCertificateAuthority, func() (err error) { manifest.CertificateAuthority, err = e.certificateAuthority(ctx); return }},
@@ -265,6 +269,10 @@ func (e *Exporter) tenantOptions(ctx context.Context) ([]TenantOptionSpec, error
 			return nil, err
 		}
 		if strings.HasPrefix(option.Key(), "credentials.") {
+			continue
+		}
+		if option.Category() == AlarmMappingCategory {
+			// Exported in the alarmMapping section
 			continue
 		}
 		specs = append(specs, TenantOptionSpec{Category: option.Category(), Key: option.Key(), Value: option.Value()})

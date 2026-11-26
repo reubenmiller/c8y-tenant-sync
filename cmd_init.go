@@ -67,6 +67,13 @@ software:
 #     key: my.setting
 #     value: "true"
 
+# alarmMapping: # by alarm type
+#   c8y_UnavailabilityAlarm:
+#     severity: MINOR # CRITICAL, MAJOR, MINOR, WARNING or NONE (drop the alarm)
+#     text: Device not reachable # optional: without text the alarm keeps its text
+#   c8y_NoisyAlarm:
+#     severity: NONE
+
 # features:
 #   - key: feature-branding
 

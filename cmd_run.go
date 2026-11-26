@@ -249,9 +249,9 @@ func runSync(opts *runOptions, args []string) (err error) {
 	}
 	defer os.RemoveAll(workDir)
 
-	// In dry-run mode the login options, inventory roles and users are still
-	// read (never written), so the preview shows what would change. Without
-	// a session the dry run lists the desired settings only.
+	// In dry-run mode the alarm mapping, login options, inventory roles and
+	// users are still read (never written), so the preview shows what would
+	// change. Without a session the dry run lists the desired settings only.
 	var dryRunReader *api.Client
 	if dryRun && dryRunReadsTenant(manifest, onlySections) {
 		if reader, err := runtime.NewClient(opts.debug); err == nil {
@@ -433,10 +433,11 @@ func isKnownSection(name string) bool {
 }
 
 // dryRunReadsTenant reports whether a dry run of the manifest reads the
-// tenant to compare it with the manifest: only the loginOptions,
-// inventoryRoles and users sections do
+// tenant to compare it with the manifest: only the alarmMapping,
+// loginOptions, inventoryRoles and users sections do
 func dryRunReadsTenant(manifest *Manifest, only []string) bool {
-	return (manifest.LoginOptions != nil && sectionEnabled(only, SectionLoginOptions)) ||
+	return (len(manifest.AlarmMapping) > 0 && sectionEnabled(only, SectionAlarmMapping)) ||
+		(manifest.LoginOptions != nil && sectionEnabled(only, SectionLoginOptions)) ||
 		(len(manifest.InventoryRoles) > 0 && sectionEnabled(only, SectionInventoryRoles)) ||
 		(len(manifest.Users) > 0 && sectionEnabled(only, SectionUsers))
 }

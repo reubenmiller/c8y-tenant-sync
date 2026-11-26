@@ -77,6 +77,7 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	}
 	fmt.Println()
 	printSectionCount(SectionTenantOptions, len(manifest.TenantOptions))
+	printSectionCount(SectionAlarmMapping, len(manifest.AlarmMapping))
 	printSectionCount(SectionFeatures, len(manifest.Features))
 	printSectionCount(SectionRetentionRules, len(manifest.RetentionRules))
 	caCount := 0

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -644,6 +645,7 @@ func (m *Manifest) rebase(dir, rootDir string) {
 //     and applied in order
 //   - targets, certificateAuthority and loginOptions from over replace
 //     those of base
+//   - alarmMapping is merged per alarm type (the later mapping wins)
 //   - hooks pre/post lists are concatenated, section hooks per section
 func mergeManifests(base, over *Manifest) *Manifest {
 	out := &Manifest{
@@ -668,6 +670,7 @@ func mergeManifests(base, over *Manifest) *Manifest {
 		}
 		return o.Category + "\x00" + o.Key
 	})
+	out.AlarmMapping = mergeAlarmMapping(base.AlarmMapping, over.AlarmMapping)
 	out.Features = mergeByKey(base.Features, over.Features, func(f FeatureSpec) string { return f.Key })
 	out.RetentionRules = mergeByKey(base.RetentionRules, over.RetentionRules, RetentionRuleSpec.Selector)
 	out.Microservices = mergeByKey(base.Microservices, over.Microservices, func(a MicroserviceSpec) string { return a.Name })
@@ -763,5 +766,17 @@ func mergeDigitalTwin(base, over *DigitalTwinSpec) *DigitalTwinSpec {
 	}
 	out.PropertyDefinitions = mergeByKey(base.PropertyDefinitions, over.PropertyDefinitions, DigitalTwinDefinitionSpec.Key)
 	out.AssetDefinitions = mergeByKey(base.AssetDefinitions, over.AssetDefinitions, DigitalTwinDefinitionSpec.Key)
+	return out
+}
+
+// mergeAlarmMapping merges the alarm mappings per alarm type: a mapping in
+// over replaces the mapping of the same alarm type in base
+func mergeAlarmMapping(base, over AlarmMappingSpec) AlarmMappingSpec {
+	if len(base) == 0 && len(over) == 0 {
+		return nil
+	}
+	out := make(AlarmMappingSpec, len(base)+len(over))
+	maps.Copy(out, base)
+	maps.Copy(out, over)
 	return out
 }

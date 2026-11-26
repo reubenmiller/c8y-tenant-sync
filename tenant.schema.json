@@ -2,6 +2,39 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/reubenmiller/c8y-tenant-sync/main/tenant.schema.json",
   "$defs": {
+    "AlarmMappingEntry": {
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": [
+            "CRITICAL",
+            "MAJOR",
+            "MINOR",
+            "WARNING",
+            "NONE"
+          ],
+          "description": "New severity of the alarms of this type; NONE drops the alarms"
+        },
+        "text": {
+          "type": "string",
+          "description": "New alarm text; leave it out to keep the text of the alarm"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "severity"
+      ]
+    },
+    "AlarmMappingSpec": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AlarmMappingEntry"
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "type": "object"
+    },
     "ApplicationExtensionSpec": {
       "oneOf": [
         {
@@ -2389,6 +2422,10 @@
       },
       "type": "array",
       "description": "Tenant options to set (created if missing and updated when the value differs)"
+    },
+    "alarmMapping": {
+      "$ref": "#/$defs/AlarmMappingSpec",
+      "description": "Alarm mapping (the Alarm mapping page of the Administration application): the new severity and text of alarms by alarm type; stored as the tenant options of the alarm.type.mapping category; additive: alarm types which are not listed keep their mapping"
     },
     "features": {
       "items": {

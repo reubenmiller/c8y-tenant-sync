@@ -30,8 +30,8 @@ type Manifest struct {
 	TenantOptions []TenantOptionSpec `yaml:"tenantOptions" json:"tenantOptions,omitempty" jsonschema:"description=Tenant options to set (created if missing and updated when the value differs)"`
 	// AlarmMapping is stored in the tenant options of the
 	// alarm.type.mapping category
-	AlarmMapping AlarmMappingSpec `yaml:"alarmMapping" json:"alarmMapping,omitempty" jsonschema:"description=Alarm mapping (the Alarm mapping page of the Administration application): the new severity and text of alarms by alarm type; stored as the tenant options of the alarm.type.mapping category; additive: alarm types which are not listed keep their mapping"`
-	Features     []FeatureSpec    `yaml:"features" json:"features,omitempty" jsonschema:"description=Feature toggles to enable or disable for the current tenant"`
+	AlarmMapping *AlarmMappingSectionSpec `yaml:"alarmMapping" json:"alarmMapping,omitempty" jsonschema:"description=Alarm mapping (the Alarm mapping page of the Administration application): the new severity and description of the alarms of a type; stored as the tenant options of the alarm.type.mapping category; a list of mappings (additive: alarm types which are not listed keep their mapping and only mappings with state absent are deleted) or an object with mode (additive or exact) and mappings"`
+	Features     []FeatureSpec            `yaml:"features" json:"features,omitempty" jsonschema:"description=Feature toggles to enable or disable for the current tenant"`
 
 	RetentionRules []RetentionRuleSpec `yaml:"retentionRules" json:"retentionRules,omitempty" jsonschema:"description=Retention rules to ensure exist (matched by dataType/fragmentType/type/source; maximumAge updated when it differs)"`
 

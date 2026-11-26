@@ -146,11 +146,11 @@ func TestExportAllSections(t *testing.T) {
 	}, manifest.TenantOptions)
 
 	// The alarm mapping is exported in its own section, not in tenantOptions
-	assert.Equal(t, AlarmMappingSpec{
-		"bar":  {Severity: "MAJOR"},
-		"foo1": {Severity: "MINOR", Text: "Some foo1 mapping"},
-		"foo2": {Severity: "NONE", Text: "example 2"},
-	}, manifest.AlarmMapping)
+	assert.Equal(t, []AlarmMappingSpec{
+		{Type: "bar", Severity: "MAJOR"},
+		{Type: "foo1", Severity: "MINOR", Description: "Some foo1 mapping"},
+		{Type: "foo2", Severity: "NONE", Description: "example 2"},
+	}, manifest.AlarmMapping.Mappings)
 
 	// Only the toggles set for the tenant
 	assert.Equal(t, []FeatureSpec{
@@ -285,8 +285,8 @@ func TestExportedManifestRoundTrip(t *testing.T) {
 	assert.Contains(t, text, "value: \"true\"", "string values which look like booleans stay strings")
 
 	assert.Contains(t, text, "/home/$$USER", "$ is escaped")
-	assert.Contains(t, text, "alarmMapping:\n  bar:\n    severity: MAJOR\n  foo1:\n    severity: MINOR\n    text: Some foo1 mapping\n  foo2:\n    severity: NONE\n    text: example 2\n",
-		"the alarm mapping is a map sorted by alarm type")
+	assert.Contains(t, text, "alarmMapping:\n  - type: bar\n    severity: MAJOR\n  - type: foo1\n    severity: MINOR\n    description: Some foo1 mapping\n  - type: foo2\n    severity: NONE\n    description: example 2\n",
+		"the alarm mapping is a list sorted by type")
 	assert.NotContains(t, text, "alarm.type.mapping", "the alarm mapping options are not in tenantOptions")
 	assert.NotContains(t, text, "top-secret-value", "the SSO client secret is never exported")
 	assert.Contains(t, text, "globalRoles:\n", "SSO access rules list global roles (thenGroups in the API)")

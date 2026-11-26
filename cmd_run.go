@@ -436,7 +436,7 @@ func isKnownSection(name string) bool {
 // tenant to compare it with the manifest: only the alarmMapping,
 // loginOptions, inventoryRoles and users sections do
 func dryRunReadsTenant(manifest *Manifest, only []string) bool {
-	return (len(manifest.AlarmMapping) > 0 && sectionEnabled(only, SectionAlarmMapping)) ||
+	return (manifest.AlarmMapping != nil && sectionEnabled(only, SectionAlarmMapping)) ||
 		(manifest.LoginOptions != nil && sectionEnabled(only, SectionLoginOptions)) ||
 		(len(manifest.InventoryRoles) > 0 && sectionEnabled(only, SectionInventoryRoles)) ||
 		(len(manifest.Users) > 0 && sectionEnabled(only, SectionUsers))

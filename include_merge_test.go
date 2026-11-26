@@ -35,15 +35,12 @@ func TestMergeManifestsKeepsEverySection(t *testing.T) {
 					value.Set(reflect.MakeSlice(field.Type, 1, 1))
 				case reflect.Pointer:
 					value.Set(reflect.New(field.Type.Elem()))
-				case reflect.Map:
-					value.Set(reflect.MakeMap(field.Type))
-					value.SetMapIndex(reflect.New(field.Type.Key()).Elem(), reflect.New(field.Type.Elem()).Elem())
 				default:
 					t.Fatalf("unhandled manifest field kind %s: add it to mergeManifests and this test", field.Type.Kind())
 				}
 
 				merged := reflect.ValueOf(mergeManifests(base, over)).Elem().Field(i)
-				if field.Type.Kind() == reflect.Slice || field.Type.Kind() == reflect.Map {
+				if field.Type.Kind() == reflect.Slice {
 					assert.Equal(t, 1, merged.Len(), "%s is dropped by mergeManifests (from the later file: %v)", field.Name, fromOver)
 				} else {
 					assert.False(t, merged.IsNil(), "%s is dropped by mergeManifests (from the later file: %v)", field.Name, fromOver)

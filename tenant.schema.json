@@ -2,9 +2,89 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/reubenmiller/c8y-tenant-sync/main/tenant.schema.json",
   "$defs": {
-    "AlarmMappingEntry": {
+    "AlarmMappingSectionSpec": {
+      "oneOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/AlarmMappingSpec"
+          },
+          "type": "array",
+          "description": "The mappings, synced additively (the same as mode additive)"
+        },
+        {
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "additive",
+                "exact"
+              ],
+              "description": "additive (default) syncs only the listed mappings (state absent deletes one); exact also deletes the mappings of alarm types which are not listed so the list is the complete alarm mapping of the tenant (mappings added in the UI are deleted too)"
+            },
+            "mappings": {
+              "items": {
+                "$ref": "#/$defs/AlarmMappingSpec"
+              },
+              "type": "array",
+              "description": "Mappings by alarm type"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "The mappings and how they are synced"
+        }
+      ]
+    },
+    "AlarmMappingSpec": {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "absent"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "else": {
+        "required": [
+          "severity"
+        ]
+      },
       "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alarm type to map",
+          "examples": [
+            "c8y_UnavailabilityAlarm"
+          ]
+        },
         "severity": {
+          "$ref": "#/$defs/AlarmSeverity"
+        },
+        "description": {
+          "type": "string",
+          "description": "New alarm text; leave it out to keep the text of the alarm"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "description": "present (default) creates or updates the mapping; absent deletes the mapping of the type if it exists (severity and description are then optional and ignored)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "AlarmSeverity": {
+      "anyOf": [
+        {
           "type": "string",
           "enum": [
             "CRITICAL",
@@ -12,28 +92,14 @@
             "MINOR",
             "WARNING",
             "NONE"
-          ],
-          "description": "New severity of the alarms of this type; NONE drops the alarms"
+          ]
         },
-        "text": {
+        {
           "type": "string",
-          "description": "New alarm text; leave it out to keep the text of the alarm"
+          "pattern": "^([Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]|[Mm][Aa][Jj][Oo][Rr]|[Mm][Ii][Nn][Oo][Rr]|[Ww][Aa][Rr][Nn][Ii][Nn][Gg]|[Nn][Oo][Nn][Ee])$"
         }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "severity"
-      ]
-    },
-    "AlarmMappingSpec": {
-      "additionalProperties": {
-        "$ref": "#/$defs/AlarmMappingEntry"
-      },
-      "propertyNames": {
-        "minLength": 1
-      },
-      "type": "object"
+      ],
+      "description": "New severity of the alarms of this type (case-insensitive); NONE drops the alarms"
     },
     "ApplicationExtensionSpec": {
       "oneOf": [
@@ -2424,8 +2490,8 @@
       "description": "Tenant options to set (created if missing and updated when the value differs)"
     },
     "alarmMapping": {
-      "$ref": "#/$defs/AlarmMappingSpec",
-      "description": "Alarm mapping (the Alarm mapping page of the Administration application): the new severity and text of alarms by alarm type; stored as the tenant options of the alarm.type.mapping category; additive: alarm types which are not listed keep their mapping"
+      "$ref": "#/$defs/AlarmMappingSectionSpec",
+      "description": "Alarm mapping (the Alarm mapping page of the Administration application): the new severity and description of the alarms of a type; stored as the tenant options of the alarm.type.mapping category; a list of mappings (additive: alarm types which are not listed keep their mapping and only mappings with state absent are deleted) or an object with mode (additive or exact) and mappings"
     },
     "features": {
       "items": {

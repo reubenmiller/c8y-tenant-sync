@@ -89,3 +89,30 @@ inventoryRoles:
 		assert.Equal(t, "Viewer", manifest.InventoryRoles[1].Name)
 	}
 }
+
+func TestIncludeMergesSmartGroups(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "base.yaml", []byte(`smartGroups:
+  - name: Linux devices
+    query: has(c8y_IsLinux)
+  - name: Gateways
+    query: has(c8y_IsGateway)
+`))
+	main := writeFile(t, dir, "tenant.yaml", []byte(`include: [base.yaml]
+smartGroups:
+  - name: Linux devices
+    query: has(c8y_IsLinux) and name eq 'rpi*'
+  - name: Old
+    state: absent
+`))
+	manifest, err := LoadManifest(main)
+	if !assert.NoError(t, err) {
+		return
+	}
+	if assert.Len(t, manifest.SmartGroups, 3) {
+		assert.Equal(t, "Linux devices", manifest.SmartGroups[0].Name)
+		assert.Equal(t, "has(c8y_IsLinux) and name eq 'rpi*'", *manifest.SmartGroups[0].Query, "the later entry replaces the earlier one")
+		assert.Equal(t, "Gateways", manifest.SmartGroups[1].Name)
+		assert.True(t, manifest.SmartGroups[2].Absent())
+	}
+}

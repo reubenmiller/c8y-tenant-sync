@@ -44,6 +44,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store (matched by fingerprint, with name/status/auto-registration updated when they differ), plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
+- 🔍 **Smart groups**: create smart groups whose devices are selected by an inventory query, with their device list table, visibility and custom fragments
 - 👥 **Users & global roles**: create global roles with permissions, create users and give them global roles, additively and idempotently; skip SSO users until their first login and delete offboarded users
 - 🚪 **Login options**: choose the preferred login mode (OAI-Secure, basic or single sign-on) and configure basic restrictions, OAI-Secure sessions and SSO generated from a provider's OpenID Connect discovery URL, with safeguards against locking anyone out
 - 🏭 **Inventory roles**: define inventory roles (permissions on alarms, operations, measurements, ...) and give users these roles on specific device groups, for least-privilege access per site; opt in per user to make the listed roles their exact inventory access
@@ -59,7 +60,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, alarm mapping, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, login options, Digital Twin Manager definitions and smart functions)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, alarm mapping, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, smart groups, inventory roles, login options, Digital Twin Manager definitions and smart functions)
 
 ## Installation
 
@@ -164,7 +165,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file, or `-` for stdin (also accepted as a positional argument), see [Remote manifests](#remote-manifests) and [Manifest from stdin](#manifest-from-stdin) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `alarmMapping`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `globalRoles`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `alarmMapping`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `smartGroups`, `globalRoles`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -360,6 +361,7 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 | `microservices` | Microservices the tenant is subscribed to but does not own, such as the built-in microservices |
 | `applications` | Web applications the tenant is subscribed to but does not own, such as the built-in Cockpit and Device Management applications |
 | `deviceGroups` | The tree of device groups with name and description. Other fragments and the devices in the groups are not exported. A group with several parent groups is exported below one of them |
+| `smartGroups` | The smart groups with name, description and query, sorted by name. The `table` settings are only exported when they differ from the UI default: `columns` when the table has columns and `pageSize` when it is not 20. The hidden helper groups which the UI creates, for example for bulk operations (`c8y_IsDynamicGroup.invisible`), are not exported. Export fails with the IDs if several visible smart groups have the same name |
 | `inventoryRoles` | All inventory roles with their permissions (the inventory roles of users are exported in the opt-in `users` section) |
 | `users` | **Opt-in**: only exported with `--only users`, never in a plain export. See [Exporting users](#exporting-users) |
 | `loginOptions` | The preferred login mode, the basic authentication restrictions, the OAI-Secure session, and the SSO login option as the discovery URL of its issuer with the client ID, scopes and claim and access mappings (group and application IDs as names). The client secret is never exported: it is replaced by `clientSecretFrom: {env: SSO_CLIENT_SECRET}`. The export notes on stderr when the discovery URL derived from the issuer does not work (some providers, such as Azure AD v1, serve it elsewhere), leaves out an SSO option without issuer, and leaves out `preferred: sso` when there are no access mapping rules (which `validate` requires). A mapped group or application which cannot be read fails the export |
@@ -1232,9 +1234,53 @@ deviceGroups:
 - `state: absent` (the default is `present`) deletes the group if it exists. A group which does not exist is reported as `unchanged: absent`. The group is found the same way as a present group: by name within its parent.
 - Child groups are deleted before their parent. The child groups of an absent group must be absent too (or left out of the manifest): validation fails for a present group below an absent one.
 - Only an **empty** group is deleted. A group which still has child assets or child devices fails with what is inside, for example `cannot delete device group: it still has 2 child assets (Sensor 1, Sensor 2); move or delete them first`. Its parent then fails as well, since it is not empty either. Devices and other content are never deleted with a group (no cascade).
-- An absent group may only have `name` and `groups`: `description` and `fragments` fail validation. Validation also fails when a user's `inventoryRoles` refers to an absent group, by path or by name.
+- An absent group may keep its `description` and `fragments`, so switching between the two states is a one-line change. They are ignored. Validation fails when the `inventoryRoles` of a user who is not absent refer to an absent group, by path or by name.
 - The deletes run **after the `users` section**, together with the deletes of the other sections, see [Removing what a manifest created](#removing-what-a-manifest-created).
 - A dry run (`--dry`) reads the groups and reports `delete after the users section (fails if not empty)` for each group to delete. When it checks whether a group is empty, it leaves out the child groups which the same run would delete.
+
+### Smart groups
+
+The `smartGroups` section creates smart groups (dynamic groups): groups whose devices are selected by an inventory query instead of being assigned, so every tenant has the same views (for example all Raspberry Pis, or all devices of a type).
+
+```yaml
+smartGroups:
+  - name: Raspberry Pis
+    description: Linux devices named rpi*
+    query: "has(c8y_IsLinux) and name eq 'rpi*'"
+    table:                     # optional: the device list table of the group in the UI
+      columns: []              # the UI default columns
+      pageSize: 50
+    fragments:                 # optional: extra fragments merged into the managed object
+      customer_Owner:
+        team: ops
+  - name: Bulk update targets
+    query: "type eq 'thin-edge.io'"
+    invisible: true            # hidden from the group list of the UI
+  - name: Old devices
+    state: absent
+```
+
+```
+  ✚ [smartGroups] Raspberry Pis (created)
+  ↻ [smartGroups] Bulk update targets (updated): updated query
+  − [smartGroups] Old devices (deleted)
+```
+
+- A smart group is a managed object with the type `c8y_DynamicGroup` and the `c8y_IsDynamicGroup` fragment. New smart groups get the [`c8y_TenantSync`](#identifying-synced-items) fragment.
+- A smart group is identified by its **name** among the smart groups of the tenant. Smart groups are looked up with an inventory query (`has(c8y_IsDynamicGroup)` and the name), so a device group with the same name is not a match.
+- `query` is the inventory query language filter which selects the devices (the `c8y_DeviceQueryString` fragment, which the UI builds from its filter editor). An empty string (`query: ""`) means no filter.
+- `table` configures the device list table of the group in the UI, which is stored in the `c8y_DeviceColumnsConfig` fragment:
+  - `columns` is the list of columns as the UI stores them (`c8y_DeviceColumnsConfig.columns`). The format of a column is defined by the UI, so configure the columns in the UI and copy them from an export (`c8y tenant-sync export --only smartGroups`). An empty list is the UI default columns.
+  - `pageSize` is the number of devices per page (`c8y_DeviceColumnsConfig.pagination.pageSize`, the UI default is 20).
+  - Each setting is optional and an omitted one is left alone. The current page of the table is UI state and is never synced. A new smart group gets the UI default table with the declared settings applied.
+- `invisible: true` hides the smart group from the group list of the UI (`c8y_IsDynamicGroup.invisible`), like the helper groups which the UI creates for bulk operations. `invisible: false` shows it again.
+- `query`, `description`, `table`, `invisible` and `fragments` are only updated when they differ, and an omitted field is left alone (a new smart group gets an empty query). `table.columns` is compared and replaced as a whole list, so a column which is missing, extra or in another order is a change. Fragments count as unchanged when the existing value contains all values of the manifest; a changed fragment replaces the whole fragment with the manifest value, as for device groups.
+- Smart groups are additive: smart groups which are not listed are never changed or deleted.
+- If several smart groups have the name, only those with the declared visibility count (visible groups, unless the entry sets `invisible: true`), so a hidden helper group does not clash with a visible group of the same name. If several still match, the item fails with the IDs of the matches. Rename or remove the duplicates; tenant-sync does not guess.
+- `state: absent` (the default is `present`) deletes the smart group if it exists; one which does not exist is reported as `unchanged: absent`. Smart groups are flat (they are not linked into the asset hierarchy and have no child assets), so deleting one never deletes or moves devices. The delete runs in the `smartGroups` section, since inventory roles can not be assigned on smart groups. An absent entry may keep its other fields, so switching between the two states is a one-line change. They are ignored, except `invisible: true`, which deletes the hidden group of that name rather than the visible one.
+- Names must not be empty and must be unique. The fragments `name`, `type`, `description`, `c8y_IsDynamicGroup`, `c8y_DeviceQueryString`, `c8y_DeviceColumnsConfig`, `c8y_TenantSync` and the platform properties (`id`, `owner`, `childAssets`, ...) can not be set.
+- A dry run (`--dry`) reads the smart groups and reports `create`, the fields to update, `delete` or `unchanged` for each entry. Without a session it lists `ensure smart group` and `delete if it exists`.
+- Smart groups are synced after the device groups.
 
 ### Users and global roles
 
@@ -1312,7 +1358,7 @@ users:
 | `state: absent` | Nothing to do (`unchanged`) | Delete |
 
 - `ifMissing: skip` suits SSO users who have not logged in yet: the next run picks them up. With `skip` or `fail` the user is never created, so the entry does not need `email`, `password` or `sendPasswordResetEmail`.
-- `state: absent` deletes the user. To only block a login, use `enabled: false`, which keeps the user and their history. An entry with `state: absent` may only have `userName`: validation fails on any other field, `ifMissing` included.
+- `state: absent` deletes the user. To only block a login, use `enabled: false`, which keeps the user and their history. An entry with `state: absent` may keep its other fields, `ifMissing` and `password` included, so switching between the two states is a one-line change. They are ignored: `passwordFrom` is not resolved, and the user's global roles, device groups and inventory roles may have state absent too.
 - The user running the sync is never deleted: such an entry fails with `refusing to delete the user running the sync`. When that user cannot be looked up, no user is deleted.
 - A user that cannot be read (for example because of missing permissions) fails with `read user`. Only a user that does not exist is created, skipped or failed as `ifMissing` says.
 - `enabled` stays a separate field: it is the account state in Cumulocity, while `state` and `ifMissing` say what tenant-sync does with the entry.
@@ -1326,7 +1372,7 @@ globalRoles:
 ```
 
 - `state: absent` (the default is `present`) deletes the global role if it exists. A global role which does not exist is reported as `unchanged: absent`. Cumulocity removes the role from the users who still have it.
-- An absent global role may only have `name`. Validation fails when a user's `globalRoles` or a rule of `loginOptions.sso.accessMappings` refers to it.
+- An absent global role may keep its `description` and `permissions`, so switching between the two states is a one-line change. They are ignored. Validation fails when the `globalRoles` of a user who is not absent, or a rule of `loginOptions.sso.accessMappings`, refers to it.
 - The built-in global roles (`admins`, `business`, `Cockpit User`, `devices`, `Devicemanagement User`, `Global Manager`, `Global Reader`, `Global User Manager`, `readers`, `Shared User Manager` and `Tenant Manager`) are never deleted: validation fails for them. The Cumulocity API does not mark them, so they are matched by name.
 - A global role of the user running the sync is never deleted, so the sync cannot remove its own permissions. Such an entry fails with `refusing to delete a global role of the user running the sync`.
 - The delete runs **after the `users` section**, see [Removing what a manifest created](#removing-what-a-manifest-created). A dry run shows `delete after the users section`.
@@ -1451,7 +1497,7 @@ A real run reports the same details. Without an active session, and for tenants 
 
 ### Removing what a manifest created
 
-The `users`, `inventoryRoles`, `globalRoles`, `deviceGroups` and `alarmMapping` sections accept `state: absent`, so the objects an applied manifest created can be removed with a manifest as well. Change each entry to its name and `state: absent`:
+The `users`, `inventoryRoles`, `globalRoles`, `deviceGroups`, `smartGroups` and `alarmMapping` sections accept `state: absent`, so the objects an applied manifest created can be removed with a manifest as well. Change each entry to its name and `state: absent`:
 
 ```yaml
 users:
@@ -1478,6 +1524,8 @@ The deletes run in one run, in an order where nothing is deleted while it is sti
 Steps 2 to 4 run after the `users` section. With `--only`, they run after the last of these four sections which `--only` selects, for example right after `deviceGroups` with `--only deviceGroups`. A second run of the same manifest reports every entry as `unchanged: absent`.
 
 Only empty device groups are deleted, so devices assigned to a group must be moved or deleted first.
+
+Smart groups and alarm mappings with `state: absent` are deleted in their own section, since nothing else in the manifest depends on them.
 
 ### Login options
 

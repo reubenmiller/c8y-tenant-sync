@@ -35,7 +35,6 @@ func TestValidateGlobalRoleState(t *testing.T) {
 		expected string
 	}{
 		{"unknown state", "globalRoles:\n  - name: a\n    state: deleted\n", `globalRoles[0]: unknown state "deleted": supported values are present, absent`},
-		{"absent with fields", "globalRoles:\n  - name: a\n    state: absent\n    description: d\n    permissions: [ROLE_INVENTORY_READ]\n", "globalRoles[0]: a global role with state absent may only have name (remove description, permissions)"},
 		{"absent built-in", "globalRoles:\n  - name: Admins\n    state: absent\n", `globalRoles[0]: "Admins" is a built-in global role and can not have state absent`},
 		{"user references absent", "globalRoles:\n  - name: a\n    state: absent\nusers:\n  - email: u@example.com\n    globalRoles: [a]\n", `users[0].globalRoles[0]: global role "a" has state absent in globalRoles`},
 		{"sso rule references absent", `globalRoles:
@@ -58,6 +57,11 @@ loginOptions:
 	}
 
 	_, err := LoadManifest(writeManifest(t, "globalRoles:\n  - name: a\n    state: present\n    permissions: [ROLE_INVENTORY_READ]\n  - name: b\n    state: absent\n"))
+	assert.NoError(t, err)
+
+	// An absent global role may keep its description and permissions (they
+	// are ignored), and an absent user may still refer to it
+	_, err = LoadManifest(writeManifest(t, "globalRoles:\n  - name: a\n    state: absent\n    description: d\n    permissions: [ROLE_INVENTORY_READ]\nusers:\n  - email: u@example.com\n    state: absent\n    globalRoles: [a]\n"))
 	assert.NoError(t, err)
 }
 

@@ -47,11 +47,16 @@ func newFakeInventory(t *testing.T) *fakeInventory {
 		if match := fakeNameFilter.FindStringSubmatch(query); match != nil {
 			name = strings.ReplaceAll(match[1], "''", "'")
 		}
+		// Device groups, or smart groups when the query asks for them
+		marker := "c8y_IsDeviceGroup"
+		if strings.Contains(query, "has(c8y_IsDynamicGroup)") {
+			marker = "c8y_IsDynamicGroup"
+		}
 		inv.mu.Lock()
 		var items []map[string]any
 		for _, id := range inv.sortedIDs() {
 			obj := inv.objects[id]
-			if _, ok := obj["c8y_IsDeviceGroup"]; !ok {
+			if _, ok := obj[marker]; !ok {
 				continue
 			}
 			if name != "" && obj["name"] != name {

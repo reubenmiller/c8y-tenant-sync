@@ -44,7 +44,10 @@ type Manifest struct {
 	Extensions    []ExtensionSpec    `yaml:"extensions" json:"extensions,omitempty" jsonschema:"description=UI extensions (plugin packages) to upload into the tenant running the sync; a version is only uploaded when it is not on the extension yet. Install them into web applications with applications[].extensions; the Extensions page of the Administration application"`
 	Applications  []ApplicationSpec  `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Web applications to subscribe to the target tenant (optionally kept at the version of a source and with UI extensions installed); the Applications page of the Administration application. Microservices are listed under microservices"`
 	DeviceGroups  []DeviceGroupSpec  `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update or delete with state absent (a group is identified by its name within its parent; groups are never unlinked and only empty groups are deleted)"`
-	GlobalRoles   []GlobalRoleSpec   `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed) or delete with state absent"`
+	// SmartGroups are dynamic groups whose devices are selected by an
+	// inventory query
+	SmartGroups []SmartGroupSpec `yaml:"smartGroups" json:"smartGroups,omitempty" jsonschema:"description=Smart groups (dynamic groups) to create/update or delete with state absent: groups whose devices are selected by an inventory query (matched by name; smart groups which are not listed are never changed and deleting a smart group never deletes devices)"`
+	GlobalRoles []GlobalRoleSpec `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed) or delete with state absent"`
 	// InventoryRoles are permission sets which users get on specific device
 	// groups through users[].inventoryRoles
 	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"`
@@ -551,7 +554,7 @@ type DeviceGroupSpec struct {
 	Name string `yaml:"name" json:"name" jsonschema:"description=Name of the device group; identifies the group among the groups of its parent (or among the root groups),minLength=1,example=Europe"`
 
 	// State is present (the default) or absent
-	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the group; absent deletes the group if it exists, after the users section, children first (an absent entry may only have name and groups, its child groups must be absent too, and it must not be referenced in users[].inventoryRoles; a group which still has child assets or child devices is never deleted: the sync fails and lists them),enum=present,enum=absent"`
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the group; absent deletes the group if it exists, after the users section, children first (an absent entry may keep its description and fragments: they are ignored; its child groups must be absent too, and it must not be referenced in the inventoryRoles of a user which is not absent; a group which still has child assets or child devices is never deleted: the sync fails and lists them),enum=present,enum=absent"`
 
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the device group (left alone when omitted)"`
 
@@ -565,6 +568,80 @@ type DeviceGroupSpec struct {
 // Absent reports whether the device group is to be deleted
 func (g DeviceGroupSpec) Absent() bool {
 	return strings.TrimSpace(g.State) == DeviceGroupStateAbsent
+}
+
+// Smart group states
+const (
+	SmartGroupStatePresent = "present"
+	SmartGroupStateAbsent  = "absent"
+)
+
+// SmartGroupStates are the values of smartGroups[].state
+var SmartGroupStates = []string{SmartGroupStatePresent, SmartGroupStateAbsent}
+
+// SmartGroupSpec ensures a smart group (a dynamic group whose devices are
+// selected by an inventory query) exists, or (state: absent) that it does
+// not exist
+type SmartGroupSpec struct {
+	Name string `yaml:"name" json:"name" jsonschema:"description=Name of the smart group; identifies the group among the smart groups of the tenant,minLength=1,example=Linux devices"`
+
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the smart group; absent deletes the smart group if it exists (an absent entry may keep its other fields: they are ignored, except invisible which selects the hidden or visible group to delete; the devices of the group are never deleted),enum=present,enum=absent"`
+
+	// Query is the inventory query language filter of the devices
+	// (c8y_DeviceQueryString); nil leaves the query of an existing group
+	// alone
+	Query *string `yaml:"query" json:"query,omitempty" jsonschema:"description=Inventory query language filter which selects the devices of the group (the c8y_DeviceQueryString fragment); an empty string selects no filter; left alone when omitted (new groups get an empty query),example=has(c8y_IsLinux) and name eq 'rpi*'"`
+
+	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the smart group (left alone when omitted)"`
+
+	// Table is the device list table of the group in the UI
+	// (c8y_DeviceColumnsConfig)
+	Table *SmartGroupTableSpec `yaml:"table" json:"table,omitempty" jsonschema:"description=The device list table of the smart group in the UI (stored in the c8y_DeviceColumnsConfig fragment); omitted settings are left alone"`
+
+	// Invisible hides the group from the group list of the UI
+	// (c8y_IsDynamicGroup.invisible)
+	Invisible *bool `yaml:"invisible" json:"invisible,omitempty" jsonschema:"description=Hide the smart group from the group list of the UI (c8y_IsDynamicGroup.invisible), like the helper groups the UI creates for bulk operations; left alone when omitted"`
+
+	// Fragments are merged into the managed object; a fragment is only
+	// updated when the existing value does not contain the desired values
+	Fragments map[string]any `yaml:"fragments" json:"fragments,omitempty" jsonschema:"description=Additional fragments merged into the smart group managed object (updated when the existing value does not contain the desired values)"`
+}
+
+// SmartGroupTableSpec configures the device list table of a smart group in
+// the UI. It is stored in the c8y_DeviceColumnsConfig fragment as columns and
+// pagination.pageSize; an omitted setting is left alone
+type SmartGroupTableSpec struct {
+	Columns  []map[string]any `yaml:"columns" json:"columns,omitempty" jsonschema:"description=The columns of the table as the UI stores them (c8y_DeviceColumnsConfig.columns; copy them from an export); replaced as a whole when they differ; an empty list resets the table to the UI default columns; left alone when omitted"`
+	PageSize *int             `yaml:"pageSize" json:"pageSize,omitempty" jsonschema:"description=Number of devices per page (c8y_DeviceColumnsConfig.pagination.pageSize; the UI default is 20); left alone when omitted,minimum=1,example=50"`
+}
+
+// columnsConfig returns the declared part of the c8y_DeviceColumnsConfig
+// fragment (nil when nothing is declared)
+func (t *SmartGroupTableSpec) columnsConfig() map[string]any {
+	if t == nil {
+		return nil
+	}
+	config := map[string]any{}
+	if t.Columns != nil {
+		columns := make([]any, len(t.Columns))
+		for i, column := range t.Columns {
+			columns[i] = column
+		}
+		config["columns"] = columns
+	}
+	if t.PageSize != nil {
+		config["pagination"] = map[string]any{"pageSize": *t.PageSize}
+	}
+	if len(config) == 0 {
+		return nil
+	}
+	return config
+}
+
+// Absent reports whether the smart group is to be deleted
+func (g SmartGroupSpec) Absent() bool {
+	return strings.TrimSpace(g.State) == SmartGroupStateAbsent
 }
 
 // Global role states
@@ -604,7 +681,7 @@ type GlobalRoleSpec struct {
 	Name string `yaml:"name" json:"name" jsonschema:"description=Name of the global role,example=operators"`
 
 	// State is present (the default) or absent
-	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the global role; absent deletes the global role if it exists, after the users section (an absent entry may only have name; it must not be referenced in users[].globalRoles or SSO access mapping rules; built-in global roles and global roles of the user running the sync are never deleted),enum=present,enum=absent"`
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the global role; absent deletes the global role if it exists, after the users section (an absent entry may keep its description and permissions: they are ignored; it must not be referenced in the globalRoles of a user which is not absent or in SSO access mapping rules; built-in global roles and global roles of the user running the sync are never deleted),enum=present,enum=absent"`
 
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the global role"`
 
@@ -628,7 +705,7 @@ type UserSpec struct {
 	Username string `yaml:"userName" json:"userName,omitempty" jsonschema:"description=Username (login) of the user (defaults to the email),example=jdoe@example.com"`
 
 	// State is present (the default) or absent
-	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may only have userName; the user running the sync is never deleted),enum=present,enum=absent"`
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may keep its other fields: they are ignored, and its references to absent global roles, device groups and inventory roles are allowed; the user running the sync is never deleted),enum=present,enum=absent"`
 
 	// IfMissing is create (the default), skip or fail
 	IfMissing string `yaml:"ifMissing" json:"ifMissing,omitempty" jsonschema:"description=What to do when the user does not exist: create (default) creates it; skip leaves it out and reports it as skipped (e.g. SSO users who have not logged in yet); fail fails the user. With skip or fail the user is never created so email and password are not needed,enum=create,enum=skip,enum=fail"`
@@ -693,7 +770,7 @@ type InventoryRoleSpec struct {
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the inventory role (only updated when set)"`
 
 	// State is present (the default) or absent
-	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the role; absent deletes the role if it exists, after the users section; fails while users still have the role (the role must not be referenced in users[].inventoryRoles),enum=present,enum=absent"`
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the role; absent deletes the role if it exists, after the users section; fails while users still have the role (the role must not be referenced in the inventoryRoles of a user which is not absent),enum=present,enum=absent"`
 
 	// RenamedFrom are previous names of the role
 	RenamedFrom []string `yaml:"renamedFrom" json:"renamedFrom,omitempty" jsonschema:"description=Previous names of the role: when no role has the name but exactly one role has a previous name that role is renamed (keeping its assignments) instead of creating a new role; fails as ambiguous when both the name and a previous name exist,example=Site operators"`
@@ -818,30 +895,6 @@ func (u UserSpec) MissingAction() string {
 // CreatesMissing reports whether a missing user is created
 func (u UserSpec) CreatesMissing() bool {
 	return !u.Absent() && u.MissingAction() == UserIfMissingCreate
-}
-
-// absentExtraFields lists the fields set on an entry besides userName (an
-// entry with state absent may only have userName)
-func (u UserSpec) absentExtraFields() []string {
-	var fields []string
-	add := func(set bool, name string) {
-		if set {
-			fields = append(fields, name)
-		}
-	}
-	add(u.IfMissing != "", "ifMissing")
-	add(u.Email != "", "email")
-	add(u.FirstName != "", "firstName")
-	add(u.LastName != "", "lastName")
-	add(u.Phone != "", "phone")
-	add(u.Enabled != nil, "enabled")
-	add(u.Password != "", "password")
-	add(u.PasswordFrom != nil, "passwordFrom")
-	add(u.SendPasswordResetEmail, "sendPasswordResetEmail")
-	add(u.GlobalRoles != nil, "globalRoles")
-	add(u.InventoryRoles != nil, "inventoryRoles")
-	add(u.InventoryRolesMode != "", "inventoryRolesMode")
-	return fields
 }
 
 // Source describes where artifacts come from. Exactly one of Path, URL or
@@ -1550,21 +1603,44 @@ func validateDeviceGroups(label string, groups []DeviceGroupSpec, parentAbsent b
 		if group.State != "" && !slices.Contains(DeviceGroupStates, group.State) {
 			errs = append(errs, fmt.Sprintf("%s: unknown state %q: supported values are %s", itemLabel, group.State, strings.Join(DeviceGroupStates, ", ")))
 		}
-		if group.Absent() {
-			var extra []string
-			if group.Description != "" {
-				extra = append(extra, "description")
-			}
-			if group.Fragments != nil {
-				extra = append(extra, "fragments")
-			}
-			if len(extra) > 0 {
-				errs = append(errs, fmt.Sprintf("%s: a group with state absent may only have name and groups (remove %s)", itemLabel, strings.Join(extra, ", ")))
-			}
-		} else if parentAbsent {
+		// An absent group may keep its description and fragments (they are
+		// ignored), so switching between the states is a one-line change
+		if !group.Absent() && parentAbsent {
 			errs = append(errs, fmt.Sprintf("%s: the parent group has state absent, so group %q must have state absent too (or be removed from the manifest)", itemLabel, group.Name))
 		}
 		errs = append(errs, validateDeviceGroups(itemLabel+".groups", group.Groups, group.Absent())...)
+	}
+	return errs
+}
+
+// validateSmartGroups checks the smart groups: names are required and
+// unique, and fragments must not set reserved properties
+func validateSmartGroups(groups []SmartGroupSpec) []string {
+	var errs []string
+	names := make(map[string]bool, len(groups))
+	for i, group := range groups {
+		label := fmt.Sprintf("smartGroups[%d]", i)
+		name := strings.TrimSpace(group.Name)
+		switch {
+		case name == "":
+			errs = append(errs, label+": name is required")
+		case name != group.Name:
+			errs = append(errs, fmt.Sprintf("%s: name %q must not start or end with spaces", label, group.Name))
+		case names[name]:
+			errs = append(errs, fmt.Sprintf("%s: duplicate smart group name %q", label, name))
+		}
+		names[name] = true
+		for _, key := range sortedKeys(group.Fragments) {
+			if slices.Contains(reservedSmartGroupFragments, key) {
+				errs = append(errs, fmt.Sprintf("%s.fragments: %q can not be set as a fragment", label, key))
+			}
+		}
+		if group.State != "" && !slices.Contains(SmartGroupStates, group.State) {
+			errs = append(errs, fmt.Sprintf("%s: unknown state %q: supported values are %s", label, group.State, strings.Join(SmartGroupStates, ", ")))
+		}
+		if group.Table != nil && group.Table.PageSize != nil && *group.Table.PageSize < 1 {
+			errs = append(errs, fmt.Sprintf("%s.table.pageSize: must be at least 1 (got %d)", label, *group.Table.PageSize))
+		}
 	}
 	return errs
 }
@@ -1834,6 +1910,7 @@ func (m *Manifest) Validate() error {
 	}
 	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups, false)...)
 	absentGroupPaths, absentGroupNames := absentDeviceGroups(m.DeviceGroups)
+	errs = append(errs, validateSmartGroups(m.SmartGroups)...)
 	groupNames := make(map[string]bool, len(m.GlobalRoles))
 	absentGlobalRoles := map[string]bool{}
 	for i, group := range m.GlobalRoles {
@@ -1846,17 +1923,10 @@ func (m *Manifest) Validate() error {
 		if group.State != "" && !slices.Contains(GlobalRoleStates, group.State) {
 			errs = append(errs, fmt.Sprintf("globalRoles[%d]: unknown state %q: supported values are %s", i, group.State, strings.Join(GlobalRoleStates, ", ")))
 		}
+		// An absent global role may keep its description and permissions
+		// (they are ignored), so switching between the states is a one-line
+		// change
 		if group.Absent() {
-			var extra []string
-			if group.Description != "" {
-				extra = append(extra, "description")
-			}
-			if group.Permissions != nil {
-				extra = append(extra, "permissions")
-			}
-			if len(extra) > 0 {
-				errs = append(errs, fmt.Sprintf("globalRoles[%d]: a global role with state absent may only have name (remove %s)", i, strings.Join(extra, ", ")))
-			}
 			if isBuiltinGlobalRole(group.Name) {
 				errs = append(errs, fmt.Sprintf("globalRoles[%d]: %q is a built-in global role and can not have state absent", i, group.Name))
 			}
@@ -1965,11 +2035,11 @@ func (m *Manifest) Validate() error {
 		if user.InventoryRolesMode != "" && !slices.Contains(UserInventoryRolesModes, user.InventoryRolesMode) {
 			errs = append(errs, fmt.Sprintf("users[%d]: unknown inventoryRolesMode %q: supported values are %s", i, user.InventoryRolesMode, strings.Join(UserInventoryRolesModes, ", ")))
 		}
-		if user.Absent() {
-			if extra := user.absentExtraFields(); len(extra) > 0 {
-				errs = append(errs, fmt.Sprintf("users[%d]: a user with state absent may only have userName (remove %s)", i, strings.Join(extra, ", ")))
-			}
-		}
+		// An absent user may keep its other fields (they are ignored), so
+		// switching between the states is a one-line change. Its references
+		// to absent global roles, device groups and inventory roles are not
+		// errors either, since the user is deleted
+		absentUser := user.Absent()
 		// The email is only needed when the user can be created
 		if user.SendPasswordResetEmail && user.CreatesMissing() && user.CreateEmail() == "" {
 			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
@@ -1978,7 +2048,7 @@ func (m *Manifest) Validate() error {
 			switch {
 			case strings.TrimSpace(group) == "":
 				errs = append(errs, fmt.Sprintf("users[%d].globalRoles[%d]: global role must not be empty", i, j))
-			case absentGlobalRoles[group]:
+			case absentGlobalRoles[group] && !absentUser:
 				errs = append(errs, fmt.Sprintf("users[%d].globalRoles[%d]: global role %q has state absent in globalRoles", i, j, group))
 			}
 		}
@@ -1994,7 +2064,7 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: duplicate group %q (list all roles of a group in one entry)", prefix, assignment.Group))
 			} else {
 				assignedGroups[key] = true
-				if absentGroupPaths[key] || absentGroupNames[key] {
+				if !absentUser && (absentGroupPaths[key] || absentGroupNames[key]) {
 					errs = append(errs, fmt.Sprintf("%s: device group %q has state absent in deviceGroups", prefix, assignment.Group))
 				}
 			}
@@ -2005,9 +2075,9 @@ func (m *Manifest) Validate() error {
 				switch {
 				case strings.TrimSpace(role) == "":
 					errs = append(errs, fmt.Sprintf("%s.roles[%d]: role must not be empty", prefix, k))
-				case absentRoles[role]:
+				case absentRoles[role] && !absentUser:
 					errs = append(errs, fmt.Sprintf("%s.roles[%d]: inventory role %q has state absent in inventoryRoles", prefix, k, role))
-				case renamedTo[role] != "":
+				case renamedTo[role] != "" && !absentUser:
 					errs = append(errs, fmt.Sprintf("%s.roles[%d]: inventory role %q is renamed to %q in inventoryRoles", prefix, k, role, renamedTo[role]))
 				}
 			}

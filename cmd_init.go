@@ -108,6 +108,10 @@ software:
 #     groups:
 #       - name: Plant Berlin
 
+# smartGroups:
+#   - name: Linux devices
+#     query: "has(c8y_IsLinux) and name eq 'rpi*'"
+
 # globalRoles:
 #   - name: operators
 #     permissions: [ROLE_INVENTORY_READ, ROLE_ALARM_READ]

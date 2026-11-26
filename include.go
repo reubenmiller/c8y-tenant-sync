@@ -636,7 +636,7 @@ func (m *Manifest) rebase(dir, rootDir string) {
 //   - entries with an identity (child tenant domain, tenant option
 //     category+key, alarm mapping type, feature key, retention rule
 //     selector, application name, root device group name (the whole tree
-//     is replaced), global role name, inventory role name, user name,
+//     is replaced), smart group name, global role name, inventory role name, user name,
 //     device profile name, command group name) replace an entry with the same identity in base, at its
 //     position (the later definition wins)
 //   - entries without an identity (trusted certificates, revocation lists,
@@ -677,6 +677,7 @@ func mergeManifests(base, over *Manifest) *Manifest {
 	out.Extensions = mergeByKey(base.Extensions, over.Extensions, func(e ExtensionSpec) string { return e.Name })
 	out.Applications = mergeByKey(base.Applications, over.Applications, func(a ApplicationSpec) string { return a.Name })
 	out.DeviceGroups = mergeByKey(base.DeviceGroups, over.DeviceGroups, func(g DeviceGroupSpec) string { return g.Name })
+	out.SmartGroups = mergeByKey(base.SmartGroups, over.SmartGroups, func(g SmartGroupSpec) string { return g.Name })
 	out.GlobalRoles = mergeByKey(base.GlobalRoles, over.GlobalRoles, func(g GlobalRoleSpec) string { return g.Name })
 	out.InventoryRoles = mergeByKey(base.InventoryRoles, over.InventoryRoles, func(r InventoryRoleSpec) string { return r.Name })
 	out.Users = mergeByKey(base.Users, over.Users, func(u UserSpec) string { return u.Username })

@@ -47,7 +47,6 @@ func TestValidateDeviceGroupState(t *testing.T) {
 		expected string
 	}{
 		{"unknown state", "deviceGroups:\n  - name: a\n    state: deleted\n", `deviceGroups[0]: unknown state "deleted": supported values are present, absent`},
-		{"absent with fields", "deviceGroups:\n  - name: a\n    state: absent\n    description: d\n    fragments: {x: 1}\n", "deviceGroups[0]: a group with state absent may only have name and groups (remove description, fragments)"},
 		{"present child of absent", "deviceGroups:\n  - name: a\n    state: absent\n    groups:\n      - name: b\n", `deviceGroups[0].groups[0]: the parent group has state absent, so group "b" must have state absent too (or be removed from the manifest)`},
 		{"user references absent path", "deviceGroups:\n  - name: a\n    groups:\n      - name: b\n        state: absent\nusers:\n  - email: u@example.com\n    inventoryRoles: [{group: a/b, roles: [r]}]\n", `users[0].inventoryRoles[0]: device group "a/b" has state absent in deviceGroups`},
 		{"user references absent name", "deviceGroups:\n  - name: a\n    groups:\n      - name: b\n        state: absent\nusers:\n  - email: u@example.com\n    inventoryRoles: [{group: b, roles: [r]}]\n", `users[0].inventoryRoles[0]: device group "b" has state absent in deviceGroups`},
@@ -61,6 +60,11 @@ func TestValidateDeviceGroupState(t *testing.T) {
 
 	_, err := LoadManifest(writeManifest(t, "deviceGroups:\n  - name: a\n    state: present\n    groups:\n      - name: b\n        state: absent\n        groups:\n          - name: c\n            state: absent\n"))
 	assert.NoError(t, err, "an absent group may be below a present one")
+
+	// An absent group may keep its description and fragments (they are
+	// ignored), and an absent user may still refer to it
+	_, err = LoadManifest(writeManifest(t, "deviceGroups:\n  - name: a\n    state: absent\n    description: d\n    fragments: {x: 1}\nusers:\n  - email: u@example.com\n    state: absent\n    inventoryRoles: [{group: a, roles: [r]}]\n"))
+	assert.NoError(t, err)
 }
 
 func TestSchemaDeviceGroupState(t *testing.T) {

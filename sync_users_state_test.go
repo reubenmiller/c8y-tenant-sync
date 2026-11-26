@@ -67,11 +67,7 @@ func TestValidateUserStateAndIfMissing(t *testing.T) {
 	}{
 		{"unknown state", "users:\n  - userName: a\n    state: deleted\n", `users[0]: unknown state "deleted": supported values are present, absent`},
 		{"unknown ifMissing", "users:\n  - userName: a\n    ifMissing: ignore\n", `users[0]: unknown ifMissing "ignore": supported values are create, skip, fail`},
-		{"absent with ifMissing", "users:\n  - userName: a\n    state: absent\n    ifMissing: skip\n", "users[0]: a user with state absent may only have userName (remove ifMissing)"},
-		{"absent with fields", "users:\n  - userName: a\n    state: absent\n    email: a@example.com\n    enabled: false\n    globalRoles: [ops]\n", "users[0]: a user with state absent may only have userName (remove email, enabled, globalRoles)"},
-		{"absent with email only", "users:\n  - email: a@example.com\n    state: absent\n", "users[0]: a user with state absent may only have userName (remove email)"},
-		{"absent with inventory roles", "users:\n  - userName: a\n    state: absent\n    inventoryRoles: [{group: g, roles: [r]}]\n", "users[0]: a user with state absent may only have userName (remove inventoryRoles)"},
-		{"absent with password", "users:\n  - userName: a\n    state: absent\n    password: secret\n    sendPasswordResetEmail: true\n", "users[0]: a user with state absent may only have userName (remove password, sendPasswordResetEmail)"},
+		{"absent with invalid ifMissing", "users:\n  - userName: a\n    state: absent\n    ifMissing: ignore\n", `users[0]: unknown ifMissing "ignore"`},
 		{"create needs email for reset", "users:\n  - userName: svc\n    ifMissing: create\n    sendPasswordResetEmail: true\n", "users[0]: sendPasswordResetEmail requires email"},
 	}
 	for _, tc := range testCases {
@@ -83,6 +79,23 @@ func TestValidateUserStateAndIfMissing(t *testing.T) {
 
 	_, err := LoadManifest(writeManifest(t, "users:\n  - userName: svc\n    ifMissing: skip\n    sendPasswordResetEmail: true\n  - userName: svc2\n    ifMissing: fail\n  - userName: old\n    state: absent\n  - userName: kept\n    state: present\n    ifMissing: create\n    email: kept@example.com\n"))
 	assert.NoError(t, err, "skip and fail do not need an email, and absent with only userName is valid")
+
+	// An absent user may keep its other fields (they are ignored), so
+	// switching between the states is a one-line change
+	manifest, err := LoadManifest(writeManifest(t, "users:\n  - userName: a\n    state: absent\n    ifMissing: skip\n    email: a@example.com\n    firstName: A\n    enabled: false\n    password: secret\n    sendPasswordResetEmail: true\n    globalRoles: [ops]\n    inventoryRoles: [{group: g, roles: [r]}]\n    inventoryRolesMode: exact\n  - email: b@example.com\n    state: absent\n"))
+	require.NoError(t, err)
+	assert.True(t, manifest.Users[0].Absent())
+	assert.Equal(t, "b@example.com", manifest.Users[1].Username, "the email is the user name")
+	assert.Empty(t, manifest.UserWarnings(), "exact mode without roles is no warning on an absent user")
+}
+
+func TestAbsentUserPasswordFromIsNotResolved(t *testing.T) {
+	t.Setenv("TENANT_SYNC_TEST_UNSET_PASSWORD", "")
+	manifest, err := LoadManifest(writeManifest(t, "users:\n  - userName: a\n    state: absent\n    passwordFrom: {env: TENANT_SYNC_TEST_UNSET_PASSWORD}\n"))
+	require.NoError(t, err)
+	_, err = manifest.ResolveSecretRefs(nil)
+	assert.NoError(t, err, "the variable of an absent user is not needed")
+	assert.Empty(t, manifest.Users[0].Password)
 }
 
 func TestSchemaUserStateAndIfMissing(t *testing.T) {

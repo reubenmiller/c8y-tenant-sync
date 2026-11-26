@@ -39,6 +39,7 @@ var sectionServiceUserRoles = map[string][]string{
 	SectionExtensions:             nil, // base credentials
 	SectionApplications:           nil, // base credentials
 	SectionDeviceGroups:           {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
+	SectionSmartGroups:            {"ROLE_INVENTORY_READ", "ROLE_INVENTORY_ADMIN", "ROLE_INVENTORY_CREATE"},
 	SectionGlobalRoles:            {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
 	SectionInventoryRoles:         {"ROLE_USER_MANAGEMENT_READ", "ROLE_USER_MANAGEMENT_ADMIN"},
 	// Users are also assigned inventory roles on device groups

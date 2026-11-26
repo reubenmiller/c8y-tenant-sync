@@ -266,6 +266,23 @@ func (s *SSOLoginSpec) validate(preferred string) []string {
 	return errs
 }
 
+// validateGlobalRoles checks that the SSO access mapping rules do not
+// assign a global role which the manifest deletes (state absent)
+func (l *LoginOptionsSpec) validateGlobalRoles(absent map[string]bool) []string {
+	if l == nil || l.SSO == nil || l.SSO.Access == nil || len(absent) == 0 {
+		return nil
+	}
+	var errs []string
+	for i, rule := range l.SSO.Access.Rules {
+		for j, name := range rule.GlobalRoles {
+			if absent[name] {
+				errs = append(errs, fmt.Sprintf("loginOptions.sso.accessMappings.rules[%d].globalRoles[%d]: global role %q has state absent in globalRoles", i, j, name))
+			}
+		}
+	}
+	return errs
+}
+
 // validateDiscoveryURL requires an https URL (http only for local hosts)
 func validateDiscoveryURL(raw string) error {
 	return validateSecureURL(raw)

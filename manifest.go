@@ -40,8 +40,8 @@ type Manifest struct {
 	Microservices []MicroserviceSpec `yaml:"microservices" json:"microservices,omitempty" jsonschema:"description=Microservices to subscribe to the target tenant (optionally created/uploaded from a source); the Microservices page of the Administration application"`
 	Extensions    []ExtensionSpec    `yaml:"extensions" json:"extensions,omitempty" jsonschema:"description=UI extensions (plugin packages) to upload into the tenant running the sync; a version is only uploaded when it is not on the extension yet. Install them into web applications with applications[].extensions; the Extensions page of the Administration application"`
 	Applications  []ApplicationSpec  `yaml:"applications" json:"applications,omitempty" jsonschema:"description=Web applications to subscribe to the target tenant (optionally kept at the version of a source and with UI extensions installed); the Applications page of the Administration application. Microservices are listed under microservices"`
-	DeviceGroups  []DeviceGroupSpec  `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update (a group is identified by its name within its parent; groups are never deleted or unlinked)"`
-	GlobalRoles   []GlobalRoleSpec   `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed)"`
+	DeviceGroups  []DeviceGroupSpec  `yaml:"deviceGroups" json:"deviceGroups,omitempty" jsonschema:"description=Tree of device groups to create/update or delete with state absent (a group is identified by its name within its parent; groups are never unlinked and only empty groups are deleted)"`
+	GlobalRoles   []GlobalRoleSpec   `yaml:"globalRoles" json:"globalRoles,omitempty" jsonschema:"description=Global roles (user groups in the API) to create/update with permissions assigned (additive: existing permissions are never removed) or delete with state absent"`
 	// InventoryRoles are permission sets which users get on specific device
 	// groups through users[].inventoryRoles
 	InventoryRoles []InventoryRoleSpec `yaml:"inventoryRoles" json:"inventoryRoles,omitempty" jsonschema:"description=Inventory roles to create/update/rename/delete (matched by name; roles not listed are never deleted); users get them on device groups through users[].inventoryRoles"`
@@ -532,10 +532,24 @@ func (a ApplicationSpec) IsSubscribed() bool {
 	return a.Subscribed == nil || *a.Subscribed
 }
 
+// Device group states
+const (
+	DeviceGroupStatePresent = "present"
+	DeviceGroupStateAbsent  = "absent"
+)
+
+// DeviceGroupStates are the values of deviceGroups[].state
+var DeviceGroupStates = []string{DeviceGroupStatePresent, DeviceGroupStateAbsent}
+
 // DeviceGroupSpec ensures a device group exists below its parent (or at the
-// root level) together with its child groups
+// root level) together with its child groups, or (state: absent) that it
+// does not exist
 type DeviceGroupSpec struct {
-	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the device group; identifies the group among the groups of its parent (or among the root groups),minLength=1,example=Europe"`
+	Name string `yaml:"name" json:"name" jsonschema:"description=Name of the device group; identifies the group among the groups of its parent (or among the root groups),minLength=1,example=Europe"`
+
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the group; absent deletes the group if it exists, after the users section, children first (an absent entry may only have name and groups, its child groups must be absent too, and it must not be referenced in users[].inventoryRoles; a group which still has child assets or child devices is never deleted: the sync fails and lists them),enum=present,enum=absent"`
+
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the device group (left alone when omitted)"`
 
 	// Fragments are merged into the managed object; a fragment is only
@@ -545,18 +559,61 @@ type DeviceGroupSpec struct {
 	Groups []DeviceGroupSpec `yaml:"groups" json:"groups,omitempty" jsonschema:"description=Child groups linked to this group as child assets"`
 }
 
+// Absent reports whether the device group is to be deleted
+func (g DeviceGroupSpec) Absent() bool {
+	return strings.TrimSpace(g.State) == DeviceGroupStateAbsent
+}
+
+// Global role states
+const (
+	GlobalRoleStatePresent = "present"
+	GlobalRoleStateAbsent  = "absent"
+)
+
+// GlobalRoleStates are the values of globalRoles[].state
+var GlobalRoleStates = []string{GlobalRoleStatePresent, GlobalRoleStateAbsent}
+
+// builtinGlobalRoles are the global roles every Cumulocity tenant starts
+// with. The API does not mark them, so they are matched by name (ignoring
+// case) and never deleted.
+var builtinGlobalRoles = []string{
+	"admins", "business", "Cockpit User", "devices", "Devicemanagement User",
+	"Global Manager", "Global Reader", "Global User Manager", "readers",
+	"Shared User Manager", "Tenant Manager",
+}
+
+// isBuiltinGlobalRole reports whether the name is one of the built-in global
+// roles
+func isBuiltinGlobalRole(name string) bool {
+	for _, builtin := range builtinGlobalRoles {
+		if strings.EqualFold(strings.TrimSpace(name), builtin) {
+			return true
+		}
+	}
+	return false
+}
+
 // GlobalRoleSpec ensures a global role (a user group in the Cumulocity API)
-// exists with the given description and permissions. Permission assignments
-// are additive: permissions already on the role but absent from the manifest
-// are left alone.
+// exists with the given description and permissions, or (state: absent) that
+// it does not exist. Permission assignments are additive: permissions
+// already on the role but absent from the manifest are left alone.
 type GlobalRoleSpec struct {
-	Name        string `yaml:"name" json:"name" jsonschema:"description=Name of the global role,example=operators"`
+	Name string `yaml:"name" json:"name" jsonschema:"description=Name of the global role,example=operators"`
+
+	// State is present (the default) or absent
+	State string `yaml:"state" json:"state,omitempty" jsonschema:"description=present (default) creates or updates the global role; absent deletes the global role if it exists, after the users section (an absent entry may only have name; it must not be referenced in users[].globalRoles or SSO access mapping rules; built-in global roles and global roles of the user running the sync are never deleted),enum=present,enum=absent"`
+
 	Description string `yaml:"description" json:"description,omitempty" jsonschema:"description=Description of the global role"`
 
 	// Permissions lists the ROLE_* permission names assigned to the global
 	// role. Missing permissions are assigned; permissions not listed are
 	// never removed.
 	Permissions []string `yaml:"permissions" json:"permissions,omitempty" jsonschema:"description=Permission names (ROLE_*) assigned to the global role (additive; permissions not listed are never removed),example=ROLE_INVENTORY_READ"`
+}
+
+// Absent reports whether the global role is to be deleted
+func (g GlobalRoleSpec) Absent() bool {
+	return strings.TrimSpace(g.State) == GlobalRoleStateAbsent
 }
 
 // UserSpec ensures a user exists with the desired profile fields, global
@@ -1467,7 +1524,7 @@ func validateExplicitConfiguration(label string, spec ConfigurationSpec) []strin
 // validateDeviceGroups checks a level of the device group tree: names are
 // required and unique among siblings, and fragments must not set reserved
 // properties
-func validateDeviceGroups(label string, groups []DeviceGroupSpec) []string {
+func validateDeviceGroups(label string, groups []DeviceGroupSpec, parentAbsent bool) []string {
 	var errs []string
 	names := make(map[string]bool, len(groups))
 	for i, group := range groups {
@@ -1487,9 +1544,48 @@ func validateDeviceGroups(label string, groups []DeviceGroupSpec) []string {
 				errs = append(errs, fmt.Sprintf("%s.fragments: %q can not be set as a fragment", itemLabel, key))
 			}
 		}
-		errs = append(errs, validateDeviceGroups(itemLabel+".groups", group.Groups)...)
+		if group.State != "" && !slices.Contains(DeviceGroupStates, group.State) {
+			errs = append(errs, fmt.Sprintf("%s: unknown state %q: supported values are %s", itemLabel, group.State, strings.Join(DeviceGroupStates, ", ")))
+		}
+		if group.Absent() {
+			var extra []string
+			if group.Description != "" {
+				extra = append(extra, "description")
+			}
+			if group.Fragments != nil {
+				extra = append(extra, "fragments")
+			}
+			if len(extra) > 0 {
+				errs = append(errs, fmt.Sprintf("%s: a group with state absent may only have name and groups (remove %s)", itemLabel, strings.Join(extra, ", ")))
+			}
+		} else if parentAbsent {
+			errs = append(errs, fmt.Sprintf("%s: the parent group has state absent, so group %q must have state absent too (or be removed from the manifest)", itemLabel, group.Name))
+		}
+		errs = append(errs, validateDeviceGroups(itemLabel+".groups", group.Groups, group.Absent())...)
 	}
 	return errs
+}
+
+// absentDeviceGroups returns the paths ("Europe/Plant Berlin") and the names
+// of the device groups with state absent
+func absentDeviceGroups(groups []DeviceGroupSpec) (paths, names map[string]bool) {
+	paths, names = map[string]bool{}, map[string]bool{}
+	var walk func(parentPath string, groups []DeviceGroupSpec)
+	walk = func(parentPath string, groups []DeviceGroupSpec) {
+		for _, group := range groups {
+			path := group.Name
+			if parentPath != "" {
+				path = parentPath + "/" + group.Name
+			}
+			if group.Absent() {
+				paths[path] = true
+				names[group.Name] = true
+			}
+			walk(path, group.Groups)
+		}
+	}
+	walk("", groups)
+	return paths, names
 }
 
 // validateAbsoluteURL checks that an optional url is absolute
@@ -1732,8 +1828,10 @@ func (m *Manifest) Validate() error {
 			seen[ext.Name] = true
 		}
 	}
-	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups)...)
+	errs = append(errs, validateDeviceGroups("deviceGroups", m.DeviceGroups, false)...)
+	absentGroupPaths, absentGroupNames := absentDeviceGroups(m.DeviceGroups)
 	groupNames := make(map[string]bool, len(m.GlobalRoles))
+	absentGlobalRoles := map[string]bool{}
 	for i, group := range m.GlobalRoles {
 		if group.Name == "" {
 			errs = append(errs, fmt.Sprintf("globalRoles[%d]: name is required", i))
@@ -1741,6 +1839,25 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("globalRoles[%d]: duplicate global role name %q", i, group.Name))
 		}
 		groupNames[group.Name] = true
+		if group.State != "" && !slices.Contains(GlobalRoleStates, group.State) {
+			errs = append(errs, fmt.Sprintf("globalRoles[%d]: unknown state %q: supported values are %s", i, group.State, strings.Join(GlobalRoleStates, ", ")))
+		}
+		if group.Absent() {
+			var extra []string
+			if group.Description != "" {
+				extra = append(extra, "description")
+			}
+			if group.Permissions != nil {
+				extra = append(extra, "permissions")
+			}
+			if len(extra) > 0 {
+				errs = append(errs, fmt.Sprintf("globalRoles[%d]: a global role with state absent may only have name (remove %s)", i, strings.Join(extra, ", ")))
+			}
+			if isBuiltinGlobalRole(group.Name) {
+				errs = append(errs, fmt.Sprintf("globalRoles[%d]: %q is a built-in global role and can not have state absent", i, group.Name))
+			}
+			absentGlobalRoles[group.Name] = true
+		}
 		for j, permission := range group.Permissions {
 			if strings.TrimSpace(permission) == "" {
 				errs = append(errs, fmt.Sprintf("globalRoles[%d].permissions[%d]: permission must not be empty", i, j))
@@ -1854,8 +1971,11 @@ func (m *Manifest) Validate() error {
 			errs = append(errs, fmt.Sprintf("users[%d]: sendPasswordResetEmail requires email (or an email address as userName)", i))
 		}
 		for j, group := range user.GlobalRoles {
-			if strings.TrimSpace(group) == "" {
+			switch {
+			case strings.TrimSpace(group) == "":
 				errs = append(errs, fmt.Sprintf("users[%d].globalRoles[%d]: global role must not be empty", i, j))
+			case absentGlobalRoles[group]:
+				errs = append(errs, fmt.Sprintf("users[%d].globalRoles[%d]: global role %q has state absent in globalRoles", i, j, group))
 			}
 		}
 		assignedGroups := make(map[string]bool, len(user.InventoryRoles))
@@ -1870,6 +1990,9 @@ func (m *Manifest) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: duplicate group %q (list all roles of a group in one entry)", prefix, assignment.Group))
 			} else {
 				assignedGroups[key] = true
+				if absentGroupPaths[key] || absentGroupNames[key] {
+					errs = append(errs, fmt.Sprintf("%s: device group %q has state absent in deviceGroups", prefix, assignment.Group))
+				}
 			}
 			if len(assignment.Roles) == 0 {
 				errs = append(errs, prefix+": at least one role is required")
@@ -1948,6 +2071,7 @@ func (m *Manifest) Validate() error {
 	errs = append(errs, validateSmartFunctions(m.SmartFunctions)...)
 	errs = append(errs, m.DigitalTwin.validate()...)
 	errs = append(errs, m.LoginOptions.validate()...)
+	errs = append(errs, m.LoginOptions.validateGlobalRoles(absentGlobalRoles)...)
 	for i, profile := range m.DeviceProfiles {
 		if profile.Name == "" {
 			errs = append(errs, fmt.Sprintf("deviceProfiles[%d]: name is required", i))

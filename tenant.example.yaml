@@ -193,7 +193,9 @@ applications:
 # Create a tree of device groups (regions, sites, production lines, ...). A
 # group is identified by its name within its parent; missing groups are created
 # and linked to their parent as child assets. description and fragments are
-# only updated when they differ. Groups are never deleted or unlinked.
+# only updated when they differ. Groups are never unlinked; state: absent
+# deletes an empty group (children first) after the users section, and fails
+# while the group still has devices or other child assets.
 deviceGroups:
   - name: Europe
     description: European sites
@@ -206,11 +208,16 @@ deviceGroups:
           - name: Line 1
           - name: Line 2
       - name: Plant Paris
+      - name: Plant Lyon # closed: deleted with its lines
+        state: absent
+        groups:
+          - {name: Line 1, state: absent}
 
 # Create global roles (user groups in the Cumulocity API) with permissions
 # assigned. Permission assignments are additive: permissions already on a
 # global role but absent from the manifest are kept, so built-in global roles
-# can be extended safely.
+# can be extended safely. state: absent deletes a global role after the users
+# section (never a built-in one or one of the user running the sync).
 globalRoles:
   - name: operators
     description: Read-only access for the operations team
@@ -218,6 +225,8 @@ globalRoles:
       - ROLE_INVENTORY_READ
       - ROLE_ALARM_READ
       - ROLE_EVENT_READ
+  - name: contractors
+    state: absent
 
 # Create inventory roles: permissions which users get only on the devices of
 # specific device groups (see users[].inventoryRoles). Roles are matched

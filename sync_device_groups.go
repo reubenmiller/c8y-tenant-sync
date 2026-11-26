@@ -41,7 +41,8 @@ const deviceGroupPageSize = 2000
 // groups without a parent, a nested group by name among the groups whose asset
 // parents include its parent. Missing groups are created and linked to their parent; the
 // description and fragments are updated when they differ. Groups are never
-// deleted or unlinked.
+// unlinked; a group with state absent is deleted after the users section
+// (see DeleteDeviceGroups).
 func (s *Syncer) SyncDeviceGroups(ctx context.Context, specs []DeviceGroupSpec) error {
 	for _, spec := range specs {
 		s.syncDeviceGroup(ctx, "", "", spec)
@@ -55,6 +56,11 @@ func (s *Syncer) syncDeviceGroup(ctx context.Context, parentID, parentPath strin
 	path := spec.Name
 	if parentPath != "" {
 		path = parentPath + "/" + spec.Name
+	}
+
+	if spec.Absent() {
+		s.queueDeviceGroupDelete(parentID, parentPath, spec)
+		return
 	}
 
 	if s.DryRun {
@@ -244,7 +250,7 @@ func (s *Syncer) deviceGroupsByName(ctx context.Context, name string) ([]jsonmod
 		GetOptions: managedobjects.GetOptions{WithParents: true},
 	}
 	opts.PageSize = deviceGroupPageSize
-	result := s.Client.DeviceGroups.List(ctx, opts)
+	result := s.readClient().DeviceGroups.List(ctx, opts)
 	var matches []jsonmodels.ManagedObject
 	for item, err := range result.Items() {
 		if err != nil {

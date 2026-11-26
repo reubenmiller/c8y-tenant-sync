@@ -133,7 +133,8 @@ func (m *Manifest) ResolveSecretRefs(secrets *SecretStore) ([]string, error) {
 		}
 	}
 	for i := range m.Users {
-		if m.Users[i].PasswordFrom == nil {
+		// An absent user is deleted, so its password is never needed
+		if m.Users[i].PasswordFrom == nil || m.Users[i].Absent() {
 			continue
 		}
 		if value, ok := resolve(fmt.Sprintf("users[%d].passwordFrom", i), *m.Users[i].PasswordFrom); ok {

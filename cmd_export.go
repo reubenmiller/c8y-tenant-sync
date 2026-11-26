@@ -35,6 +35,7 @@ var ExportSections = []string{
 	SectionMicroservices,
 	SectionApplications,
 	SectionDeviceGroups,
+	SectionSmartGroups,
 	SectionInventoryRoles,
 	SectionUsers,
 	SectionLoginOptions,
@@ -86,6 +87,8 @@ The users section is opt-in: it is only exported when it is named in --only.
   built-in Cockpit and Device Management applications)
 - deviceGroups: the tree of device groups with name and description (other fragments
   and the devices in the groups are not exported)
+- smartGroups: the smart groups with name, description, query and their table settings (only
+  those which differ from the UI default); the hidden helper groups the UI creates are not exported
 - inventoryRoles: all inventory roles with their permissions (users' inventory roles are
   exported in the users section)
 - users (opt-in, only with --only users): the users with userName, email, firstName,
@@ -242,6 +245,7 @@ func (e *Exporter) Export(ctx context.Context) (*Manifest, string, error) {
 			manifest.DeviceGroups = deviceGroupTree(groups)
 			return
 		}},
+		{SectionSmartGroups, func() (err error) { manifest.SmartGroups, err = listSmartGroups(ctx, e.Client); return }},
 		{SectionInventoryRoles, func() (err error) { manifest.InventoryRoles, err = e.inventoryRoles(ctx); return }},
 		{SectionUsers, func() (err error) { manifest.Users, err = e.users(ctx); return }},
 		{SectionLoginOptions, func() (err error) { manifest.LoginOptions, err = e.loginOptions(ctx); return }},

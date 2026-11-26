@@ -89,7 +89,6 @@ func TestValidateInventoryRolesMode(t *testing.T) {
 		expected string
 	}{
 		{"unknown mode", "users:\n  - userName: a\n    inventoryRolesMode: replace\n", `users[0]: unknown inventoryRolesMode "replace": supported values are additive, exact`},
-		{"absent with mode", "users:\n  - userName: a\n    state: absent\n    inventoryRolesMode: exact\n", "users[0]: a user with state absent may only have userName (remove inventoryRolesMode)"},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {

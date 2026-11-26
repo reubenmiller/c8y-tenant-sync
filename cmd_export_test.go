@@ -63,7 +63,23 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"applications": apps, "statistics": stats()})
 	})
-	f.JSON("GET /inventory/managedObjects", http.StatusOK, map[string]any{
+	smartGroups := []map[string]any{
+		{"id": "10", "name": "testme", "type": "c8y_DynamicGroup", "c8y_IsDynamicGroup": map[string]any{},
+			"c8y_DeviceQueryString": "",
+			"c8y_DeviceColumnsConfig": map[string]any{"columns": []any{},
+				"pagination": map[string]any{"currentPage": 1, "pageSize": 20}},
+			"assetParents": map[string]any{"references": []any{}}},
+		{"id": "11", "name": "Linux devices", "type": "c8y_DynamicGroup", "c8y_IsDynamicGroup": map[string]any{},
+			"description": "Raspberry Pis", "c8y_TenantSync": map[string]any{"tool": "tenant-sync"},
+			"c8y_DeviceQueryString": "has(c8y_IsLinux) and name eq 'rpi*'",
+			"c8y_DeviceColumnsConfig": map[string]any{
+				"columns":    []any{map[string]any{"name": "name", "visible": true}},
+				"pagination": map[string]any{"currentPage": 1, "pageSize": 50}}},
+		// A hidden helper group of the UI (e.g. for a bulk operation)
+		{"id": "12", "name": "bulk helper", "type": "c8y_DynamicGroup",
+			"c8y_IsDynamicGroup": map[string]any{"invisible": map[string]any{}}, "c8y_DeviceQueryString": "id in (1,2)"},
+	}
+	deviceGroups := map[string]any{
 		"managedObjects": []map[string]any{
 			{"id": "1", "name": "Europe", "type": "c8y_DeviceGroup", "c8y_IsDeviceGroup": map[string]any{},
 				"description": "European sites", "c8y_TenantSync": map[string]any{"tool": "tenant-sync"},
@@ -72,6 +88,13 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 				"assetParents": map[string]any{"references": []any{map[string]any{"managedObject": map[string]any{"id": "1"}}}}},
 		},
 		"statistics": stats(),
+	}
+	f.Handle("GET /inventory/managedObjects", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "has(c8y_IsDynamicGroup)") {
+			writeJSON(w, http.StatusOK, map[string]any{"managedObjects": smartGroups, "statistics": stats()})
+			return
+		}
+		writeJSON(w, http.StatusOK, deviceGroups)
 	})
 	f.JSON("GET /user/inventoryroles", http.StatusOK, map[string]any{
 		"roles": []map[string]any{
@@ -173,6 +196,17 @@ func TestExportAllSections(t *testing.T) {
 	assert.Equal(t, []DeviceGroupSpec{
 		{Name: "Europe", Description: "European sites", Groups: []DeviceGroupSpec{{Name: "Plant Berlin"}}},
 	}, manifest.DeviceGroups)
+
+	// Smart groups sorted by name, without the hidden helper groups of the
+	// UI; the table only when it differs from the UI default
+	assert.Equal(t, []SmartGroupSpec{
+		{Name: "Linux devices", Description: "Raspberry Pis", Query: strPtr("has(c8y_IsLinux) and name eq 'rpi*'"),
+			Table: &SmartGroupTableSpec{
+				Columns:  []map[string]any{{"name": "name", "visible": true}},
+				PageSize: intPtr(50),
+			}},
+		{Name: "testme", Query: strPtr("")},
+	}, manifest.SmartGroups)
 
 	// Subscribed (not owned) microservices and web applications of the
 	// current tenant (the application of the SSO access mapping is read by
@@ -291,6 +325,9 @@ func TestExportedManifestRoundTrip(t *testing.T) {
 	assert.NotContains(t, text, "top-secret-value", "the SSO client secret is never exported")
 	assert.Contains(t, text, "globalRoles:\n", "SSO access rules list global roles (thenGroups in the API)")
 	assert.NotContains(t, text, "thenGroups")
+	assert.Contains(t, text, "smartGroups:\n  - name: Linux devices\n", "smart groups are exported")
+	assert.Contains(t, text, "  - name: testme\n    query: \"\"\n", "an empty query is kept")
+	assert.NotContains(t, text, "bulk helper", "hidden helper smart groups are not exported")
 
 	// The escaped value is not expanded, even when the variable is set
 	t.Setenv("USER", "someone")

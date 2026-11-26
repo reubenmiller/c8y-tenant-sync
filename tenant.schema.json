@@ -1877,6 +1877,75 @@
         "inputs"
       ]
     },
+    "SmartGroupSpec": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the smart group; identifies the group among the smart groups of the tenant",
+          "examples": [
+            "Linux devices"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "description": "present (default) creates or updates the smart group; absent deletes the smart group if it exists (an absent entry may keep its other fields: they are ignored"
+        },
+        "query": {
+          "type": "string",
+          "description": "Inventory query language filter which selects the devices of the group (the c8y_DeviceQueryString fragment); an empty string selects no filter; left alone when omitted (new groups get an empty query)",
+          "examples": [
+            "has(c8y_IsLinux) and name eq 'rpi*'"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the smart group (left alone when omitted)"
+        },
+        "table": {
+          "$ref": "#/$defs/SmartGroupTableSpec",
+          "description": "The device list table of the smart group in the UI (stored in the c8y_DeviceColumnsConfig fragment); omitted settings are left alone"
+        },
+        "invisible": {
+          "type": "boolean",
+          "description": "Hide the smart group from the group list of the UI (c8y_IsDynamicGroup.invisible)"
+        },
+        "fragments": {
+          "type": "object",
+          "description": "Additional fragments merged into the smart group managed object (updated when the existing value does not contain the desired values)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "SmartGroupTableSpec": {
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array",
+          "description": "The columns of the table as the UI stores them (c8y_DeviceColumnsConfig.columns; copy them from an export); replaced as a whole when they differ; an empty list resets the table to the UI default columns; left alone when omitted"
+        },
+        "pageSize": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of devices per page (c8y_DeviceColumnsConfig.pagination.pageSize; the UI default is 20); left alone when omitted",
+          "examples": [
+            50
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "SmartRestTemplateSpec": {
       "properties": {
         "name": {
@@ -2390,7 +2459,7 @@
             "present",
             "absent"
           ],
-          "description": "present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may only have userName; the user running the sync is never deleted)"
+          "description": "present (default) creates or updates the user; absent deletes the user if it exists (an absent entry may keep its other fields: they are ignored"
         },
         "ifMissing": {
           "type": "string",
@@ -2552,6 +2621,13 @@
       },
       "type": "array",
       "description": "Tree of device groups to create/update or delete with state absent (a group is identified by its name within its parent; groups are never unlinked and only empty groups are deleted)"
+    },
+    "smartGroups": {
+      "items": {
+        "$ref": "#/$defs/SmartGroupSpec"
+      },
+      "type": "array",
+      "description": "Smart groups (dynamic groups) to create/update or delete with state absent: groups whose devices are selected by an inventory query (matched by name; smart groups which are not listed are never changed and deleting a smart group never deletes devices)"
     },
     "globalRoles": {
       "items": {

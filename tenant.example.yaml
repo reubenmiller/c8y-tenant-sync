@@ -227,6 +227,21 @@ deviceGroups:
         groups:
           - {name: Line 1, state: absent}
 
+# Create smart groups (dynamic groups): the devices of a smart group are
+# selected by an inventory query instead of being assigned. A smart group is
+# identified by its name; query, description, table, invisible and fragments
+# are only updated when they differ, and omitted fields are left alone. Smart
+# groups which are not listed are never changed; state: absent deletes a smart
+# group (never its devices).
+smartGroups:
+  - name: Raspberry Pis
+    description: Linux devices named rpi*
+    query: "has(c8y_IsLinux) and name eq 'rpi*'"
+    table: # optional: the device list table of the group in the UI
+      pageSize: 50
+  - name: Old devices
+    state: absent
+
 # Create global roles (user groups in the Cumulocity API) with permissions
 # assigned. Permission assignments are additive: permissions already on a
 # global role but absent from the manifest are kept, so built-in global roles

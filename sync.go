@@ -49,6 +49,7 @@ const (
 	SectionExtensions             = "extensions"
 	SectionApplications           = "applications"
 	SectionDeviceGroups           = "deviceGroups"
+	SectionSmartGroups            = "smartGroups"
 	SectionGlobalRoles            = "globalRoles"
 	SectionInventoryRoles         = "inventoryRoles"
 	SectionUsers                  = "users"
@@ -73,7 +74,9 @@ const (
 // the synced items; custom commands run last so they can build on everything
 // the manifest declares. Device groups are synced before global roles and
 // users so roles and permissions can later be assigned on groups created in
-// the same run. UI extensions are uploaded before the web applications so
+// the same run. Smart groups follow the device groups; they are flat and
+// can not be given inventory roles, so they are deleted in their own section
+// (not after the users). UI extensions are uploaded before the web applications so
 // the applications can install extensions uploaded in the same run.
 //
 // Child tenants come first: the section runs once with the base credentials,
@@ -93,6 +96,7 @@ var SectionOrder = []string{
 	SectionExtensions,
 	SectionApplications,
 	SectionDeviceGroups,
+	SectionSmartGroups,
 	SectionGlobalRoles,
 	SectionInventoryRoles,
 	SectionUsers,
@@ -139,9 +143,9 @@ type Syncer struct {
 	Secrets *SecretStore
 
 	// DryRunReader is a client for read-only lookups in dry-run mode (nil
-	// without a session). The alarmMapping, loginOptions, inventoryRoles
-	// and users sections use it to compare the manifest with the tenant; it never
-	// writes.
+	// without a session). The alarmMapping, smartGroups, loginOptions,
+	// inventoryRoles and users sections use it to compare the manifest with
+	// the tenant; it never writes.
 	DryRunReader *api.Client
 
 	// Targets overrides the manifest targets section (set from CLI flags)
@@ -461,6 +465,8 @@ func (s *Syncer) applyTarget(ctx, baseCtx context.Context, manifest *Manifest, o
 			err = s.SyncApplications(baseCtx, manifest.Applications)
 		case SectionDeviceGroups:
 			err = s.SyncDeviceGroups(ctx, manifest.DeviceGroups)
+		case SectionSmartGroups:
+			err = s.SyncSmartGroups(ctx, manifest.SmartGroups)
 		case SectionGlobalRoles:
 			err = s.SyncGlobalRoles(ctx, manifest.GlobalRoles)
 		case SectionInventoryRoles:

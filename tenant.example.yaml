@@ -85,6 +85,20 @@ tenantOptions:
       env: INTEGRATION_SECRET
 
 # Enable/disable feature toggles for the current tenant
+# Alarm mapping (Administration > Alarm mapping). severity is CRITICAL,
+# MAJOR, MINOR, WARNING or NONE (drop the alarm); without a description the
+# alarm keeps its text. Alarm types not listed keep their mapping;
+# state: absent deletes the mapping of a type. To also delete the mappings
+# of alarm types which are not listed, use {mode: exact, mappings: [...]}.
+alarmMapping:
+  - type: c8y_NoisyAlarm
+    severity: NONE
+  - type: c8y_UnavailabilityAlarm
+    severity: MINOR
+    description: Device not reachable
+  - type: c8y_LegacyAlarm
+    state: absent
+
 features:
   - key: feature-branding
   - key: feature-cep-custom-rules

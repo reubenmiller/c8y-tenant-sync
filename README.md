@@ -40,6 +40,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 📦 **Cloudsmith sources**: pull packages from Cloudsmith repositories, such as the public thin-edge.io repositories (`thinedge/tedge-release`, `thinedge/tedge-main`, `thinedge/community`), with the name, version, architecture and software type taken from the package metadata; versions are installed by the device's package manager, or link or upload the package
 - 🧩 **Device profiles**: declare firmware/software/configuration bundles; binary URLs are resolved from the tenant automatically
 - 🎛️ **Tenant options & feature toggles**: set options, enable/disable features, subscribe/unsubscribe microservices and web applications, upload UI extensions and install them into web applications
+- 🚨 **Alarm mapping**: give the alarms of a type a new severity and text (or drop them), with `type`, `severity` and `description` fields instead of raw tenant options
 - 🗑️ **Retention rules**: ensure retention rules exist, matched by their selector (dataType/fragmentType/type/source) with the retention period updated when it differs
 - 📜 **Trusted certificates**: upload device CA certificates (PEM/DER) into the trust store (matched by fingerprint, with name/status/auto-registration updated when they differ), plus certificate revocation lists from CSV files, and enabling or disabling the tenant's Cumulocity CA
 - 🗂️ **Device groups**: create the same tree of device groups (regions, sites, production lines, customers) in every tenant, with descriptions and custom fragments
@@ -58,7 +59,7 @@ Because every operation is idempotent (get-or-create / upsert), the same manifes
 - 🔑 **Secret references**: `valueFrom`, `passwordFrom` and `tokenFrom` take secrets from environment variables or generated values, as readable fields which sops leaves unencrypted
 - 🎲 **Generated values**: `${generate:NAME}` creates random values (e.g. initial passwords), stores them in a secrets file (sops encrypted when possible) and masks them in all output
 - 🔒 **SOPS**: manifests encrypted with [SOPS](https://github.com/getsops/sops) (age, PGP, cloud KMS, Vault) are decrypted automatically
-- 📤 **Export**: create a manifest from an existing tenant (tenant options, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, login options, Digital Twin Manager definitions and smart functions)
+- 📤 **Export**: create a manifest from an existing tenant (tenant options, alarm mapping, feature toggles, retention rules, the Cumulocity CA, subscribed microservices, the device group tree, inventory roles, login options, Digital Twin Manager definitions and smart functions)
 
 ## Installation
 
@@ -163,7 +164,7 @@ The binary also runs on its own (for example in CI) with the same `C8Y_*` variab
 | `-f`, `--manifest` | `tenant.yaml` | Path or http(s) URL of the manifest file, or `-` for stdin (also accepted as a positional argument), see [Remote manifests](#remote-manifests) and [Manifest from stdin](#manifest-from-stdin) |
 | `--allow-remote-commands` | | Run the hooks and commands of manifests fetched from a URL |
 | `--dry` | | Preview changes without applying them |
-| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `globalRoles`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
+| `--only` | *(all)* | Comma-separated sections to apply: `tenants`, `tenantOptions`, `alarmMapping`, `features`, `retentionRules`, `certificateAuthority`, `trustedCertificates`, `certificateRevocationLists`, `microservices`, `extensions`, `applications`, `deviceGroups`, `globalRoles`, `inventoryRoles`, `users`, `loginOptions`, `software`, `firmware`, `configuration`, `smartrestTemplates`, `digitalTwin`, `smartFunctions`, `deviceProfiles`, `commands` |
 | `--force` | | Replace existing version binaries / configuration files |
 | `--concurrency` | `5` | Concurrent software version uploads (1–20) |
 | `--target` | | Apply to a tenant referenced by ID or domain; repeatable or comma-separated (overrides the manifest `targets` section) |
@@ -351,7 +352,8 @@ c8y tenant-sync run -f tenant.yaml --dry   # nothing to change on the same tenan
 
 | Section | What is exported |
 |---------|------------------|
-| `tenantOptions` | All tenant options, except credentials (`credentials.*` keys are never exported) |
+| `tenantOptions` | All tenant options, except credentials (`credentials.*` keys are never exported) and the alarm mapping (the `alarm.type.mapping` category, exported as `alarmMapping`) |
+| `alarmMapping` | The alarm mapping, sorted by type |
 | `features` | Feature toggles set for the tenant (`--all-features` exports all toggles with their current state) |
 | `retentionRules` | All retention rules |
 | `certificateAuthority` | Whether the Cumulocity CA is enabled, if the tenant has one |
@@ -487,9 +489,10 @@ Rules:
 - **Relative paths**: relative `source.path` values in an included file are resolved against the directory of that file, not the main manifest. Hooks and commands declared in an included file run from that file's directory.
 - **Merge order**: the included files are merged first, in the listed order, then the content of the including file.
   - List sections are concatenated.
-  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), microservices, extensions, applications, global roles, inventory roles, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a global role redefined in `prod.yaml` must list all its permissions.
+  - Entries with an identity replace an earlier entry with the same identity, at the position of the earlier entry (the later definition wins). The identities are: tenant options (`category` + `key`), alarm mappings (`type`), features (`key`), retention rules (the selector `dataType`/`fragmentType`/`type`/`source`), microservices, extensions, applications, global roles, inventory roles, device profiles and command groups (`name`) and users (`userName`). The whole entry is replaced; fields are not merged, so a global role redefined in `prod.yaml` must list all its permissions.
   - Entries without an identity (trusted certificates, certificate revocation lists, software, firmware, configuration and SmartREST templates, which are matched by their files at run time) are all kept and applied in order.
   - `targets` and `certificateAuthority` of a later file replace those of earlier files.
+  - `alarmMapping.mode` of a later file replaces the mode of earlier files when it sets one (a plain list sets none).
   - `hooks.pre` and `hooks.post` are concatenated, and so are the `pre` and `post` hooks of each section in `hooks.sections`.
 
 Duplicates within a single file are still validation errors, so a duplicate is only resolved by the "later wins" rule when the definitions come from different files. `include` only applies to `validate` and `run`; `export` writes a single file.
@@ -893,6 +896,51 @@ tenantOptions:
     valueFrom:
       env: INTEGRATION_SECRET
 ```
+
+### Alarm mapping
+
+`alarmMapping` is the Alarm mapping page of the Administration application: it changes the severity and text of the alarms of a type, or drops them:
+
+```yaml
+alarmMapping:
+  - type: c8y_NoisyAlarm
+    severity: NONE                 # drop these alarms
+  - type: c8y_TemperatureAlarm
+    severity: MAJOR                # keep the alarm text
+  - type: c8y_UnavailabilityAlarm
+    severity: MINOR
+    description: Device not reachable
+```
+
+| Field | Description |
+|-------|-------------|
+| `type` | Required. The alarm type to map. Each type can be listed once |
+| `severity` | Required. `CRITICAL`, `MAJOR`, `MINOR`, `WARNING`, or `NONE` to drop the alarm, in any case (`minor` is `MINOR`). `validate` and the JSON schema reject other values |
+| `description` | The new alarm text. Leave it out to keep the text of the alarm |
+| `state` | `present` (the default) creates or updates the mapping. `absent` deletes the mapping of the type if it exists. An absent entry may keep its `severity` and `description` (they are ignored), so switching between the two states is a one-line change |
+
+- **Storage**: Cumulocity stores the mapping as tenant options of the `alarm.type.mapping` category, one option per alarm type with the value `SEVERITY|description` (`GET /tenant/options/alarm.type.mapping` returns them as one object). The section translates between that string and the fields: it reads the category once, compares by field (so `MAJOR` and `MAJOR|` in the tenant are the same mapping), and writes all changed alarm types with one request.
+- **Additive (default)**: alarm types in the tenant which the manifest doesn't list keep their mapping. Only entries with `state: absent` are deleted, one request each:
+
+  ```yaml
+  alarmMapping:
+    - type: c8y_LegacyAlarm
+      state: absent        # alarms of this type keep their own severity and text again
+  ```
+- **Exact**: to make the manifest the complete alarm mapping, write the section as an object with `mode: exact` and the list under `mappings`. The mappings of alarm types which are not listed are deleted too, including mappings added in the UI (Cumulocity can't tell which options a manifest created). `mode: exact` without `mappings` deletes the whole alarm mapping. A plain list is the short form of `mode: additive`.
+
+  ```yaml
+  alarmMapping:
+    mode: exact            # additive (default) | exact
+    mappings:
+      - type: c8y_NoisyAlarm
+        severity: NONE
+  ```
+
+  With exact mode, `tenantOptions` can't set options of the `alarm.type.mapping` category, since the section would delete them.
+- **Includes**: the mappings of all files are merged by `type` (the later file wins). `mode` comes from the last file which sets it; a file with the plain list sets no mode, so it adds mappings to a base file with `mode: exact` without switching exact mode off.
+- **Not in `tenantOptions`**: `export` writes the mapping in this section as a plain list (additive), sorted by type, and leaves the `alarm.type.mapping` category out of `tenantOptions`. Setting the same alarm type in both sections is a validation error.
+- **`--dry` shows the change**: a dry run reads the mapping of the tenant and lists each alarm type to create, the fields to update with their old and new values, and the mappings to delete with their current value (in exact mode also `not in the manifest`). Without an active session, it lists the desired mapping without comparing it, and in exact mode one line saying that unlisted mappings are deleted.
 
 ### Retention rules
 
@@ -1403,7 +1451,7 @@ A real run reports the same details. Without an active session, and for tenants 
 
 ### Removing what a manifest created
 
-The `users`, `inventoryRoles`, `globalRoles` and `deviceGroups` sections accept `state: absent`, so the objects an applied manifest created can be removed with a manifest as well. Change each entry to its name and `state: absent`:
+The `users`, `inventoryRoles`, `globalRoles`, `deviceGroups` and `alarmMapping` sections accept `state: absent`, so the objects an applied manifest created can be removed with a manifest as well. Change each entry to its name and `state: absent`:
 
 ```yaml
 users:

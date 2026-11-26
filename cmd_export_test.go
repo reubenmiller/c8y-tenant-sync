@@ -27,8 +27,14 @@ func fakeExportTenant(t *testing.T) *fakeC8y {
 			{"category": "alpha", "key": "enabled", "value": "true"},
 			{"category": "sso", "key": "credentials.secret", "value": "<<Encrypted>>"},
 			{"category": "alpha", "key": "path", "value": "/home/$USER"},
+			{"category": "alarm.type.mapping", "key": "foo1", "value": "MINOR|Some foo1 mapping"},
 		},
 		"statistics": stats(),
+	})
+	f.JSON("GET /tenant/options/alarm.type.mapping", http.StatusOK, map[string]any{
+		"foo2": "NONE|example 2",
+		"foo1": "MINOR|Some foo1 mapping",
+		"bar":  "MAJOR|",
 	})
 	f.JSON("GET /features", http.StatusOK, []map[string]any{
 		{"key": "feature-on", "active": true, "strategy": "TENANT", "phase": "PUBLIC_PREVIEW"},
@@ -138,6 +144,13 @@ func TestExportAllSections(t *testing.T) {
 		{Category: "alpha", Key: "path", Value: "/home/$USER"},
 		{Category: "zeta", Key: "b", Value: "2"},
 	}, manifest.TenantOptions)
+
+	// The alarm mapping is exported in its own section, not in tenantOptions
+	assert.Equal(t, []AlarmMappingSpec{
+		{Type: "bar", Severity: "MAJOR"},
+		{Type: "foo1", Severity: "MINOR", Description: "Some foo1 mapping"},
+		{Type: "foo2", Severity: "NONE", Description: "example 2"},
+	}, manifest.AlarmMapping.Mappings)
 
 	// Only the toggles set for the tenant
 	assert.Equal(t, []FeatureSpec{
@@ -272,6 +285,9 @@ func TestExportedManifestRoundTrip(t *testing.T) {
 	assert.Contains(t, text, "value: \"true\"", "string values which look like booleans stay strings")
 
 	assert.Contains(t, text, "/home/$$USER", "$ is escaped")
+	assert.Contains(t, text, "alarmMapping:\n  - type: bar\n    severity: MAJOR\n  - type: foo1\n    severity: MINOR\n    description: Some foo1 mapping\n  - type: foo2\n    severity: NONE\n    description: example 2\n",
+		"the alarm mapping is a list sorted by type")
+	assert.NotContains(t, text, "alarm.type.mapping", "the alarm mapping options are not in tenantOptions")
 	assert.NotContains(t, text, "top-secret-value", "the SSO client secret is never exported")
 	assert.Contains(t, text, "globalRoles:\n", "SSO access rules list global roles (thenGroups in the API)")
 	assert.NotContains(t, text, "thenGroups")

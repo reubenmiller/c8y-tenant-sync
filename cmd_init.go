@@ -67,6 +67,15 @@ software:
 #     key: my.setting
 #     value: "true"
 
+# alarmMapping: # a list (additive), or {mode: exact, mappings: [...]} to delete unlisted mappings
+#   - type: c8y_UnavailabilityAlarm
+#     severity: MINOR # CRITICAL, MAJOR, MINOR, WARNING or NONE (drop the alarm)
+#     description: Device not reachable # optional: without it the alarm keeps its text
+#   - type: c8y_NoisyAlarm
+#     severity: NONE
+#   - type: c8y_LegacyAlarm
+#     state: absent # delete the mapping of this type
+
 # features:
 #   - key: feature-branding
 

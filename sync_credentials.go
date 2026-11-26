@@ -29,6 +29,7 @@ var sectionServiceUserRoles = map[string][]string{
 
 	SectionTenants:                nil, // base credentials, before the targets
 	SectionTenantOptions:          {"ROLE_OPTION_MANAGEMENT_READ", "ROLE_OPTION_MANAGEMENT_ADMIN"},
+	SectionAlarmMapping:           {"ROLE_OPTION_MANAGEMENT_READ", "ROLE_OPTION_MANAGEMENT_ADMIN"},
 	SectionFeatures:               nil, // base credentials
 	SectionRetentionRules:         {"ROLE_RETENTION_RULE_READ", "ROLE_RETENTION_RULE_ADMIN"},
 	SectionCertificateAuthority:   {"ROLE_TENANT_MANAGEMENT_READ", "ROLE_TENANT_MANAGEMENT_ADMIN"},

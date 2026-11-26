@@ -77,6 +77,11 @@ func runValidate(manifestPaths []string, checkSources, allowRemoteCommands bool)
 	}
 	fmt.Println()
 	printSectionCount(SectionTenantOptions, len(manifest.TenantOptions))
+	alarmMappingCount := 0
+	if manifest.AlarmMapping != nil {
+		alarmMappingCount = len(manifest.AlarmMapping.Mappings)
+	}
+	printSectionCount(SectionAlarmMapping, alarmMappingCount)
 	printSectionCount(SectionFeatures, len(manifest.Features))
 	printSectionCount(SectionRetentionRules, len(manifest.RetentionRules))
 	caCount := 0

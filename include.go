@@ -634,16 +634,18 @@ func (m *Manifest) rebase(dir, rootDir string) {
 // mergeManifests merges over into base and returns the result:
 //   - list sections are concatenated (base first)
 //   - entries with an identity (child tenant domain, tenant option
-//     category+key, feature key, retention rule selector, application name,
-//     root device group name (the whole tree is replaced), global role name,
-//     inventory role name, user name, device profile name, command group
-//     name) replace an entry with the same identity in base, at its
+//     category+key, alarm mapping type, feature key, retention rule
+//     selector, application name, root device group name (the whole tree
+//     is replaced), global role name, inventory role name, user name,
+//     device profile name, command group name) replace an entry with the same identity in base, at its
 //     position (the later definition wins)
 //   - entries without an identity (trusted certificates, revocation lists,
 //     software, firmware, configuration, SmartREST templates) are all kept
 //     and applied in order
 //   - targets, certificateAuthority and loginOptions from over replace
 //     those of base
+//   - alarmMapping: the mappings are merged by type, and the mode of over
+//     replaces the mode of base when over sets one
 //   - hooks pre/post lists are concatenated, section hooks per section
 func mergeManifests(base, over *Manifest) *Manifest {
 	out := &Manifest{
@@ -668,6 +670,7 @@ func mergeManifests(base, over *Manifest) *Manifest {
 		}
 		return o.Category + "\x00" + o.Key
 	})
+	out.AlarmMapping = mergeAlarmMapping(base.AlarmMapping, over.AlarmMapping)
 	out.Features = mergeByKey(base.Features, over.Features, func(f FeatureSpec) string { return f.Key })
 	out.RetentionRules = mergeByKey(base.RetentionRules, over.RetentionRules, RetentionRuleSpec.Selector)
 	out.Microservices = mergeByKey(base.Microservices, over.Microservices, func(a MicroserviceSpec) string { return a.Name })
